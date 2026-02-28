@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include "radar_view.h"
 #include "../config.h"
 #include "../pins_config.h"

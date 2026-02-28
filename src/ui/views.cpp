@@ -13,7 +13,7 @@ static lv_obj_t *tiles[3];
 #define CONTENT_H (LCD_V_RES - STATUS_BAR_HEIGHT)
 
 static void tileview_changed_cb(lv_event_t *e) {
-    lv_obj_t *tv = lv_event_get_target(e);
+    lv_obj_t *tv = (lv_obj_t *)lv_event_get_target(e);
     lv_obj_t *active = lv_tileview_get_tile_active(tv);
     for (int i = 0; i < 3; i++) {
         if (tiles[i] == active) {
@@ -33,7 +33,7 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
 
     // Create 3 horizontal tiles
     tiles[VIEW_MAP] = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_RIGHT);
-    tiles[VIEW_RADAR] = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    tiles[VIEW_RADAR] = lv_tileview_add_tile(tileview, 1, 0, (lv_dir_t)(LV_DIR_LEFT | LV_DIR_RIGHT));
     tiles[VIEW_ARRIVALS] = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT);
 
     lv_obj_add_event_cb(tileview, tileview_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);

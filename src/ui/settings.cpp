@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include "settings.h"
 #include "../pins_config.h"
 #include "../data/storage.h"
@@ -77,8 +78,10 @@ static lv_obj_t *create_textarea(lv_obj_t *parent, const char *placeholder,
 
 static void save_and_close(lv_event_t *e) {
     // Read values from text areas
-    strlcpy(_cfg.wifi_ssid, lv_textarea_get_text(_ta_ssid), sizeof(_cfg.wifi_ssid));
-    strlcpy(_cfg.wifi_pass, lv_textarea_get_text(_ta_pass), sizeof(_cfg.wifi_pass));
+    strncpy(_cfg.wifi_ssid, lv_textarea_get_text(_ta_ssid), sizeof(_cfg.wifi_ssid) - 1);
+    _cfg.wifi_ssid[sizeof(_cfg.wifi_ssid) - 1] = '\0';
+    strncpy(_cfg.wifi_pass, lv_textarea_get_text(_ta_pass), sizeof(_cfg.wifi_pass) - 1);
+    _cfg.wifi_pass[sizeof(_cfg.wifi_pass) - 1] = '\0';
     _cfg.home_lat = atof(lv_textarea_get_text(_ta_lat));
     _cfg.home_lon = atof(lv_textarea_get_text(_ta_lon));
     _cfg.radius_nm = lv_slider_get_value(_slider_radius);

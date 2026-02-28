@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include "status_bar.h"
 #include "../pins_config.h"
 

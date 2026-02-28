@@ -53,7 +53,7 @@
 #define LV_USE_ANIM 1
 
 /* Drawing */
-#define LV_DRAW_SW_DRAW_UNIT_CNT 2
+#define LV_DRAW_SW_DRAW_UNIT_CNT 1
 
 /* Image decoders */
 #define LV_USE_LODEPNG 1
