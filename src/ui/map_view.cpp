@@ -1,4 +1,5 @@
 #include "map_view.h"
+#include "detail_card.h"
 #include "../config.h"
 #include "../pins_config.h"
 
@@ -158,8 +159,38 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
     // Use draw event for custom rendering
     lv_obj_add_event_cb(_canvas, canvas_draw_cb, LV_EVENT_DRAW_MAIN_END, nullptr);
 
-    // Zoom on tap
+    // Tap: aircraft hit-test → detail card, or cycle zoom
     lv_obj_add_event_cb(_canvas, [](lv_event_t *e) {
+        lv_point_t point;
+        lv_indev_get_point(lv_indev_active(), &point);
+
+        // Adjust for canvas position
+        int tx = point.x;
+        int ty = point.y - 30; // status bar offset
+
+        if (detail_card_is_visible()) {
+            detail_card_hide();
+            return;
+        }
+
+        // Hit test against aircraft (20px radius)
+        if (!_list->lock(pdMS_TO_TICKS(50))) return;
+        for (int i = 0; i < _list->count; i++) {
+            int sx, sy;
+            if (_proj.to_screen(_list->aircraft[i].lat, _list->aircraft[i].lon, sx, sy)) {
+                int dx = tx - sx;
+                int dy = ty - sy;
+                if (dx * dx + dy * dy < 400) { // 20px radius
+                    Aircraft ac_copy = _list->aircraft[i];
+                    _list->unlock();
+                    detail_card_show(&ac_copy);
+                    return;
+                }
+            }
+        }
+        _list->unlock();
+
+        // No aircraft hit — cycle zoom
         _zoom_idx = (_zoom_idx + 1) % 3;
         _proj.radius_nm = ZOOM_LEVELS[_zoom_idx];
         lv_obj_invalidate(_canvas);

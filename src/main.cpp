@@ -14,6 +14,7 @@
 #include "data/fetcher.h"
 #include "ui/status_bar.h"
 #include "ui/views.h"
+#include "ui/detail_card.h"
 
 // Hardware drivers
 static jd9165_lcd lcd(LCD_RST);
@@ -118,6 +119,7 @@ void setup() {
 
     status_bar_create(screen);
     views_init(screen, &aircraft_list);
+    detail_card_init(screen);
 
     // Periodic status bar update
     lv_timer_create([](lv_timer_t *timer) {
