@@ -2,6 +2,7 @@
 #include "status_bar.h"
 #include "map_view.h"
 #include "radar_view.h"
+#include "arrivals_view.h"
 #include "../pins_config.h"
 
 static lv_obj_t *tileview;
@@ -37,16 +38,10 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
 
     lv_obj_add_event_cb(tileview, tileview_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    // Init views
+    // Init all views
     map_view_init(tiles[VIEW_MAP], list);
     radar_view_init(tiles[VIEW_RADAR], list);
-
-    // Placeholder label for arrivals (last remaining)
-    lv_obj_t *label = lv_label_create(tiles[VIEW_ARRIVALS]);
-    lv_label_set_text(label, "Arrivals Board");
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_36, 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(0x334455), 0);
-    lv_obj_center(label);
+    arrivals_view_init(tiles[VIEW_ARRIVALS], list);
 }
 
 lv_obj_t *views_get_tile(int view_index) {
