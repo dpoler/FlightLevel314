@@ -1,5 +1,6 @@
 #include "views.h"
 #include "status_bar.h"
+#include "map_view.h"
 #include "../pins_config.h"
 
 static lv_obj_t *tileview;
@@ -35,9 +36,12 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
 
     lv_obj_add_event_cb(tileview, tileview_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    // Placeholder labels for each view
-    const char *names[] = {"Map View", "Radar View", "Arrivals Board"};
-    for (int i = 0; i < 3; i++) {
+    // Init map view (replaces placeholder)
+    map_view_init(tiles[VIEW_MAP], list);
+
+    // Placeholder labels for remaining views
+    const char *names[] = {nullptr, "Radar View", "Arrivals Board"};
+    for (int i = 1; i < 3; i++) {
         lv_obj_t *label = lv_label_create(tiles[i]);
         lv_label_set_text(label, names[i]);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_36, 0);
