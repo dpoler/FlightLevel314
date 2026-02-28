@@ -1,0 +1,7 @@
+.pio/
+.vscode/
+components/vendor_hal/
+*.o
+*.a
+*.so
+*.dylib
