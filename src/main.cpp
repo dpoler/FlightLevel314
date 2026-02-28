@@ -7,12 +7,18 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "pins_config.h"
+#include "config.h"
 #include "hal/jd9165_lcd.h"
 #include "hal/gt911_touch.h"
+#include "data/aircraft.h"
+#include "data/fetcher.h"
 
 // Hardware drivers
 static jd9165_lcd lcd(LCD_RST);
 static gt911_touch touch(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT);
+
+// Aircraft data
+AircraftList aircraft_list;
 
 // LVGL display
 static lv_display_t *disp;
@@ -97,16 +103,35 @@ void setup() {
     lv_indev_set_read_cb(indev, touch_read_cb);
     lv_indev_set_display(indev, disp);
 
-    // Hello World test
-    lv_obj_t *label = lv_label_create(lv_screen_active());
-    lv_label_set_text(label, "ADS-B Display\nTouch anywhere to test");
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_center(label);
+    // Init aircraft data
+    aircraft_list.init();
+
+    // Start data fetcher on core 1
+    fetcher_init(&aircraft_list);
+
+    // Temporary: show status label
     lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x1a1a2e), 0);
     lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, 0);
 
-    Serial.println("LVGL initialized - Hello World displayed");
+    lv_obj_t *status_label = lv_label_create(lv_screen_active());
+    lv_label_set_text(status_label, "Connecting to WiFi...");
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(status_label, lv_color_white(), 0);
+    lv_obj_center(status_label);
+
+    // Timer to update status label
+    lv_timer_create([](lv_timer_t *timer) {
+        lv_obj_t *label = (lv_obj_t *)lv_timer_get_user_data(timer);
+        if (fetcher_wifi_connected()) {
+            lv_label_set_text_fmt(label, "WiFi: Connected\nAircraft: %d\nLast update: %lus ago",
+                                  aircraft_list.count,
+                                  (millis() - fetcher_last_update()) / 1000);
+        } else {
+            lv_label_set_text(label, "Connecting to WiFi...");
+        }
+    }, 1000, status_label);
+
+    Serial.println("LVGL initialized - fetcher started");
 }
 
 void loop() {
