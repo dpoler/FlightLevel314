@@ -12,6 +12,8 @@
 #include "hal/gt911_touch.h"
 #include "data/aircraft.h"
 #include "data/fetcher.h"
+#include "ui/status_bar.h"
+#include "ui/views.h"
 
 // Hardware drivers
 static jd9165_lcd lcd(LCD_RST);
@@ -109,29 +111,20 @@ void setup() {
     // Start data fetcher on core 1
     fetcher_init(&aircraft_list);
 
-    // Temporary: show status label
-    lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x1a1a2e), 0);
-    lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, 0);
+    // Create UI
+    lv_obj_t *screen = lv_screen_active();
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x0a0a1a), 0);
+    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
 
-    lv_obj_t *status_label = lv_label_create(lv_screen_active());
-    lv_label_set_text(status_label, "Connecting to WiFi...");
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(status_label, lv_color_white(), 0);
-    lv_obj_center(status_label);
+    status_bar_create(screen);
+    views_init(screen, &aircraft_list);
 
-    // Timer to update status label
+    // Periodic status bar update
     lv_timer_create([](lv_timer_t *timer) {
-        lv_obj_t *label = (lv_obj_t *)lv_timer_get_user_data(timer);
-        if (fetcher_wifi_connected()) {
-            lv_label_set_text_fmt(label, "WiFi: Connected\nAircraft: %d\nLast update: %lus ago",
-                                  aircraft_list.count,
-                                  (millis() - fetcher_last_update()) / 1000);
-        } else {
-            lv_label_set_text(label, "Connecting to WiFi...");
-        }
-    }, 1000, status_label);
+        status_bar_update(fetcher_wifi_connected(), aircraft_list.count, fetcher_last_update());
+    }, 1000, nullptr);
 
-    Serial.println("LVGL initialized - fetcher started");
+    Serial.println("LVGL initialized - UI ready");
 }
 
 void loop() {
