@@ -1,5 +1,6 @@
 #include "fetcher.h"
 #include "../config.h"
+#include "../ui/alerts.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -92,6 +93,19 @@ static void parse_aircraft_json(JsonDocument &doc) {
         }
 
         new_count++;
+    }
+
+    // Check for alerts on newly-parsed aircraft
+    for (int i = 0; i < new_count; i++) {
+        Aircraft &a = _aircraft_list->aircraft[i];
+        if (a.is_emergency) {
+            char msg[48];
+            snprintf(msg, sizeof(msg), "Squawk %04d - %s", a.squawk,
+                     a.squawk == 7500 ? "HIJACK" : a.squawk == 7600 ? "COMMS FAIL" : "EMERGENCY");
+            alerts_queue(ALERT_EMERGENCY, a.callsign[0] ? a.callsign : a.icao_hex, msg);
+        } else if (a.is_military && a.trail_count <= 1) {
+            alerts_queue(ALERT_MILITARY, a.callsign[0] ? a.callsign : a.icao_hex, a.type_code);
+        }
     }
 
     _aircraft_list->count = new_count;
