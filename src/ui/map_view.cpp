@@ -1,5 +1,6 @@
 #include "map_view.h"
 #include "detail_card.h"
+#include "tile_cache.h"
 #include "../config.h"
 #include "../pins_config.h"
 
@@ -14,6 +15,74 @@ static int _zoom_idx = 0;
 #define CANVAS_W LCD_H_RES
 #define CANVAS_H (LCD_V_RES - 30)  // minus status bar
 #define BG_COLOR lv_color_hex(0x0a0a1a)
+
+static void draw_tiles(lv_layer_t *layer) {
+    float radius_nm = ZOOM_LEVELS[_zoom_idx];
+    int z = osm_zoom_for_radius(radius_nm, CANVAS_H, _proj.center_lat);
+    float cos_lat = cosf(_proj.center_lat * M_PI / 180.0f);
+
+    // Viewport bounds in lat/lon
+    float half_h_nm = radius_nm;
+    float half_w_nm = radius_nm * (float)CANVAS_W / (float)CANVAS_H;
+
+    float north = _proj.center_lat + half_h_nm / 60.0f;
+    float south = _proj.center_lat - half_h_nm / 60.0f;
+    float east = _proj.center_lon + half_w_nm / (60.0f * cos_lat);
+    float west = _proj.center_lon - half_w_nm / (60.0f * cos_lat);
+
+    // Tile range covering viewport
+    int tx_min = osm_lon_to_x(west, z);
+    int tx_max = osm_lon_to_x(east, z);
+    int ty_min = osm_lat_to_y(north, z); // y increases southward
+    int ty_max = osm_lat_to_y(south, z);
+
+    for (int ty = ty_min; ty <= ty_max; ty++) {
+        for (int tx = tx_min; tx <= tx_max; tx++) {
+            uint16_t *pixels = tile_cache_get(z, tx, ty);
+            if (!pixels) continue;
+
+            // Tile corner coordinates
+            float tile_nw_lon = osm_x_to_lon(tx, z);
+            float tile_nw_lat = osm_y_to_lat(ty, z);
+            float tile_se_lon = osm_x_to_lon(tx + 1, z);
+            float tile_se_lat = osm_y_to_lat(ty + 1, z);
+
+            // Convert to screen coords
+            int sx1, sy1, sx2, sy2;
+            _proj.to_screen(tile_nw_lat, tile_nw_lon, sx1, sy1);
+            _proj.to_screen(tile_se_lat, tile_se_lon, sx2, sy2);
+
+            int target_w = sx2 - sx1;
+            int target_h = sy2 - sy1;
+            if (target_w <= 0 || target_h <= 0) continue;
+
+            // Build image descriptor pointing to PSRAM pixel data
+            lv_image_dsc_t img_dsc;
+            memset(&img_dsc, 0, sizeof(img_dsc));
+            img_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+            img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+            img_dsc.header.w = TILE_PX;
+            img_dsc.header.h = TILE_PX;
+            img_dsc.data_size = TILE_PX * TILE_PX * 2;
+            img_dsc.data = (const uint8_t *)pixels;
+
+            lv_draw_image_dsc_t draw_dsc;
+            lv_draw_image_dsc_init(&draw_dsc);
+            draw_dsc.src = &img_dsc;
+            draw_dsc.opa = LV_OPA_70; // slight transparency so aircraft stand out
+            draw_dsc.scale_x = (int32_t)target_w * 256 / TILE_PX;
+            draw_dsc.scale_y = (int32_t)target_h * 256 / TILE_PX;
+            draw_dsc.pivot.x = 0;
+            draw_dsc.pivot.y = 0;
+
+            lv_area_t area = {
+                (lv_coord_t)sx1, (lv_coord_t)sy1,
+                (lv_coord_t)(sx1 + TILE_PX - 1), (lv_coord_t)(sy1 + TILE_PX - 1)
+            };
+            lv_draw_image(layer, &draw_dsc, &area);
+        }
+    }
+}
 
 static void draw_range_rings(lv_layer_t *layer) {
     lv_draw_arc_dsc_t arc_dsc;
@@ -128,9 +197,10 @@ static void draw_aircraft(lv_layer_t *layer) {
 static void canvas_draw_cb(lv_event_t *e) {
     lv_layer_t *layer = lv_event_get_layer(e);
 
-    draw_range_rings(layer);
+    draw_tiles(layer);       // map background
+    draw_range_rings(layer); // overlay
     draw_home_marker(layer);
-    draw_aircraft(layer);
+    draw_aircraft(layer);    // foreground
 }
 
 void map_view_init(lv_obj_t *parent, AircraftList *list) {
@@ -193,6 +263,7 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         // No aircraft hit — cycle zoom
         _zoom_idx = (_zoom_idx + 1) % 3;
         _proj.radius_nm = ZOOM_LEVELS[_zoom_idx];
+        tile_cache_flush_queue();
         lv_obj_invalidate(_canvas);
     }, LV_EVENT_CLICKED, nullptr);
 

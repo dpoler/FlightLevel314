@@ -55,4 +55,7 @@
 /* Drawing */
 #define LV_DRAW_SW_DRAW_UNIT_CNT 2
 
+/* Image decoders */
+#define LV_USE_LODEPNG 1
+
 #endif /* LV_CONF_H */

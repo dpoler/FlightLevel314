@@ -17,6 +17,7 @@
 #include "ui/detail_card.h"
 #include "ui/alerts.h"
 #include "ui/settings.h"
+#include "ui/tile_cache.h"
 
 // Hardware drivers
 static jd9165_lcd lcd(LCD_RST);
@@ -113,6 +114,9 @@ void setup() {
 
     // Start data fetcher on core 1
     fetcher_init(&aircraft_list);
+
+    // Start tile cache (background fetch task + SD card cache)
+    tile_cache_init();
 
     // Create UI
     lv_obj_t *screen = lv_screen_active();
