@@ -5,6 +5,7 @@ static lv_obj_t *wifi_icon;
 static lv_obj_t *ac_count_label;
 static lv_obj_t *update_label;
 static lv_obj_t *view_dots[3];
+static lv_obj_t *gear_icon;
 
 #define STATUS_BAR_HEIGHT 30
 #define STATUS_BG_COLOR lv_color_hex(0x0d0d1a)
@@ -49,12 +50,21 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     // First dot active by default
     lv_obj_set_style_bg_color(view_dots[0], STATUS_ACCENT_COLOR, 0);
 
-    // Last update (right side)
+    // Gear icon (right side, before update label)
+    gear_icon = lv_label_create(bar);
+    lv_label_set_text(gear_icon, LV_SYMBOL_SETTINGS);
+    lv_obj_set_style_text_color(gear_icon, STATUS_TEXT_COLOR, 0);
+    lv_obj_set_style_text_font(gear_icon, &lv_font_montserrat_16, 0);
+    lv_obj_align(gear_icon, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_add_flag(gear_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(gear_icon, 10); // easier to tap
+
+    // Last update (right side, shifted left for gear icon)
     update_label = lv_label_create(bar);
     lv_label_set_text(update_label, "--");
     lv_obj_set_style_text_color(update_label, STATUS_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(update_label, &lv_font_montserrat_14, 0);
-    lv_obj_align(update_label, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_align(update_label, LV_ALIGN_RIGHT_MID, -36, 0);
 
     return bar;
 }
@@ -74,6 +84,10 @@ void status_bar_update(bool wifi_connected, int aircraft_count, uint32_t last_up
         uint32_t ago = (millis() - last_update_ms) / 1000;
         lv_label_set_text_fmt(update_label, "%lus ago", ago);
     }
+}
+
+void status_bar_set_gear_callback(lv_event_cb_t cb) {
+    lv_obj_add_event_cb(gear_icon, cb, LV_EVENT_CLICKED, nullptr);
 }
 
 void status_bar_set_active_dot(int view_index) {

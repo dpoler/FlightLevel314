@@ -10,3 +10,6 @@ void status_bar_update(bool wifi_connected, int aircraft_count, uint32_t last_up
 
 // Update the active view dot indicator
 void status_bar_set_active_dot(int view_index);
+
+// Set callback for gear icon tap
+void status_bar_set_gear_callback(lv_event_cb_t cb);
