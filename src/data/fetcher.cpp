@@ -13,11 +13,22 @@ static TaskHandle_t _route_task_handle = nullptr;
 // Check if ICAO hex is in known military ranges
 static bool check_military(const char *hex) {
     uint32_t h = strtoul(hex, nullptr, 16);
-    // US military
-    if (h >= 0xAE0000 && h <= 0xAFFFFF) return true;
+    // US military (DoD, Army, Navy, USAF, Coast Guard)
     if (h >= 0xADF7C8 && h <= 0xAFFFFF) return true;
-    // UK military
+    // US Coast Guard
+    if (h >= 0xA00001 && h <= 0xA00FFF) return true;
+    // UK military (RAF, Royal Navy, Army Air Corps)
     if (h >= 0x43C000 && h <= 0x43CFFF) return true;
+    // France military
+    if (h >= 0x3B0000 && h <= 0x3BFFFF) return true;
+    // Germany military
+    if (h >= 0x3F4000 && h <= 0x3F7FFF) return true;
+    // Canada military
+    if (h >= 0xC0CDF9 && h <= 0xC0FFFF) return true;
+    // Australia military
+    if (h >= 0x7C8000 && h <= 0x7CBFFF) return true;
+    // NATO/international
+    if (h >= 0x0A4000 && h <= 0x0A4FFF) return true;
     return false;
 }
 

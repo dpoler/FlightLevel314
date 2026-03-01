@@ -16,6 +16,8 @@ static lv_obj_t *_hdg_label = nullptr;
 static lv_obj_t *_vrate_label = nullptr;
 static lv_obj_t *_dist_label = nullptr;
 static lv_obj_t *_squawk_label = nullptr;
+static lv_obj_t *_bearing_label = nullptr;
+static lv_obj_t *_status_label = nullptr;
 static lv_obj_t *_photo_placeholder = nullptr;
 static lv_obj_t *_loading_spinner = nullptr;
 
@@ -126,14 +128,18 @@ void detail_card_init(lv_obj_t *parent) {
     lv_obj_set_pos(_loading_spinner, 700, 16);
     lv_obj_add_flag(_loading_spinner, LV_OBJ_FLAG_HIDDEN);
 
-    // Data grid (bottom section)
-    int y = 140;
-    make_data_row(_card, "ALTITUDE", 0, y, &_alt_label);
-    make_data_row(_card, "SPEED", 160, y, &_spd_label);
-    make_data_row(_card, "HEADING", 320, y, &_hdg_label);
-    make_data_row(_card, "V/S", 480, y, &_vrate_label);
-    make_data_row(_card, "DISTANCE", 640, y, &_dist_label);
-    make_data_row(_card, "SQUAWK", 800, y, &_squawk_label);
+    // Data grid — 2 rows
+    int y1 = 140;
+    make_data_row(_card, "ALTITUDE", 0, y1, &_alt_label);
+    make_data_row(_card, "SPEED", 160, y1, &_spd_label);
+    make_data_row(_card, "HEADING", 320, y1, &_hdg_label);
+    make_data_row(_card, "V/S", 480, y1, &_vrate_label);
+    make_data_row(_card, "SQUAWK", 640, y1, &_squawk_label);
+
+    int y2 = 190;
+    make_data_row(_card, "DISTANCE", 0, y2, &_dist_label);
+    make_data_row(_card, "BEARING", 160, y2, &_bearing_label);
+    make_data_row(_card, "STATUS", 320, y2, &_status_label);
 
     // Tap to close
     lv_obj_add_event_cb(_card, [](lv_event_t *e) {
@@ -154,16 +160,38 @@ void detail_card_show(const Aircraft *ac) {
     lv_label_set_text(_route_label, "");
     lv_label_set_text(_photo_placeholder, "");
 
+    // Show route from aircraft struct if available
+    if (ac->origin[0] && ac->origin[0] != '-' && ac->dest[0] && ac->dest[0] != '-') {
+        lv_label_set_text_fmt(_route_label, "%s -> %s", ac->origin, ac->dest);
+    }
+
     // Live data
     if (ac->on_ground) lv_label_set_text(_alt_label, "GND");
     else lv_label_set_text_fmt(_alt_label, "%d ft", ac->altitude);
     lv_label_set_text_fmt(_spd_label, "%d kts", ac->speed);
     lv_label_set_text_fmt(_hdg_label, "%03d\xC2\xB0", ac->heading);
     lv_label_set_text_fmt(_vrate_label, "%+d fpm", ac->vert_rate);
+    lv_label_set_text_fmt(_squawk_label, "%04d", ac->squawk);
 
     float dist = MapProjection::distance_nm(HOME_LAT, HOME_LON, ac->lat, ac->lon);
     lv_label_set_text_fmt(_dist_label, "%.1f nm", dist);
-    lv_label_set_text_fmt(_squawk_label, "%04d", ac->squawk);
+
+    // Bearing from home to aircraft
+    float dlat = (ac->lat - HOME_LAT) * M_PI / 180.0f;
+    float dlon = (ac->lon - HOME_LON) * M_PI / 180.0f;
+    float y = sinf(dlon) * cosf(ac->lat * M_PI / 180.0f);
+    float x = cosf(HOME_LAT * M_PI / 180.0f) * sinf(ac->lat * M_PI / 180.0f) -
+              sinf(HOME_LAT * M_PI / 180.0f) * cosf(ac->lat * M_PI / 180.0f) * cosf(dlon);
+    int bearing = (int)(atan2f(y, x) * 180.0f / M_PI + 360.0f) % 360;
+    lv_label_set_text_fmt(_bearing_label, "%03d\xC2\xB0", bearing);
+
+    // Flight status
+    const char *status;
+    if (ac->on_ground) status = "On Ground";
+    else if (ac->vert_rate > 300) status = "Climbing";
+    else if (ac->vert_rate < -300) status = "Descending";
+    else status = "Cruising";
+    lv_label_set_text(_status_label, status);
 
     // Slide in
     _visible = true;

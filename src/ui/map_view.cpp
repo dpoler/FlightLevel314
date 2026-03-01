@@ -14,84 +14,126 @@ static MapProjection _proj;
 static const float ZOOM_LEVELS[] = {50.0f, 20.0f, 5.0f};
 static int _zoom_idx = 0;
 
-// Map filters
-enum FilterBit : uint8_t {
-    FILT_AIRLINE  = 0x01,
-    FILT_MILITARY = 0x02,
-    FILT_EMERGENCY= 0x04,
-    FILT_HELI     = 0x08,
-    FILT_FAST     = 0x10,
-    FILT_SLOW     = 0x20,
-    FILT_ODDBALL  = 0x40,
-};
+// Map filter — single-select, -1 = show all
+#define FILT_NONE     -1
+#define FILT_AIRLINE   0
+#define FILT_MILITARY  1
+#define FILT_EMERGENCY 2
+#define FILT_HELI      3
+#define FILT_FAST      4
+#define FILT_SLOW      5
+#define FILT_ODDBALL   6
+#define NUM_FILTERS    7
 
-static uint8_t _active_filters = 0; // bitmask, 0 = show all
+static int _active_filter = FILT_NONE;
+static bool _filter_just_clicked = false; // guard against zoom cycle
 
 struct FilterDef {
     const char *label;
-    uint8_t bit;
     lv_color_t color;
     lv_obj_t *btn;
     lv_obj_t *lbl;
 };
 
 static FilterDef _filters[] = {
-    {"COM",  FILT_AIRLINE,   lv_color_hex(0x4488ff), nullptr, nullptr},
-    {"MIL",  FILT_MILITARY,  lv_color_hex(0xffaa00), nullptr, nullptr},
-    {"EMG",  FILT_EMERGENCY, lv_color_hex(0xff3333), nullptr, nullptr},
-    {"HELI", FILT_HELI,      lv_color_hex(0x44ddaa), nullptr, nullptr},
-    {"FAST", FILT_FAST,      lv_color_hex(0xff66cc), nullptr, nullptr},
-    {"SLOW", FILT_SLOW,      lv_color_hex(0x88aacc), nullptr, nullptr},
-    {"ODD",  FILT_ODDBALL,   lv_color_hex(0xcc88ff), nullptr, nullptr},
+    {"COM",  lv_color_hex(0x4488ff), nullptr, nullptr},
+    {"MIL",  lv_color_hex(0xffaa00), nullptr, nullptr},
+    {"EMG",  lv_color_hex(0xff3333), nullptr, nullptr},
+    {"HELI", lv_color_hex(0x44ddaa), nullptr, nullptr},
+    {"FAST", lv_color_hex(0xff66cc), nullptr, nullptr},
+    {"SLOW", lv_color_hex(0x88aacc), nullptr, nullptr},
+    {"ODD",  lv_color_hex(0xcc88ff), nullptr, nullptr},
 };
-#define NUM_FILTERS 7
 
-// Classify an aircraft against filter bits
-static bool aircraft_matches_filter(const Aircraft &ac) {
-    if (_active_filters == 0) return true; // no filters = show all
+// Helper: does callsign look like an airline ICAO code?
+static bool is_airline_callsign(const char *cs) {
+    return cs[0] >= 'A' && cs[0] <= 'Z' &&
+           cs[1] >= 'A' && cs[1] <= 'Z' &&
+           cs[2] >= 'A' && cs[2] <= 'Z' &&
+           cs[3] >= '0' && cs[3] <= '9';
+}
 
-    // Airline: 3-letter ICAO prefix callsign (e.g. AAL, DAL, SWA) or category A3+
-    if (_active_filters & FILT_AIRLINE) {
-        bool is_airline = false;
-        if (ac.callsign[0] >= 'A' && ac.callsign[0] <= 'Z' &&
-            ac.callsign[1] >= 'A' && ac.callsign[1] <= 'Z' &&
-            ac.callsign[2] >= 'A' && ac.callsign[2] <= 'Z' &&
-            ac.callsign[3] >= '0' && ac.callsign[3] <= '9') {
-            is_airline = true;
-        }
-        if (ac.category[0] == 'A' && ac.category[1] >= '3') is_airline = true;
-        if (is_airline) return true;
+// Helper: check type_code against known helicopter types
+static bool is_heli_type(const char *t) {
+    static const char *heli_types[] = {
+        "R22", "R44", "R66", "EC35", "EC45", "EC55",
+        "A109", "A139", "A169", "B06", "B212", "B412",
+        "S76", "S92", "B407", "B429", "B505",
+        "H135", "H145", "H160", "H175", "H225",
+        "AS50", "AS55", "AS65", "MD52", "MD60",
+        "NH90", "CH47", "V22", "UH1", "BK17",
+        nullptr
+    };
+    for (int i = 0; heli_types[i]; i++) {
+        if (strcmp(t, heli_types[i]) == 0) return true;
     }
-
-    if ((_active_filters & FILT_MILITARY) && ac.is_military) return true;
-    if ((_active_filters & FILT_EMERGENCY) && ac.is_emergency) return true;
-
-    // Rotorcraft: category A7
-    if (_active_filters & FILT_HELI) {
-        if (ac.category[0] == 'A' && ac.category[1] == '7') return true;
-    }
-
-    // Fast movers: >300kt, not on ground
-    if ((_active_filters & FILT_FAST) && ac.speed > 300 && !ac.on_ground) return true;
-
-    // Slow movers: <100kt, airborne
-    if ((_active_filters & FILT_SLOW) && ac.speed > 0 && ac.speed < 100 && !ac.on_ground) return true;
-
-    // Oddballs: B-categories (glider, blimp, parachute, ultralight, UAV), or A1 non-airline
-    if (_active_filters & FILT_ODDBALL) {
-        if (ac.category[0] == 'B') return true;
-        if (ac.category[0] == 'A' && ac.category[1] == '1') {
-            // Light aircraft without airline callsign
-            bool has_airline_call = (ac.callsign[0] >= 'A' && ac.callsign[2] >= 'A' &&
-                                     ac.callsign[3] >= '0');
-            if (!has_airline_call) return true;
-        }
-    }
-
     return false;
 }
 
-static void update_filter_visuals();
+// Single-filter match
+static bool aircraft_passes_filter(const Aircraft &ac) {
+    if (_active_filter == FILT_NONE) return true;
+
+    switch (_active_filter) {
+        case FILT_AIRLINE:
+            if (is_airline_callsign(ac.callsign)) return true;
+            if (ac.category[0] == 'A' && ac.category[1] >= '3') return true;
+            return false;
+        case FILT_MILITARY:
+            return ac.is_military;
+        case FILT_EMERGENCY:
+            return ac.is_emergency;
+        case FILT_HELI:
+            if (ac.category[0] == 'A' && ac.category[1] == '7') return true;
+            if (ac.type_code[0] && is_heli_type(ac.type_code)) return true;
+            return false;
+        case FILT_FAST:
+            return ac.speed > 300 && !ac.on_ground;
+        case FILT_SLOW:
+            return ac.speed > 0 && ac.speed < 100 && !ac.on_ground;
+        case FILT_ODDBALL:
+            if (ac.category[0] == 'B') return true;
+            if (ac.registration[0] == 'N' && !is_airline_callsign(ac.callsign)) {
+                if (ac.category[0] == 'A' && (ac.category[1] == '1' || ac.category[1] == '2')) return true;
+                if (!ac.category[0] && ac.speed < 200) return true;
+            }
+            return false;
+    }
+    return true;
+}
+
+static void update_filter_visuals() {
+    for (int i = 0; i < NUM_FILTERS; i++) {
+        bool active = (_active_filter == i);
+        if (active) {
+            lv_obj_set_style_bg_color(_filters[i].btn, _filters[i].color, 0);
+            lv_obj_set_style_bg_opa(_filters[i].btn, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_color(_filters[i].btn, lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_border_width(_filters[i].btn, 2, 0);
+            lv_obj_set_style_border_opa(_filters[i].btn, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(_filters[i].lbl, lv_color_hex(0x000000), 0);
+        } else {
+            lv_obj_set_style_bg_color(_filters[i].btn, lv_color_hex(0x0a0a1a), 0);
+            lv_obj_set_style_bg_opa(_filters[i].btn, LV_OPA_70, 0);
+            lv_obj_set_style_border_color(_filters[i].btn, _filters[i].color, 0);
+            lv_obj_set_style_border_width(_filters[i].btn, 1, 0);
+            lv_obj_set_style_border_opa(_filters[i].btn, LV_OPA_40, 0);
+            lv_obj_set_style_text_color(_filters[i].lbl, lv_color_hex(0x666666), 0);
+        }
+    }
+    if (_canvas) lv_obj_invalidate(_canvas);
+}
+
+static void filter_click_cb(lv_event_t *e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    _filter_just_clicked = true; // prevent zoom cycle
+    if (_active_filter == idx) {
+        _active_filter = FILT_NONE; // toggle off
+    } else {
+        _active_filter = idx; // switch to this filter
+    }
+    update_filter_visuals();
+}
 
 #define CANVAS_W LCD_H_RES
 #define CANVAS_H (LCD_V_RES - 30)  // minus status bar
@@ -101,10 +143,8 @@ static void draw_grid(lv_layer_t *layer) {
     float radius_nm = ZOOM_LEVELS[_zoom_idx];
     float cos_lat = cosf(_proj.center_lat * M_PI / 180.0f);
 
-    // Choose grid spacing based on zoom: 1° for wide, 0.5° for mid, 0.1° for close
     float grid_deg = radius_nm >= 30 ? 1.0f : (radius_nm >= 10 ? 0.5f : 0.1f);
 
-    // Viewport bounds
     float half_h_nm = radius_nm;
     float half_w_nm = radius_nm * (float)CANVAS_W / (float)CANVAS_H;
     float north = _proj.center_lat + half_h_nm / 60.0f;
@@ -118,7 +158,6 @@ static void draw_grid(lv_layer_t *layer) {
     line_dsc.width = 1;
     line_dsc.opa = LV_OPA_COVER;
 
-    // Longitude lines (vertical)
     float lon_start = floorf(west / grid_deg) * grid_deg;
     for (float lon = lon_start; lon <= east; lon += grid_deg) {
         int x1, y1, x2, y2;
@@ -129,7 +168,6 @@ static void draw_grid(lv_layer_t *layer) {
         lv_draw_line(layer, &line_dsc);
     }
 
-    // Latitude lines (horizontal)
     float lat_start = floorf(south / grid_deg) * grid_deg;
     for (float lat = lat_start; lat <= north; lat += grid_deg) {
         int x1, y1, x2, y2;
@@ -152,7 +190,6 @@ static void draw_range_rings(lv_layer_t *layer) {
     float radius_nm = ZOOM_LEVELS[_zoom_idx];
     float scale = (float)CANVAS_H / (radius_nm * 2.0f);
 
-    // Draw rings at regular intervals
     float ring_interval = radius_nm <= 10 ? 2.0f : (radius_nm <= 25 ? 5.0f : 10.0f);
     for (float r = ring_interval; r <= radius_nm; r += ring_interval) {
         int pixel_r = (int)(r * scale);
@@ -167,18 +204,15 @@ static void draw_home_marker(lv_layer_t *layer) {
     int hx, hy;
     if (!_proj.to_screen(HOME_LAT, HOME_LON, hx, hy)) return;
 
-    // Crosshair
     lv_draw_line_dsc_t line_dsc;
     lv_draw_line_dsc_init(&line_dsc);
     line_dsc.color = lv_color_hex(0x4488ff);
     line_dsc.width = 1;
 
-    // Horizontal line
     line_dsc.p1 = {(lv_value_precise_t)(hx - 8), (lv_value_precise_t)hy};
     line_dsc.p2 = {(lv_value_precise_t)(hx + 8), (lv_value_precise_t)hy};
     lv_draw_line(layer, &line_dsc);
 
-    // Vertical line
     line_dsc.p1 = {(lv_value_precise_t)hx, (lv_value_precise_t)(hy - 8)};
     line_dsc.p2 = {(lv_value_precise_t)hx, (lv_value_precise_t)(hy + 8)};
     lv_draw_line(layer, &line_dsc);
@@ -192,12 +226,14 @@ static void draw_aircraft(lv_layer_t *layer) {
         Aircraft &ac = _list->aircraft[i];
         uint8_t ac_opa = compute_aircraft_opacity(ac.stale_since, now);
         if (ac_opa == 0) continue;
-        if (!aircraft_matches_filter(ac)) continue;
+        if (!aircraft_passes_filter(ac)) continue;
 
         int sx, sy;
         if (!_proj.to_screen(ac.lat, ac.lon, sx, sy)) continue;
 
-        lv_color_t color = altitude_color(ac.altitude);
+        lv_color_t color = ac.is_military ? lv_color_hex(0xffaa00) :
+                           ac.is_emergency ? lv_color_hex(0xff3333) :
+                           altitude_color(ac.altitude);
 
         // Draw trail
         if (ac.trail_count > 1) {
@@ -218,7 +254,7 @@ static void draw_aircraft(lv_layer_t *layer) {
             }
         }
 
-        // Draw heading line (direction of travel)
+        // Draw heading line
         float heading_rad = ac.heading * M_PI / 180.0f;
         int hdg_x = sx + (int)(14 * sinf(heading_rad));
         int hdg_y = sy - (int)(14 * cosf(heading_rad));
@@ -231,15 +267,35 @@ static void draw_aircraft(lv_layer_t *layer) {
         hdg_dsc.p2 = {(lv_value_precise_t)hdg_x, (lv_value_precise_t)hdg_y};
         lv_draw_line(layer, &hdg_dsc);
 
-        // Draw aircraft dot
-        lv_draw_rect_dsc_t dot_dsc;
-        lv_draw_rect_dsc_init(&dot_dsc);
-        dot_dsc.bg_color = color;
-        dot_dsc.bg_opa = ac_opa;
-        dot_dsc.radius = 3;
-        lv_area_t dot_area = {(lv_coord_t)(sx - 3), (lv_coord_t)(sy - 3),
-                               (lv_coord_t)(sx + 3), (lv_coord_t)(sy + 3)};
-        lv_draw_rect(layer, &dot_dsc, &dot_area);
+        // Draw aircraft marker (diamond for military, dot for civilian)
+        if (ac.is_military) {
+            lv_draw_line_dsc_t dm;
+            lv_draw_line_dsc_init(&dm);
+            dm.color = color;
+            dm.width = 2;
+            dm.opa = ac_opa;
+            int d = 5;
+            lv_point_precise_t pts[] = {
+                {(lv_value_precise_t)sx, (lv_value_precise_t)(sy - d)},
+                {(lv_value_precise_t)(sx + d), (lv_value_precise_t)sy},
+                {(lv_value_precise_t)sx, (lv_value_precise_t)(sy + d)},
+                {(lv_value_precise_t)(sx - d), (lv_value_precise_t)sy},
+            };
+            for (int j = 0; j < 4; j++) {
+                dm.p1 = {pts[j].x, pts[j].y};
+                dm.p2 = {pts[(j + 1) % 4].x, pts[(j + 1) % 4].y};
+                lv_draw_line(layer, &dm);
+            }
+        } else {
+            lv_draw_rect_dsc_t dot_dsc;
+            lv_draw_rect_dsc_init(&dot_dsc);
+            dot_dsc.bg_color = color;
+            dot_dsc.bg_opa = ac_opa;
+            dot_dsc.radius = 3;
+            lv_area_t dot_area = {(lv_coord_t)(sx - 3), (lv_coord_t)(sy - 3),
+                                   (lv_coord_t)(sx + 3), (lv_coord_t)(sy + 3)};
+            lv_draw_rect(layer, &dot_dsc, &dot_area);
+        }
 
         // Draw callsign label
         const char *label_text = ac.callsign[0] ? ac.callsign : ac.icao_hex;
@@ -258,7 +314,6 @@ static void draw_aircraft(lv_layer_t *layer) {
 }
 
 static void draw_altitude_legend(lv_layer_t *layer) {
-    // Bottom-left corner altitude color key
     struct { const char *label; lv_color_t color; } entries[] = {
         {"GND",  lv_color_hex(0x666666)},
         {"<5k",  lv_color_hex(0x00cc44)},
@@ -272,7 +327,6 @@ static void draw_altitude_legend(lv_layer_t *layer) {
     int y = CANVAS_H - 16;
 
     for (int i = 0; i < 6; i++) {
-        // Color swatch
         lv_draw_rect_dsc_t swatch;
         lv_draw_rect_dsc_init(&swatch);
         swatch.bg_color = entries[i].color;
@@ -282,7 +336,6 @@ static void draw_altitude_legend(lv_layer_t *layer) {
                         (lv_coord_t)(x + 8), (lv_coord_t)(y + 8)};
         lv_draw_rect(layer, &swatch, &sa);
 
-        // Label
         lv_draw_label_dsc_t lbl;
         lv_draw_label_dsc_init(&lbl);
         lbl.color = entries[i].color;
@@ -297,39 +350,39 @@ static void draw_altitude_legend(lv_layer_t *layer) {
     }
 }
 
+// Draw active filter indicator on canvas
+static void draw_filter_label(lv_layer_t *layer) {
+    if (_active_filter == FILT_NONE) return;
+
+    const char *names[] = {"COMMERCIAL", "MILITARY", "EMERGENCY", "HELICOPTERS", "FAST >300kt", "SLOW <100kt", "ODDBALL"};
+    char buf[32];
+    snprintf(buf, sizeof(buf), "FILTER: %s", names[_active_filter]);
+
+    lv_draw_label_dsc_t lbl;
+    lv_draw_label_dsc_init(&lbl);
+    lbl.color = _filters[_active_filter].color;
+    lbl.font = &lv_font_montserrat_14;
+    lbl.opa = LV_OPA_COVER;
+    lbl.text = buf;
+    lv_area_t la = {(lv_coord_t)8, (lv_coord_t)4,
+                    (lv_coord_t)300, (lv_coord_t)20};
+    lv_draw_label(layer, &lbl, &la);
+}
+
 static void canvas_draw_cb(lv_event_t *e) {
     lv_layer_t *layer = lv_event_get_layer(e);
 
-    draw_grid(layer);        // lat/lon grid background
-    draw_range_rings(layer); // overlay
+    draw_grid(layer);
+    draw_range_rings(layer);
     draw_home_marker(layer);
-    draw_aircraft(layer);    // foreground
+    draw_aircraft(layer);
     draw_altitude_legend(layer);
-}
-
-static void update_filter_visuals() {
-    for (int i = 0; i < NUM_FILTERS; i++) {
-        bool active = (_active_filters & _filters[i].bit) != 0;
-        lv_obj_set_style_bg_color(_filters[i].btn,
-            active ? _filters[i].color : lv_color_hex(0x1a1a2a), 0);
-        lv_obj_set_style_bg_opa(_filters[i].btn,
-            active ? LV_OPA_80 : LV_OPA_50, 0);
-        lv_obj_set_style_text_color(_filters[i].lbl,
-            active ? lv_color_hex(0x000000) : lv_color_hex(0x888888), 0);
-    }
-    if (_canvas) lv_obj_invalidate(_canvas);
-}
-
-static void filter_click_cb(lv_event_t *e) {
-    uint8_t bit = (uint8_t)(intptr_t)lv_event_get_user_data(e);
-    _active_filters ^= bit; // toggle
-    update_filter_visuals();
+    draw_filter_label(layer);
 }
 
 void map_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
 
-    // Setup projection
     _proj.center_lat = HOME_LAT;
     _proj.center_lon = HOME_LON;
     _proj.radius_nm = ZOOM_LEVELS[_zoom_idx];
@@ -338,7 +391,6 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
     _proj.offset_x = 0;
     _proj.offset_y = 0;
 
-    // Create a container that we'll draw on using LVGL's draw events
     _canvas = lv_obj_create(parent);
     lv_obj_set_size(_canvas, CANVAS_W, CANVAS_H);
     lv_obj_set_pos(_canvas, 0, 0);
@@ -349,19 +401,23 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_pad_all(_canvas, 0, 0);
     lv_obj_clear_flag(_canvas, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Use draw event for custom rendering
     lv_obj_add_event_cb(_canvas, canvas_draw_cb, LV_EVENT_DRAW_MAIN_END, nullptr);
 
-    // Tap: aircraft hit-test → detail card, or cycle zoom
+    // Tap: aircraft hit-test -> detail card, or cycle zoom
     lv_obj_add_event_cb(_canvas, [](lv_event_t *e) {
         if (views_get_active_index() != VIEW_MAP) return;
+
+        // Guard: skip if a filter button was just clicked
+        if (_filter_just_clicked) {
+            _filter_just_clicked = false;
+            return;
+        }
 
         lv_point_t point;
         lv_indev_get_point(lv_indev_active(), &point);
 
-        // Adjust for canvas position
         int tx = point.x;
-        int ty = point.y - 30; // status bar offset
+        int ty = point.y - 30;
 
         if (detail_card_is_visible()) {
             detail_card_hide();
@@ -375,7 +431,7 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
             if (_proj.to_screen(_list->aircraft[i].lat, _list->aircraft[i].lon, sx, sy)) {
                 int dx = tx - sx;
                 int dy = ty - sy;
-                if (dx * dx + dy * dy < 400) { // 20px radius
+                if (dx * dx + dy * dy < 400) {
                     Aircraft ac_copy = _list->aircraft[i];
                     _list->unlock();
                     detail_card_show(&ac_copy);
@@ -388,39 +444,37 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         // No aircraft hit — cycle zoom
         _zoom_idx = (_zoom_idx + 1) % 3;
         _proj.radius_nm = ZOOM_LEVELS[_zoom_idx];
-        // tile_cache_flush_queue();
         lv_obj_invalidate(_canvas);
     }, LV_EVENT_CLICKED, nullptr);
 
-    // Filter toggle buttons — top-right of map
+    // Filter toggle buttons — top-right, single-select exclusive
     int btn_x = CANVAS_W - (NUM_FILTERS * 54) - 4;
     for (int i = 0; i < NUM_FILTERS; i++) {
         lv_obj_t *btn = lv_obj_create(parent);
         lv_obj_set_size(btn, 50, 22);
         lv_obj_set_pos(btn, btn_x + i * 54, 4);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1a1a2a), 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_50, 0);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x0a0a1a), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_70, 0);
         lv_obj_set_style_border_color(btn, _filters[i].color, 0);
         lv_obj_set_style_border_width(btn, 1, 0);
-        lv_obj_set_style_border_opa(btn, LV_OPA_60, 0);
+        lv_obj_set_style_border_opa(btn, LV_OPA_40, 0);
         lv_obj_set_style_radius(btn, 4, 0);
         lv_obj_set_style_pad_all(btn, 0, 0);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
-        // lv_obj_create sets CLICKABLE by default
         lv_obj_add_event_cb(btn, filter_click_cb, LV_EVENT_CLICKED,
-                            (void *)(intptr_t)_filters[i].bit);
+                            (void *)(intptr_t)i);
 
         lv_obj_t *lbl = lv_label_create(btn);
         lv_label_set_text(lbl, _filters[i].label);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888), 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x666666), 0);
         lv_obj_center(lbl);
 
         _filters[i].btn = btn;
         _filters[i].lbl = lbl;
     }
 
-    // Periodic refresh — only when map view is active
+    // Periodic refresh
     lv_timer_create([](lv_timer_t *t) {
         if (views_get_active_index() == VIEW_MAP) {
             lv_obj_invalidate(_canvas);
