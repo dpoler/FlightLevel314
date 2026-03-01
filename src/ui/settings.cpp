@@ -88,7 +88,7 @@ static void save_and_close(lv_event_t *e) {
     _cfg.use_metric = lv_obj_has_state(_sw_metric, LV_STATE_CHECKED);
 
     storage_save_config(_cfg);
-    Serial.println("Config saved to SD card");
+    Serial.println("Config saved to NVS");
     settings_hide();
 }
 

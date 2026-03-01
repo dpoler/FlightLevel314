@@ -28,6 +28,7 @@ struct Aircraft {
     bool is_emergency;
     bool is_watched;
     uint32_t last_seen;     // millis() timestamp
+    uint32_t stale_since;   // 0 = fresh, else millis() when first went stale
     TrailPoint trail[60];
     uint8_t trail_count;
 
@@ -35,6 +36,17 @@ struct Aircraft {
         memset(this, 0, sizeof(Aircraft));
     }
 };
+
+#define GHOST_TIMEOUT_MS 30000
+
+// Compute opacity for stale (ghost) aircraft: 255→0 over 30s
+// Caller must pass current millis() value
+static inline uint8_t compute_aircraft_opacity(uint32_t stale_since, uint32_t now_ms) {
+    if (stale_since == 0) return 255;
+    uint32_t elapsed = now_ms - stale_since;
+    if (elapsed >= GHOST_TIMEOUT_MS) return 0;
+    return (uint8_t)(255 - (elapsed * 255 / GHOST_TIMEOUT_MS));
+}
 
 // Thread-safe aircraft list
 class AircraftList {

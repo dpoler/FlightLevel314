@@ -6,6 +6,7 @@
 #include "driver/i2c_master.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_mipi_dsi.h"
+#include "esp_heap_caps.h"
 #include "pins_config.h"
 #include "config.h"
 #include "hal/jd9165_lcd.h"
@@ -18,6 +19,9 @@
 #include "ui/alerts.h"
 #include "ui/settings.h"
 #include "ui/tile_cache.h"
+#include "ui/map_view.h"
+#include "ui/radar_view.h"
+#include "ui/arrivals_view.h"
 
 // Hardware drivers
 static jd9165_lcd lcd(LCD_RST);
@@ -34,7 +38,6 @@ static uint16_t *buf1;
 // Display flush callback
 static void disp_flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *color_map) {
     lcd.lcd_draw_bitmap(area->x1, area->y1, area->x2 + 1, area->y2 + 1, (uint16_t *)color_map);
-    // For DPI panel: flush_ready called via vsync callback
 }
 
 // Vsync callback — signals LVGL that flush is complete
@@ -60,6 +63,10 @@ void setup() {
     Serial.begin(115200);
     Serial.println("ADS-B Display starting...");
 
+    Serial.printf("Heap free: %lu  PSRAM free: %lu\n",
+        (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
     // Init I2C bus 1 (MUST be before touch.begin())
     i2c_master_bus_handle_t i2c_handle = NULL;
     i2c_master_bus_config_t i2c_bus_conf = {
@@ -83,6 +90,7 @@ void setup() {
 
     // Init LVGL
     lv_init();
+    lv_tick_set_cb([]() -> uint32_t { return (uint32_t)millis(); });
 
     // Allocate framebuffers in PSRAM
     uint32_t buf_size = LCD_H_RES * LCD_V_RES;
@@ -112,22 +120,31 @@ void setup() {
     // Init aircraft data
     aircraft_list.init();
 
-    // Start data fetcher on core 1
-    fetcher_init(&aircraft_list);
-
-    // Start tile cache (background fetch task + SD card cache)
-    tile_cache_init();
-
-    // Create UI
+    // Create UI — LVGL must be fully set up before background tasks
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x0a0a1a), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
 
+    Serial.println("Creating status bar...");
     status_bar_create(screen);
+    Serial.println("Status bar OK");
+
+    Serial.println("views_init...");
     views_init(screen, &aircraft_list);
+    Serial.println("views OK");
+
+    Serial.println("detail_card_init...");
     detail_card_init(screen);
+    Serial.println("detail_card OK");
+
+    Serial.println("alerts_init...");
     alerts_init(screen);
+    Serial.println("alerts OK");
+
+    Serial.println("settings_init...");
     settings_init(screen);
+    Serial.println("settings OK");
+
     status_bar_set_gear_callback([](lv_event_t *e) {
         settings_show();
     });
@@ -138,6 +155,12 @@ void setup() {
     }, 1000, nullptr);
 
     Serial.println("LVGL initialized - UI ready");
+    Serial.printf("Heap free: %lu  PSRAM free: %lu\n",
+        (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+    fetcher_init(&aircraft_list);
+    // tile_cache_init(); // disabled: lv_draw_image broken on ESP32-P4 PPA
 }
 
 void loop() {

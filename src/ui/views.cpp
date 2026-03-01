@@ -7,6 +7,7 @@
 
 static lv_obj_t *tileview;
 static lv_obj_t *tiles[3];
+static int _active_index = VIEW_MAP;
 
 #define STATUS_BAR_HEIGHT 30
 #define CONTENT_Y STATUS_BAR_HEIGHT
@@ -17,6 +18,7 @@ static void tileview_changed_cb(lv_event_t *e) {
     lv_obj_t *active = lv_tileview_get_tile_active(tv);
     for (int i = 0; i < 3; i++) {
         if (tiles[i] == active) {
+            _active_index = i;
             status_bar_set_active_dot(i);
             break;
         }
@@ -46,4 +48,12 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
 
 lv_obj_t *views_get_tile(int view_index) {
     return tiles[view_index];
+}
+
+int views_get_active_index() {
+    return _active_index;
+}
+
+lv_obj_t *views_get_tileview() {
+    return tileview;
 }

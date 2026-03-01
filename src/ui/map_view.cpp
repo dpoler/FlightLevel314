@@ -1,6 +1,8 @@
+#include <Arduino.h>
 #include "map_view.h"
 #include "detail_card.h"
-#include "tile_cache.h"
+#include "views.h"
+// #include "tile_cache.h" // disabled: tiles broken on ESP32-P4
 #include "../config.h"
 #include "../pins_config.h"
 
@@ -16,71 +18,47 @@ static int _zoom_idx = 0;
 #define CANVAS_H (LCD_V_RES - 30)  // minus status bar
 #define BG_COLOR lv_color_hex(0x0a0a1a)
 
-static void draw_tiles(lv_layer_t *layer) {
+static void draw_grid(lv_layer_t *layer) {
     float radius_nm = ZOOM_LEVELS[_zoom_idx];
-    int z = osm_zoom_for_radius(radius_nm, CANVAS_H, _proj.center_lat);
     float cos_lat = cosf(_proj.center_lat * M_PI / 180.0f);
 
-    // Viewport bounds in lat/lon
+    // Choose grid spacing based on zoom: 1° for wide, 0.5° for mid, 0.1° for close
+    float grid_deg = radius_nm >= 30 ? 1.0f : (radius_nm >= 10 ? 0.5f : 0.1f);
+
+    // Viewport bounds
     float half_h_nm = radius_nm;
     float half_w_nm = radius_nm * (float)CANVAS_W / (float)CANVAS_H;
-
     float north = _proj.center_lat + half_h_nm / 60.0f;
     float south = _proj.center_lat - half_h_nm / 60.0f;
     float east = _proj.center_lon + half_w_nm / (60.0f * cos_lat);
     float west = _proj.center_lon - half_w_nm / (60.0f * cos_lat);
 
-    // Tile range covering viewport
-    int tx_min = osm_lon_to_x(west, z);
-    int tx_max = osm_lon_to_x(east, z);
-    int ty_min = osm_lat_to_y(north, z); // y increases southward
-    int ty_max = osm_lat_to_y(south, z);
+    lv_draw_line_dsc_t line_dsc;
+    lv_draw_line_dsc_init(&line_dsc);
+    line_dsc.color = lv_color_hex(0x0d1a2a);
+    line_dsc.width = 1;
+    line_dsc.opa = LV_OPA_COVER;
 
-    for (int ty = ty_min; ty <= ty_max; ty++) {
-        for (int tx = tx_min; tx <= tx_max; tx++) {
-            uint16_t *pixels = tile_cache_get(z, tx, ty);
-            if (!pixels) continue;
+    // Longitude lines (vertical)
+    float lon_start = floorf(west / grid_deg) * grid_deg;
+    for (float lon = lon_start; lon <= east; lon += grid_deg) {
+        int x1, y1, x2, y2;
+        _proj.to_screen(north, lon, x1, y1);
+        _proj.to_screen(south, lon, x2, y2);
+        line_dsc.p1 = {(lv_value_precise_t)x1, (lv_value_precise_t)y1};
+        line_dsc.p2 = {(lv_value_precise_t)x2, (lv_value_precise_t)y2};
+        lv_draw_line(layer, &line_dsc);
+    }
 
-            // Tile corner coordinates
-            float tile_nw_lon = osm_x_to_lon(tx, z);
-            float tile_nw_lat = osm_y_to_lat(ty, z);
-            float tile_se_lon = osm_x_to_lon(tx + 1, z);
-            float tile_se_lat = osm_y_to_lat(ty + 1, z);
-
-            // Convert to screen coords
-            int sx1, sy1, sx2, sy2;
-            _proj.to_screen(tile_nw_lat, tile_nw_lon, sx1, sy1);
-            _proj.to_screen(tile_se_lat, tile_se_lon, sx2, sy2);
-
-            int target_w = sx2 - sx1;
-            int target_h = sy2 - sy1;
-            if (target_w <= 0 || target_h <= 0) continue;
-
-            // Build image descriptor pointing to PSRAM pixel data
-            lv_image_dsc_t img_dsc;
-            memset(&img_dsc, 0, sizeof(img_dsc));
-            img_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-            img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-            img_dsc.header.w = TILE_PX;
-            img_dsc.header.h = TILE_PX;
-            img_dsc.data_size = TILE_PX * TILE_PX * 2;
-            img_dsc.data = (const uint8_t *)pixels;
-
-            lv_draw_image_dsc_t draw_dsc;
-            lv_draw_image_dsc_init(&draw_dsc);
-            draw_dsc.src = &img_dsc;
-            draw_dsc.opa = LV_OPA_70; // slight transparency so aircraft stand out
-            draw_dsc.scale_x = (int32_t)target_w * 256 / TILE_PX;
-            draw_dsc.scale_y = (int32_t)target_h * 256 / TILE_PX;
-            draw_dsc.pivot.x = 0;
-            draw_dsc.pivot.y = 0;
-
-            lv_area_t area = {
-                (lv_coord_t)sx1, (lv_coord_t)sy1,
-                (lv_coord_t)(sx1 + TILE_PX - 1), (lv_coord_t)(sy1 + TILE_PX - 1)
-            };
-            lv_draw_image(layer, &draw_dsc, &area);
-        }
+    // Latitude lines (horizontal)
+    float lat_start = floorf(south / grid_deg) * grid_deg;
+    for (float lat = lat_start; lat <= north; lat += grid_deg) {
+        int x1, y1, x2, y2;
+        _proj.to_screen(lat, west, x1, y1);
+        _proj.to_screen(lat, east, x2, y2);
+        line_dsc.p1 = {(lv_value_precise_t)x1, (lv_value_precise_t)y1};
+        line_dsc.p2 = {(lv_value_precise_t)x2, (lv_value_precise_t)y2};
+        lv_draw_line(layer, &line_dsc);
     }
 }
 
@@ -130,8 +108,12 @@ static void draw_home_marker(lv_layer_t *layer) {
 static void draw_aircraft(lv_layer_t *layer) {
     if (!_list->lock(pdMS_TO_TICKS(50))) return;
 
+    uint32_t now = millis();
     for (int i = 0; i < _list->count; i++) {
         Aircraft &ac = _list->aircraft[i];
+        uint8_t ac_opa = compute_aircraft_opacity(ac.stale_since, now);
+        if (ac_opa == 0) continue;
+
         int sx, sy;
         if (!_proj.to_screen(ac.lat, ac.lon, sx, sy)) continue;
 
@@ -164,6 +146,7 @@ static void draw_aircraft(lv_layer_t *layer) {
         lv_draw_line_dsc_init(&hdg_dsc);
         hdg_dsc.color = color;
         hdg_dsc.width = 2;
+        hdg_dsc.opa = ac_opa;
         hdg_dsc.p1 = {(lv_value_precise_t)sx, (lv_value_precise_t)sy};
         hdg_dsc.p2 = {(lv_value_precise_t)hdg_x, (lv_value_precise_t)hdg_y};
         lv_draw_line(layer, &hdg_dsc);
@@ -172,7 +155,7 @@ static void draw_aircraft(lv_layer_t *layer) {
         lv_draw_rect_dsc_t dot_dsc;
         lv_draw_rect_dsc_init(&dot_dsc);
         dot_dsc.bg_color = color;
-        dot_dsc.bg_opa = LV_OPA_COVER;
+        dot_dsc.bg_opa = ac_opa;
         dot_dsc.radius = 3;
         lv_area_t dot_area = {(lv_coord_t)(sx - 3), (lv_coord_t)(sy - 3),
                                (lv_coord_t)(sx + 3), (lv_coord_t)(sy + 3)};
@@ -184,7 +167,7 @@ static void draw_aircraft(lv_layer_t *layer) {
         lv_draw_label_dsc_init(&lbl_dsc);
         lbl_dsc.color = color;
         lbl_dsc.font = &lv_font_montserrat_14;
-        lbl_dsc.opa = LV_OPA_80;
+        lbl_dsc.opa = (uint8_t)((ac_opa * LV_OPA_80) / 255);
         lv_area_t lbl_area = {(lv_coord_t)(sx + 8), (lv_coord_t)(sy - 7),
                                (lv_coord_t)(sx + 120), (lv_coord_t)(sy + 10)};
         lbl_dsc.text = label_text;
@@ -194,13 +177,54 @@ static void draw_aircraft(lv_layer_t *layer) {
     _list->unlock();
 }
 
+static void draw_altitude_legend(lv_layer_t *layer) {
+    // Bottom-left corner altitude color key
+    struct { const char *label; lv_color_t color; } entries[] = {
+        {"GND",  lv_color_hex(0x666666)},
+        {"<5k",  lv_color_hex(0x00cc44)},
+        {"<15k", lv_color_hex(0x88cc00)},
+        {"<25k", lv_color_hex(0xcccc00)},
+        {"<35k", lv_color_hex(0xcc8800)},
+        {"35k+", lv_color_hex(0xcc2200)},
+    };
+
+    int x = 8;
+    int y = CANVAS_H - 16;
+
+    for (int i = 0; i < 6; i++) {
+        // Color swatch
+        lv_draw_rect_dsc_t swatch;
+        lv_draw_rect_dsc_init(&swatch);
+        swatch.bg_color = entries[i].color;
+        swatch.bg_opa = LV_OPA_COVER;
+        swatch.radius = 2;
+        lv_area_t sa = {(lv_coord_t)x, (lv_coord_t)y,
+                        (lv_coord_t)(x + 8), (lv_coord_t)(y + 8)};
+        lv_draw_rect(layer, &swatch, &sa);
+
+        // Label
+        lv_draw_label_dsc_t lbl;
+        lv_draw_label_dsc_init(&lbl);
+        lbl.color = entries[i].color;
+        lbl.font = &lv_font_montserrat_14;
+        lbl.opa = LV_OPA_80;
+        lbl.text = entries[i].label;
+        lv_area_t la = {(lv_coord_t)(x + 12), (lv_coord_t)(y - 2),
+                        (lv_coord_t)(x + 60), (lv_coord_t)(y + 12)};
+        lv_draw_label(layer, &lbl, &la);
+
+        x += 58;
+    }
+}
+
 static void canvas_draw_cb(lv_event_t *e) {
     lv_layer_t *layer = lv_event_get_layer(e);
 
-    draw_tiles(layer);       // map background
+    draw_grid(layer);        // lat/lon grid background
     draw_range_rings(layer); // overlay
     draw_home_marker(layer);
     draw_aircraft(layer);    // foreground
+    draw_altitude_legend(layer);
 }
 
 void map_view_init(lv_obj_t *parent, AircraftList *list) {
@@ -231,6 +255,8 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
 
     // Tap: aircraft hit-test → detail card, or cycle zoom
     lv_obj_add_event_cb(_canvas, [](lv_event_t *e) {
+        if (views_get_active_index() != VIEW_MAP) return;
+
         lv_point_t point;
         lv_indev_get_point(lv_indev_active(), &point);
 
@@ -263,13 +289,15 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         // No aircraft hit — cycle zoom
         _zoom_idx = (_zoom_idx + 1) % 3;
         _proj.radius_nm = ZOOM_LEVELS[_zoom_idx];
-        tile_cache_flush_queue();
+        // tile_cache_flush_queue();
         lv_obj_invalidate(_canvas);
     }, LV_EVENT_CLICKED, nullptr);
 
-    // Periodic refresh
+    // Periodic refresh — only when map view is active
     lv_timer_create([](lv_timer_t *t) {
-        lv_obj_invalidate(_canvas);
+        if (views_get_active_index() == VIEW_MAP) {
+            lv_obj_invalidate(_canvas);
+        }
     }, 1000, nullptr);
 }
 

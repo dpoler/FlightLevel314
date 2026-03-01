@@ -1,4 +1,6 @@
+#include <Arduino.h>
 #include "arrivals_view.h"
+#include "views.h"
 #include "../config.h"
 #include "../pins_config.h"
 #include "geo.h"
@@ -18,7 +20,9 @@ static lv_obj_t *_board_container = nullptr;
 #define CELL_GAP 2
 #define CELL_RADIUS 3
 #define ROW_H (CELL_H + 4)
-#define HEADER_H 36
+#define TITLE_H 30
+#define COL_HEADER_H 18
+#define HEADER_H (TITLE_H + COL_HEADER_H)
 #define MAX_ROWS 14
 
 // Colors
@@ -42,9 +46,9 @@ static Column columns[] = {
     {"TYPE",     4,  180},
     {"ALT",      5,  270},
     {"SPD",      4,  380},
-    {"DIST",     4,  470},
-    {"HDG",      3,  550},
-    {"STATUS",   7,  620},
+    {"DIST",     5,  470},
+    {"HDG",      3,  580},
+    {"STATUS",   7,  640},
 };
 #define NUM_COLS 7
 
@@ -121,7 +125,7 @@ static void init_rows(lv_obj_t *parent) {
 }
 
 // Set a row's target text — triggers flip animation for changed characters
-static void set_row_text(int row, const char *texts[], lv_color_t color) {
+static void set_row_text(int row, const char *texts[], lv_color_t color, bool is_new_row) {
     int cell_idx = 0;
     for (int col = 0; col < NUM_COLS; col++) {
         const char *text = texts[col];
@@ -135,7 +139,16 @@ static void set_row_text(int row, const char *texts[], lv_color_t color) {
 
             if (target != fc.target) {
                 fc.target = target;
-                fc.rolls_remaining = 3 + (rand() % 4); // 3-6 random rolls
+                if (is_new_row) {
+                    // Full roll for new aircraft appearing
+                    fc.rolls_remaining = 2 + (rand() % 3); // 2-4 rolls
+                } else {
+                    // Instant update for incremental changes (speed/dist/hdg ticking)
+                    fc.rolls_remaining = 0;
+                    fc.current = target;
+                    char buf[2] = {target, 0};
+                    lv_label_set_text(fc.label, buf);
+                }
             }
             cell_idx++;
         }
@@ -144,6 +157,8 @@ static void set_row_text(int row, const char *texts[], lv_color_t color) {
 
 // Animation tick — called frequently to advance flip animations
 static void flip_animation_tick(lv_timer_t *t) {
+    if (views_get_active_index() != VIEW_ARRIVALS) return;
+
     static const char flip_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -./";
 
     for (int row = 0; row < MAX_ROWS; row++) {
@@ -175,11 +190,13 @@ static void update_board(lv_timer_t *t) {
         Aircraft &ac = _list->aircraft[i];
         if (ac.lat == 0 && ac.lon == 0) continue;
 
+        bool is_new_row = !_rows[row].active ||
+                          strcmp(_rows[row].icao_hex, ac.icao_hex) != 0;
         _rows[row].active = true;
         strlcpy(_rows[row].icao_hex, ac.icao_hex, sizeof(_rows[row].icao_hex));
 
         // Format each column
-        char flight[9], type[5], alt[6], spd[5], dist[5], hdg[4], status[8];
+        char flight[9], type[5], alt[6], spd[5], dist[6], hdg[4], status[8];
         snprintf(flight, sizeof(flight), "%-8s", ac.callsign[0] ? ac.callsign : ac.icao_hex);
         snprintf(type, sizeof(type), "%-4s", ac.type_code);
         if (ac.on_ground) snprintf(alt, sizeof(alt), " GND ");
@@ -187,7 +204,8 @@ static void update_board(lv_timer_t *t) {
         snprintf(spd, sizeof(spd), "%4d", ac.speed);
 
         float dist_nm = MapProjection::distance_nm(HOME_LAT, HOME_LON, ac.lat, ac.lon);
-        snprintf(dist, sizeof(dist), "%4.0f", dist_nm);
+        if (dist_nm >= 99.95f) snprintf(dist, sizeof(dist), "%5.0f", dist_nm);
+        else snprintf(dist, sizeof(dist), "%5.1f", dist_nm);
         snprintf(hdg, sizeof(hdg), "%03d", ac.heading);
         snprintf(status, sizeof(status), "%-7s", status_from_vert_rate(ac.vert_rate, ac.on_ground));
 
@@ -197,7 +215,18 @@ static void update_board(lv_timer_t *t) {
         if (ac.is_emergency) color = EMERGENCY_CLR;
         else if (ac.is_military) color = MILITARY_CLR;
 
-        set_row_text(row, texts, color);
+        // Dim stale (ghost) aircraft
+        if (ac.stale_since != 0) {
+            uint32_t now = millis();
+            uint8_t opa = compute_aircraft_opacity(ac.stale_since, now);
+            if (opa == 0) continue;
+            // Mix color toward dark background proportional to fade
+            color = lv_color_make((color.red * opa) / 255,
+                                  (color.green * opa) / 255,
+                                  (color.blue * opa) / 255);
+        }
+
+        set_row_text(row, texts, color, is_new_row);
         row++;
     }
 
@@ -205,7 +234,7 @@ static void update_board(lv_timer_t *t) {
     for (; row < MAX_ROWS; row++) {
         if (_rows[row].active) {
             const char *blanks[] = {"", "", "", "", "", "", ""};
-            set_row_text(row, blanks, CELL_TEXT);
+            set_row_text(row, blanks, CELL_TEXT, false);
             _rows[row].active = false;
         }
     }
@@ -231,7 +260,7 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
 
     // Title bar
     lv_obj_t *title_bg = lv_obj_create(_board_container);
-    lv_obj_set_size(title_bg, BOARD_W, HEADER_H);
+    lv_obj_set_size(title_bg, BOARD_W, TITLE_H);
     lv_obj_set_pos(title_bg, 0, 0);
     lv_obj_set_style_bg_color(title_bg, HEADER_BG, 0);
     lv_obj_set_style_bg_opa(title_bg, LV_OPA_COVER, 0);
@@ -245,13 +274,13 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_text_color(_title_label, HEADER_TEXT, 0);
     lv_obj_align(_title_label, LV_ALIGN_LEFT_MID, 10, 0);
 
-    // Column headers
+    // Column headers — below title bar
     for (int i = 0; i < NUM_COLS; i++) {
         lv_obj_t *lbl = lv_label_create(_board_container);
         lv_label_set_text(lbl, columns[i].name);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0x666666), 0);
-        lv_obj_set_pos(lbl, columns[i].x, HEADER_H - 14);
+        lv_obj_set_pos(lbl, columns[i].x, TITLE_H + 2);
         _header_labels[i] = lbl;
     }
 

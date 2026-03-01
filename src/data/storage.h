@@ -9,10 +9,25 @@ struct UserConfig {
     bool use_metric;
     char watchlist[10][7]; // up to 10 ICAO hex codes
     int watchlist_count;
+
+    // View cycle settings
+    bool cycle_enabled;
+    int cycle_interval_s;    // seconds between auto-advance (default 30)
+    int cycle_inactivity_s;  // seconds before resuming cycling after touch (default 60)
+
+    // Trail settings
+    bool trails_enabled;
+    int trail_max_points;    // 10-60 (default 30)
+    int trail_style;         // 0=line, 1=dots
+
+    // Zoom indices (persisted per-view)
+    int map_zoom_idx;
+    int radar_zoom_idx;
+    int arrivals_filter_idx; // distance filter index for arrivals
 };
 
-// Load config from SD card. Returns defaults if not found.
+// Load config from NVS. Returns defaults if not found.
 UserConfig storage_load_config();
 
-// Save config to SD card
+// Save config to NVS
 void storage_save_config(const UserConfig &cfg);

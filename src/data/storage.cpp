@@ -1,74 +1,78 @@
 #include "storage.h"
 #include "../config.h"
-#include <SD_MMC.h>
-#include <ArduinoJson.h>
+#include <Preferences.h>
+#include <cstring>
 
-#define CONFIG_PATH "/config.json"
+static Preferences _prefs;
 
 UserConfig storage_load_config() {
     UserConfig cfg;
-    strlcpy(cfg.wifi_ssid, WIFI_SSID, sizeof(cfg.wifi_ssid));
-    strlcpy(cfg.wifi_pass, WIFI_PASS, sizeof(cfg.wifi_pass));
+
+    // Compiled defaults
+    strncpy(cfg.wifi_ssid, WIFI_SSID, sizeof(cfg.wifi_ssid) - 1);
+    cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
+    strncpy(cfg.wifi_pass, WIFI_PASS, sizeof(cfg.wifi_pass) - 1);
+    cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
     cfg.home_lat = HOME_LAT;
     cfg.home_lon = HOME_LON;
     cfg.radius_nm = ADSB_RADIUS_NM;
     cfg.use_metric = false;
     cfg.watchlist_count = 0;
+    cfg.cycle_enabled = false;
+    cfg.cycle_interval_s = 30;
+    cfg.cycle_inactivity_s = 60;
+    cfg.trails_enabled = true;
+    cfg.trail_max_points = 30;
+    cfg.trail_style = 0;
+    cfg.map_zoom_idx = 1;    // 50nm default
+    cfg.radar_zoom_idx = 0;  // 100nm default
+    cfg.arrivals_filter_idx = 4; // ALL default
 
-    if (!SD_MMC.begin("/sdcard", true)) {
-        Serial.println("SD card mount failed, using defaults");
-        return cfg;
-    }
+    _prefs.begin("adsb", true); // read-only
 
-    File f = SD_MMC.open(CONFIG_PATH, FILE_READ);
-    if (!f) return cfg;
+    // Override with NVS values where they exist
+    if (_prefs.isKey("ssid"))
+        strlcpy(cfg.wifi_ssid, _prefs.getString("ssid", cfg.wifi_ssid).c_str(), sizeof(cfg.wifi_ssid));
+    if (_prefs.isKey("pass"))
+        strlcpy(cfg.wifi_pass, _prefs.getString("pass", cfg.wifi_pass).c_str(), sizeof(cfg.wifi_pass));
+    cfg.home_lat = _prefs.getFloat("lat", cfg.home_lat);
+    cfg.home_lon = _prefs.getFloat("lon", cfg.home_lon);
+    cfg.radius_nm = _prefs.getInt("radius", cfg.radius_nm);
+    cfg.use_metric = _prefs.getBool("metric", cfg.use_metric);
+    cfg.cycle_enabled = _prefs.getBool("cyc_on", cfg.cycle_enabled);
+    cfg.cycle_interval_s = _prefs.getInt("cyc_int", cfg.cycle_interval_s);
+    cfg.cycle_inactivity_s = _prefs.getInt("cyc_idle", cfg.cycle_inactivity_s);
+    cfg.trails_enabled = _prefs.getBool("trail_on", cfg.trails_enabled);
+    cfg.trail_max_points = _prefs.getInt("trail_pts", cfg.trail_max_points);
+    cfg.trail_style = _prefs.getInt("trail_sty", cfg.trail_style);
+    cfg.map_zoom_idx = _prefs.getInt("map_zoom", cfg.map_zoom_idx);
+    cfg.radar_zoom_idx = _prefs.getInt("rdr_zoom", cfg.radar_zoom_idx);
+    cfg.arrivals_filter_idx = _prefs.getInt("arr_filt", cfg.arrivals_filter_idx);
 
-    JsonDocument doc;
-    if (deserializeJson(doc, f)) {
-        f.close();
-        return cfg;
-    }
-    f.close();
-
-    strlcpy(cfg.wifi_ssid, doc["wifi_ssid"] | WIFI_SSID, sizeof(cfg.wifi_ssid));
-    strlcpy(cfg.wifi_pass, doc["wifi_pass"] | WIFI_PASS, sizeof(cfg.wifi_pass));
-    cfg.home_lat = doc["home_lat"] | HOME_LAT;
-    cfg.home_lon = doc["home_lon"] | HOME_LON;
-    cfg.radius_nm = doc["radius_nm"] | ADSB_RADIUS_NM;
-    cfg.use_metric = doc["use_metric"] | false;
-
-    JsonArray wl = doc["watchlist"].as<JsonArray>();
-    cfg.watchlist_count = 0;
-    for (JsonVariant v : wl) {
-        if (cfg.watchlist_count >= 10) break;
-        strlcpy(cfg.watchlist[cfg.watchlist_count++], v.as<const char *>(), 7);
-    }
-
+    _prefs.end();
+    Serial.println("Storage: config loaded from NVS");
     return cfg;
 }
 
 void storage_save_config(const UserConfig &cfg) {
-    if (!SD_MMC.begin("/sdcard", true)) {
-        Serial.println("SD card mount failed, cannot save config");
-        return;
-    }
+    _prefs.begin("adsb", false); // read-write
 
-    File f = SD_MMC.open(CONFIG_PATH, FILE_WRITE);
-    if (!f) return;
+    _prefs.putString("ssid", cfg.wifi_ssid);
+    _prefs.putString("pass", cfg.wifi_pass);
+    _prefs.putFloat("lat", cfg.home_lat);
+    _prefs.putFloat("lon", cfg.home_lon);
+    _prefs.putInt("radius", cfg.radius_nm);
+    _prefs.putBool("metric", cfg.use_metric);
+    _prefs.putBool("cyc_on", cfg.cycle_enabled);
+    _prefs.putInt("cyc_int", cfg.cycle_interval_s);
+    _prefs.putInt("cyc_idle", cfg.cycle_inactivity_s);
+    _prefs.putBool("trail_on", cfg.trails_enabled);
+    _prefs.putInt("trail_pts", cfg.trail_max_points);
+    _prefs.putInt("trail_sty", cfg.trail_style);
+    _prefs.putInt("map_zoom", cfg.map_zoom_idx);
+    _prefs.putInt("rdr_zoom", cfg.radar_zoom_idx);
+    _prefs.putInt("arr_filt", cfg.arrivals_filter_idx);
 
-    JsonDocument doc;
-    doc["wifi_ssid"] = cfg.wifi_ssid;
-    doc["wifi_pass"] = cfg.wifi_pass;
-    doc["home_lat"] = cfg.home_lat;
-    doc["home_lon"] = cfg.home_lon;
-    doc["radius_nm"] = cfg.radius_nm;
-    doc["use_metric"] = cfg.use_metric;
-
-    JsonArray wl = doc["watchlist"].to<JsonArray>();
-    for (int i = 0; i < cfg.watchlist_count; i++) {
-        wl.add(cfg.watchlist[i]);
-    }
-
-    serializeJsonPretty(doc, f);
-    f.close();
+    _prefs.end();
+    Serial.println("Storage: config saved to NVS");
 }

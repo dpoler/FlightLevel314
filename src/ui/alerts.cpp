@@ -148,14 +148,17 @@ void alerts_show(AlertType type, const char *title, const char *detail,
 }
 
 void alerts_queue(AlertType type, const char *title, const char *detail) {
+    if (!_queue_mutex) return;
     if (xSemaphoreTake(_queue_mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
 
     int next = (_queue_head + 1) % ALERT_QUEUE_SIZE;
     if (next != _queue_tail) { // not full
         PendingAlert &pa = _queue[_queue_head];
         pa.type = type;
-        strlcpy(pa.title, title, sizeof(pa.title));
-        strlcpy(pa.detail, detail, sizeof(pa.detail));
+        strncpy(pa.title, title, sizeof(pa.title) - 1);
+        pa.title[sizeof(pa.title) - 1] = '\0';
+        strncpy(pa.detail, detail, sizeof(pa.detail) - 1);
+        pa.detail[sizeof(pa.detail) - 1] = '\0';
         _queue_head = next;
     }
 

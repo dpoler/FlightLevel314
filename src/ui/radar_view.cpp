@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "radar_view.h"
+#include "views.h"
 #include "../config.h"
 #include "../pins_config.h"
 #include "geo.h"
@@ -17,7 +18,6 @@ static uint32_t _last_sweep_ms = 0;
 #define RADAR_R (RADAR_H / 2 - 10)  // max radius in pixels
 
 #define SWEEP_PERIOD_MS 5000  // one full rotation = 5 seconds
-#define PHOSPHOR_FADE_MS 4000 // blips fade over 4 seconds
 
 #define COLOR_SWEEP lv_color_hex(0x00ff44)
 #define COLOR_RING lv_color_hex(0x0a2a0a)
@@ -40,6 +40,22 @@ static bool to_radar_screen(float lat, float lon, int &sx, int &sy) {
     sx = RADAR_CX + (int)(dx_nm * scale);
     sy = RADAR_CY - (int)(dy_nm * scale);
     return true;
+}
+
+// Get bearing angle (0=N, 90=E) from radar center to a screen point
+static float blip_angle(int sx, int sy) {
+    float dx = (float)(sx - RADAR_CX);
+    float dy = (float)(RADAR_CY - sy); // invert Y (screen Y goes down)
+    float angle = atan2f(dx, dy) * 180.0f / M_PI;
+    if (angle < 0) angle += 360.0f;
+    return angle;
+}
+
+// Angular distance from sweep to blip (how far behind the sweep the blip is)
+static float angle_behind_sweep(float blip_deg) {
+    float diff = _sweep_angle - blip_deg;
+    if (diff < 0) diff += 360.0f;
+    return diff; // 0 = just swept, 359 = about to be swept
 }
 
 static void draw_rings(lv_layer_t *layer) {
@@ -123,13 +139,26 @@ static void draw_blips(lv_layer_t *layer) {
 
     for (int i = 0; i < _list->count; i++) {
         Aircraft &ac = _list->aircraft[i];
+        uint8_t ghost_opa = compute_aircraft_opacity(ac.stale_since, now);
+        if (ghost_opa == 0) continue;
+
         int sx, sy;
         if (!to_radar_screen(ac.lat, ac.lon, sx, sy)) continue;
 
-        // Calculate fade based on time since last seen
-        uint32_t age_ms = now - ac.last_seen;
-        if (age_ms > PHOSPHOR_FADE_MS) continue;
-        uint8_t opa = LV_OPA_COVER - (age_ms * LV_OPA_COVER / PHOSPHOR_FADE_MS);
+        // Phosphor effect: brightness based on angular distance from sweep
+        float behind = angle_behind_sweep(blip_angle(sx, sy));
+        // Blips just swept are bright, fade as sweep moves away
+        // Full bright for first 30 degrees behind sweep, then fade over 330 degrees
+        uint8_t phosphor_opa;
+        if (behind < 30.0f) {
+            phosphor_opa = LV_OPA_COVER;
+        } else {
+            // Fade from OPA_COVER to OPA_30 over remaining 330 degrees
+            float fade = (behind - 30.0f) / 330.0f;
+            phosphor_opa = LV_OPA_COVER - (uint8_t)(fade * (LV_OPA_COVER - LV_OPA_30));
+        }
+
+        uint8_t opa = (uint8_t)((phosphor_opa * ghost_opa) / 255);
 
         lv_color_t color = ac.is_military ? COLOR_MILITARY : COLOR_BLIP;
 
@@ -143,17 +172,19 @@ static void draw_blips(lv_layer_t *layer) {
                           (lv_coord_t)(sx + 3), (lv_coord_t)(sy + 3)};
         lv_draw_rect(layer, &dot, &area);
 
-        // Callsign
-        const char *label_text = ac.callsign[0] ? ac.callsign : ac.icao_hex;
-        lv_draw_label_dsc_t lbl;
-        lv_draw_label_dsc_init(&lbl);
-        lbl.color = color;
-        lbl.font = &lv_font_montserrat_14;
-        lbl.opa = opa > LV_OPA_50 ? LV_OPA_70 : opa;
-        lv_area_t lbl_area = {(lv_coord_t)(sx + 6), (lv_coord_t)(sy - 6),
-                               (lv_coord_t)(sx + 100), (lv_coord_t)(sy + 8)};
-        lbl.text = label_text;
-        lv_draw_label(layer, &lbl, &lbl_area);
+        // Callsign — only show for recently swept blips (keeps it clean)
+        if (behind < 120.0f) {
+            const char *label_text = ac.callsign[0] ? ac.callsign : ac.icao_hex;
+            lv_draw_label_dsc_t lbl;
+            lv_draw_label_dsc_init(&lbl);
+            lbl.color = color;
+            lbl.font = &lv_font_montserrat_14;
+            lbl.opa = opa > LV_OPA_50 ? LV_OPA_70 : opa;
+            lv_area_t lbl_area = {(lv_coord_t)(sx + 6), (lv_coord_t)(sy - 6),
+                                   (lv_coord_t)(sx + 100), (lv_coord_t)(sy + 8)};
+            lbl.text = label_text;
+            lv_draw_label(layer, &lbl, &lbl_area);
+        }
     }
 
     _list->unlock();
@@ -184,7 +215,7 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
 
     lv_obj_add_event_cb(_radar_obj, radar_draw_cb, LV_EVENT_DRAW_MAIN_END, nullptr);
 
-    // Animate sweep + refresh at ~30fps
+    // Animate sweep — always update angle, but only redraw when visible
     _last_sweep_ms = millis();
     lv_timer_create([](lv_timer_t *t) {
         uint32_t now = millis();
@@ -192,7 +223,11 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
         _last_sweep_ms = now;
         _sweep_angle += (360.0f * dt) / SWEEP_PERIOD_MS;
         if (_sweep_angle >= 360.0f) _sweep_angle -= 360.0f;
-        lv_obj_invalidate(_radar_obj);
+
+        // Only invalidate when radar view is active (saves frame budget for swipes)
+        if (views_get_active_index() == VIEW_RADAR) {
+            lv_obj_invalidate(_radar_obj);
+        }
     }, 33, nullptr);  // ~30fps
 }
 

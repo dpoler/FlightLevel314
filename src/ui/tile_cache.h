@@ -1,14 +1,15 @@
 #pragma once
 #include <cstdint>
+#include "lvgl.h"
 
 #define TILE_PX 256
 
 // Initialize tile cache (SD card cache + PSRAM LRU + background fetch task)
 void tile_cache_init();
 
-// Get decoded RGB565 pixels for tile, or nullptr if not yet cached.
+// Get LVGL draw buffer for tile, or nullptr if not yet cached.
 // Missing tiles are queued for background fetch.
-uint16_t *tile_cache_get(int z, int x, int y);
+lv_draw_buf_t *tile_cache_get(int z, int x, int y);
 
 // Flush pending fetch requests (call when zoom changes)
 void tile_cache_flush_queue();

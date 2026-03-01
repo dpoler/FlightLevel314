@@ -4,17 +4,12 @@
 #define LV_COLOR_DEPTH 16
 #define LV_COLOR_16_SWAP 0
 
-/* Memory */
-#define LV_MEM_CUSTOM 1
-#define LV_MEM_CUSTOM_INCLUDE <stdlib.h>
-#define LV_MEM_CUSTOM_ALLOC malloc
-#define LV_MEM_CUSTOM_FREE free
-#define LV_MEM_CUSTOM_REALLOC realloc
+/* Memory — custom allocator routes to PSRAM (internal RAM exhausted by MIPI DSI) */
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CUSTOM
+#define LV_USE_STDLIB_STRING    LV_STDLIB_CLIB
+#define LV_USE_STDLIB_SPRINTF   LV_STDLIB_CLIB
 
-/* Tick */
-#define LV_TICK_CUSTOM 1
-#define LV_TICK_CUSTOM_INCLUDE "Arduino.h"
-#define LV_TICK_CUSTOM_SYS_TIME_EXPR (millis())
+/* Tick — provided via lv_tick_set_cb() in code */
 
 /* Display */
 #define LV_USE_LOG 1

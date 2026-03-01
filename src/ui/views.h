@@ -12,3 +12,9 @@ void views_init(lv_obj_t *parent, AircraftList *list);
 
 // Get the container object for a specific view (for adding child widgets)
 lv_obj_t *views_get_tile(int view_index);
+
+// Get the currently active tile index
+int views_get_active_index();
+
+// Get the tileview object (for view cycling)
+lv_obj_t *views_get_tileview();

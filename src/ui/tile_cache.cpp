@@ -10,6 +10,7 @@
 #include <SD_MMC.h>
 #include <cmath>
 #include <cstring>
+#include "esp_cache.h"
 
 // lodepng is compiled by LVGL when LV_USE_LODEPNG is enabled
 extern "C" {
@@ -38,7 +39,6 @@ float osm_y_to_lat(int y, int z) {
 }
 
 int osm_zoom_for_radius(float radius_nm, int screen_h, float center_lat) {
-    // Our map's pixels per degree
     float our_ppd = (float)screen_h / (radius_nm * 2.0f) * 60.0f;
     float cos_lat = cosf(center_lat * M_PI / 180.0f);
 
@@ -55,13 +55,16 @@ int osm_zoom_for_radius(float radius_nm, int screen_h, float center_lat) {
     return best_z;
 }
 
+// Forward declaration
+static void destroy_draw_buf(lv_draw_buf_t *dbuf);
+
 // --- PSRAM tile cache ---
 
-#define MAX_CACHED_TILES 16
+#define MAX_CACHED_TILES 48
 
 struct CachedTile {
     int z, x, y;
-    uint16_t *pixels;    // TILE_PX * TILE_PX RGB565 in PSRAM
+    lv_draw_buf_t *draw_buf;
     uint32_t last_used;
     bool valid;
     bool empty;          // fetched but no content (404, ocean, etc.)
@@ -99,55 +102,84 @@ static CachedTile *evict_lru() {
     return &_tiles[oldest_idx];
 }
 
-static void cache_insert(int z, int x, int y, uint16_t *pixels, bool empty) {
+static void cache_insert(int z, int x, int y, lv_draw_buf_t *draw_buf, bool empty) {
     if (xSemaphoreTake(_cache_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-        if (pixels) free(pixels);
+        if (draw_buf) destroy_draw_buf(draw_buf);
         return;
     }
 
     CachedTile *slot = find_tile(z, x, y);
     if (slot) {
-        // Already cached (race condition)
         xSemaphoreGive(_cache_mutex);
-        if (pixels) free(pixels);
+        if (draw_buf) destroy_draw_buf(draw_buf);
         return;
     }
 
     slot = evict_lru();
-    if (slot->pixels) {
-        free(slot->pixels);
-        slot->pixels = nullptr;
+    if (slot->draw_buf) {
+        destroy_draw_buf(slot->draw_buf);
+        slot->draw_buf = nullptr;
     }
     slot->z = z;
     slot->x = x;
     slot->y = y;
-    slot->pixels = pixels;
+    slot->draw_buf = draw_buf;
     slot->last_used = millis();
     slot->valid = true;
     slot->empty = empty;
     xSemaphoreGive(_cache_mutex);
 }
 
-// --- PNG decode ---
+// --- PNG decode into lv_draw_buf ---
 
-static bool decode_png_rgb565(const uint8_t *png, size_t len, uint16_t *out) {
+// Tile stride: TILE_PX * 2 bytes per row (RGB565, no padding)
+#define TILE_STRIDE (TILE_PX * 2)
+#define TILE_BUF_SIZE (TILE_STRIDE * TILE_PX)
+
+static lv_draw_buf_t *decode_png_to_draw_buf(const uint8_t *png, size_t len) {
     unsigned char *rgba = nullptr;
     unsigned w, h;
     unsigned err = lodepng_decode32(&rgba, &w, &h, png, len);
     if (err || w != TILE_PX || h != TILE_PX) {
         if (rgba) free(rgba);
-        return false;
+        return nullptr;
     }
 
-    // RGBA8888 → RGB565
-    for (int i = 0; i < TILE_PX * TILE_PX; i++) {
-        uint8_t r = rgba[i * 4];
-        uint8_t g = rgba[i * 4 + 1];
-        uint8_t b = rgba[i * 4 + 2];
-        out[i] = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-    }
+    // Allocate draw buf struct + pixel buffer separately for cache control
+    lv_draw_buf_t *dbuf = (lv_draw_buf_t *)lv_malloc_zeroed(sizeof(lv_draw_buf_t));
+    if (!dbuf) { free(rgba); return nullptr; }
+
+    // Allocate pixel data in PSRAM
+    uint8_t *pixels = (uint8_t *)heap_caps_malloc(
+        TILE_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pixels) { lv_free(dbuf); free(rgba); return nullptr; }
+
     free(rgba);
-    return true;
+
+    // TEST: solid blue - if tiles render as blue, pipeline works
+    memset(pixels, 0x1F, TILE_BUF_SIZE);
+
+    // Flush CPU data cache to PSRAM so any core/DMA can read
+    esp_cache_msync(pixels, TILE_BUF_SIZE,
+                    ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+
+    // Initialize the draw buf header
+    dbuf->header.magic = LV_IMAGE_HEADER_MAGIC;
+    dbuf->header.cf = LV_COLOR_FORMAT_RGB565;
+    dbuf->header.w = TILE_PX;
+    dbuf->header.h = TILE_PX;
+    dbuf->header.stride = TILE_STRIDE;
+    dbuf->header.flags = LV_IMAGE_FLAGS_MODIFIABLE;
+    dbuf->data = pixels;
+    dbuf->unaligned_data = pixels;
+    dbuf->data_size = TILE_BUF_SIZE;
+    return dbuf;
+}
+
+static void destroy_draw_buf(lv_draw_buf_t *dbuf) {
+    if (!dbuf) return;
+    if (dbuf->data) heap_caps_free(dbuf->data);
+    lv_free(dbuf);
 }
 
 // --- SD card cache ---
@@ -156,27 +188,27 @@ static void sd_cache_path(int z, int x, int y, char *buf, size_t len) {
     snprintf(buf, len, "/tiles/%d/%d/%d.png", z, x, y);
 }
 
-static bool sd_load_tile(int z, int x, int y, uint16_t *out) {
-    if (!_sd_available) return false;
+static lv_draw_buf_t *sd_load_tile(int z, int x, int y) {
+    if (!_sd_available) return nullptr;
 
     char path[64];
     sd_cache_path(z, x, y, path, sizeof(path));
 
     File f = SD_MMC.open(path, FILE_READ);
-    if (!f) return false;
+    if (!f) return nullptr;
 
     size_t size = f.size();
-    if (size == 0 || size > 200000) { f.close(); return false; }
+    if (size == 0 || size > 200000) { f.close(); return nullptr; }
 
     uint8_t *buf = (uint8_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-    if (!buf) { f.close(); return false; }
+    if (!buf) { f.close(); return nullptr; }
 
     f.read(buf, size);
     f.close();
 
-    bool ok = decode_png_rgb565(buf, size, out);
+    lv_draw_buf_t *dbuf = decode_png_to_draw_buf(buf, size);
     free(buf);
-    return ok;
+    return dbuf;
 }
 
 static void sd_save_tile(int z, int x, int y, const uint8_t *png, size_t len) {
@@ -214,24 +246,16 @@ static void fetch_task(void *param) {
             if (cached) continue;
         }
 
-        // Allocate pixel buffer in PSRAM
-        uint16_t *pixels = (uint16_t *)heap_caps_malloc(
-            TILE_PX * TILE_PX * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-        if (!pixels) continue;
-
         // Try SD card first
-        if (sd_load_tile(req.z, req.x, req.y, pixels)) {
-            cache_insert(req.z, req.x, req.y, pixels, false);
+        lv_draw_buf_t *dbuf = sd_load_tile(req.z, req.x, req.y);
+        if (dbuf) {
+            cache_insert(req.z, req.x, req.y, dbuf, false);
             continue;
         }
 
         // Fetch from network
-        if (WiFi.status() != WL_CONNECTED) {
-            free(pixels);
-            continue;
-        }
+        if (WiFi.status() != WL_CONNECTED) continue;
 
-        // CartoDB dark tiles — good contrast with our dark UI
         snprintf(url, sizeof(url),
             "https://basemaps.cartocdn.com/dark_all/%d/%d/%d.png",
             req.z, req.x, req.y);
@@ -263,22 +287,19 @@ static void fetch_task(void *param) {
 
                     if (total == content_len) {
                         sd_save_tile(req.z, req.x, req.y, png, content_len);
-
-                        if (decode_png_rgb565(png, content_len, pixels)) {
-                            cache_insert(req.z, req.x, req.y, pixels, false);
-                            pixels = nullptr; // ownership transferred
+                        dbuf = decode_png_to_draw_buf(png, content_len);
+                        if (dbuf) {
+                            cache_insert(req.z, req.x, req.y, dbuf, false);
                         }
                     }
                     free(png);
                 }
             }
         } else if (code == 404) {
-            // Mark as empty so we don't re-fetch
             cache_insert(req.z, req.x, req.y, nullptr, true);
         }
 
         http.end();
-        if (pixels) free(pixels);
 
         // Rate limit: 200ms between fetches
         vTaskDelay(pdMS_TO_TICKS(200));
@@ -289,9 +310,10 @@ static void fetch_task(void *param) {
 
 void tile_cache_init() {
     _cache_mutex = xSemaphoreCreateMutex();
-    _fetch_queue = xQueueCreate(24, sizeof(FetchRequest));
+    _fetch_queue = xQueueCreate(32, sizeof(FetchRequest));
     memset(_tiles, 0, sizeof(_tiles));
 
+#if 0
     _sd_available = SD_MMC.begin("/sdcard", true);
     if (_sd_available) {
         SD_MMC.mkdir("/tiles");
@@ -299,19 +321,26 @@ void tile_cache_init() {
     } else {
         Serial.println("Tile cache: no SD card, network-only caching");
     }
+#else
+    _sd_available = false;
+    Serial.println("Tile cache: SD disabled (ESP32-P4), network-only caching");
+#endif
 
-    xTaskCreatePinnedToCore(fetch_task, "tile_fetch", 16384, nullptr, 0, nullptr, 1);
+    // Pin to core 0 (same as LVGL) to avoid cross-core cache coherency issues
+    // with PSRAM pixel data on ESP32-P4 RISC-V
+    xTaskCreatePinnedToCore(fetch_task, "tile_fetch", 32768, nullptr, 1, nullptr, 0);
 }
 
-uint16_t *tile_cache_get(int z, int x, int y) {
+lv_draw_buf_t *tile_cache_get(int z, int x, int y) {
+    if (!_cache_mutex) return nullptr;
     if (xSemaphoreTake(_cache_mutex, pdMS_TO_TICKS(10)) != pdTRUE) return nullptr;
 
     CachedTile *t = find_tile(z, x, y);
-    uint16_t *result = nullptr;
+    lv_draw_buf_t *result = nullptr;
     bool found = false;
     if (t) {
         found = true;
-        if (!t->empty) result = t->pixels;
+        if (!t->empty) result = t->draw_buf;
     }
     xSemaphoreGive(_cache_mutex);
 
@@ -324,5 +353,5 @@ uint16_t *tile_cache_get(int z, int x, int y) {
 }
 
 void tile_cache_flush_queue() {
-    xQueueReset(_fetch_queue);
+    if (_fetch_queue) xQueueReset(_fetch_queue);
 }
