@@ -25,6 +25,25 @@ static lv_obj_t *_board_container = nullptr;
 #define HEADER_H (TITLE_H + COL_HEADER_H)
 #define MAX_ROWS 14
 
+// Sort modes
+enum SortMode {
+    SORT_NONE = 0,
+    SORT_ASC,
+    SORT_DESC,
+};
+
+// Sortable column indices (into columns[])
+#define COL_FLIGHT 0
+#define COL_TYPE   1
+#define COL_ALT    2
+#define COL_SPD    3
+#define COL_DIST   4
+#define COL_HDG    5
+#define COL_STATUS 6
+
+static int  _sort_col  = COL_DIST;   // which column is sorted
+static SortMode _sort_dir = SORT_ASC; // ascending by default
+
 // Colors
 #define BOARD_BG      lv_color_hex(0x0c0c0c)
 #define CELL_BG       lv_color_hex(0x1a1a1a)
@@ -39,16 +58,17 @@ struct Column {
     const char *name;
     int chars;
     int x;
+    bool sortable;
 };
 
 static Column columns[] = {
-    {"FLIGHT",   8,  10},
-    {"TYPE",     4,  180},
-    {"ALT",      5,  270},
-    {"SPD",      4,  380},
-    {"DIST",     5,  470},
-    {"HDG",      3,  580},
-    {"STATUS",   7,  640},
+    {"FLIGHT",   8,  10,  true},
+    {"TYPE",     4,  180, false},
+    {"ALT",      5,  270, true},
+    {"SPD",      4,  380, true},
+    {"DIST",     5,  470, true},
+    {"HDG",      3,  580, false},
+    {"STATUS",   7,  640, false},
 };
 #define NUM_COLS 7
 
