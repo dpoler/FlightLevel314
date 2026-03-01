@@ -8,6 +8,7 @@
 static AircraftList *_aircraft_list = nullptr;
 static uint32_t _last_update = 0;
 static TaskHandle_t _fetch_task_handle = nullptr;
+static TaskHandle_t _route_task_handle = nullptr;
 
 // Check if ICAO hex is in known military ranges
 static bool check_military(const char *hex) {
@@ -184,6 +185,79 @@ static void fetch_task(void *param) {
     }
 }
 
+// Background task: fetch route (origin/dest) for aircraft with callsigns
+static void route_enrich_task(void *param) {
+    // Wait for WiFi
+    while (WiFi.status() != WL_CONNECTED) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    vTaskDelay(pdMS_TO_TICKS(5000)); // let main fetcher populate list first
+
+    while (true) {
+        // Find next aircraft that has a callsign but no route data
+        char callsign[9] = {};
+        char icao_hex[7] = {};
+        bool found = false;
+
+        if (_aircraft_list->lock(pdMS_TO_TICKS(100))) {
+            for (int i = 0; i < _aircraft_list->count; i++) {
+                Aircraft &a = _aircraft_list->aircraft[i];
+                if (a.callsign[0] && !a.origin[0] && a.stale_since == 0) {
+                    strlcpy(callsign, a.callsign, sizeof(callsign));
+                    strlcpy(icao_hex, a.icao_hex, sizeof(icao_hex));
+                    found = true;
+                    break;
+                }
+            }
+            _aircraft_list->unlock();
+        }
+
+        if (!found || WiFi.status() != WL_CONNECTED) {
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            continue;
+        }
+
+        // Fetch route from adsbdb
+        char url[128];
+        snprintf(url, sizeof(url), "https://api.adsbdb.com/v0/callsign/%s", callsign);
+        HTTPClient http;
+        http.begin(url);
+        http.setTimeout(8000);
+        int code = http.GET();
+
+        char origin[5] = {};
+        char dest[5] = {};
+
+        if (code == HTTP_CODE_OK) {
+            JsonDocument doc;
+            if (!deserializeJson(doc, http.getString())) {
+                JsonObject route = doc["response"]["flightroute"];
+                const char *orig_iata = route["origin"]["iata_code"] | "";
+                const char *dest_iata = route["destination"]["iata_code"] | "";
+                strlcpy(origin, orig_iata, sizeof(origin));
+                strlcpy(dest, dest_iata, sizeof(dest));
+            }
+        }
+        http.end();
+
+        // Write results back (even empty — marks as "tried" so we don't re-fetch)
+        if (_aircraft_list->lock(pdMS_TO_TICKS(100))) {
+            int idx = find_aircraft(icao_hex);
+            if (idx >= 0) {
+                Aircraft &a = _aircraft_list->aircraft[idx];
+                if (origin[0]) strlcpy(a.origin, origin, sizeof(a.origin));
+                else strlcpy(a.origin, "-", sizeof(a.origin)); // mark as tried
+                if (dest[0]) strlcpy(a.dest, dest, sizeof(a.dest));
+                else strlcpy(a.dest, "-", sizeof(a.dest));
+                Serial.printf("Route: %s %s->%s\n", callsign, a.origin, a.dest);
+            }
+            _aircraft_list->unlock();
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1500)); // rate limit: ~1 req per 1.5s
+    }
+}
+
 void fetcher_init(AircraftList *list) {
     _aircraft_list = list;
 
@@ -192,6 +266,7 @@ void fetcher_init(AircraftList *list) {
     Serial.println("WiFi initialization started");
 
     xTaskCreatePinnedToCore(fetch_task, "adsb_fetch", 32768, nullptr, 1, &_fetch_task_handle, 1);
+    xTaskCreatePinnedToCore(route_enrich_task, "route_enrich", 16384, nullptr, 0, &_route_task_handle, 1);
 }
 
 bool fetcher_wifi_connected() {

@@ -35,11 +35,12 @@ enum SortMode {
 // Sortable column indices (into columns[])
 #define COL_FLIGHT 0
 #define COL_TYPE   1
-#define COL_ALT    2
-#define COL_SPD    3
-#define COL_DIST   4
-#define COL_HDG    5
-#define COL_STATUS 6
+#define COL_ROUTE  2
+#define COL_ALT    3
+#define COL_SPD    4
+#define COL_DIST   5
+#define COL_HDG    6
+#define COL_STATUS 7
 
 static int  _sort_col  = COL_DIST;   // which column is sorted
 static SortMode _sort_dir = SORT_ASC; // ascending by default
@@ -63,14 +64,15 @@ struct Column {
 
 static Column columns[] = {
     {"FLIGHT",   8,  10,  true},
-    {"TYPE",     4,  180, false},
-    {"ALT",      5,  270, true},
-    {"SPD",      4,  380, true},
-    {"DIST",     5,  470, true},
-    {"HDG",      3,  580, false},
-    {"STATUS",   7,  660, false},
+    {"TYPE",     4,  170, false},
+    {"ROUTE",    7,  250, false},
+    {"ALT",      5,  400, true},
+    {"SPD",      4,  500, true},
+    {"DIST",     5,  580, true},
+    {"HDG",      3,  680, false},
+    {"STATUS",   7,  740, false},
 };
-#define NUM_COLS 7
+#define NUM_COLS 8
 
 // Per-cell animation state
 struct FlipCell {
@@ -81,14 +83,14 @@ struct FlipCell {
 };
 
 struct BoardRow {
-    FlipCell cells[40]; // max characters across all columns
+    FlipCell cells[48]; // max characters across all columns
     int total_cells;
     char icao_hex[7];   // to track which aircraft this row represents
     bool active;
 };
 
 static BoardRow _rows[MAX_ROWS];
-static lv_obj_t *_header_labels[NUM_COLS];
+static lv_obj_t *_header_labels[8];
 static lv_obj_t *_title_label = nullptr;
 static bool _first_render = true;
 
@@ -301,9 +303,17 @@ static void update_board(lv_timer_t *t) {
         strlcpy(_rows[row].icao_hex, ac.icao_hex, sizeof(_rows[row].icao_hex));
 
         // Format each column
-        char flight[9], type[5], alt[6], spd[5], dist[6], hdg[4], status[8];
+        char flight[9], type[5], route[8], alt[6], spd[5], dist[6], hdg[4], status[8];
         snprintf(flight, sizeof(flight), "%-8s", ac.callsign[0] ? ac.callsign : ac.icao_hex);
         snprintf(type, sizeof(type), "%-4s", ac.type_code);
+
+        // Route: "BNA-MDW" or blank if not yet enriched
+        if (ac.origin[0] && ac.origin[0] != '-' && ac.dest[0] && ac.dest[0] != '-') {
+            snprintf(route, sizeof(route), "%-3s-%-3s", ac.origin, ac.dest);
+        } else {
+            snprintf(route, sizeof(route), "       ");
+        }
+
         if (ac.on_ground) snprintf(alt, sizeof(alt), " GND ");
         else snprintf(alt, sizeof(alt), "%5d", ac.altitude / 100);
         snprintf(spd, sizeof(spd), "%4d", ac.speed);
@@ -314,7 +324,7 @@ static void update_board(lv_timer_t *t) {
         snprintf(hdg, sizeof(hdg), "%03d", ac.heading);
         snprintf(status, sizeof(status), "%-7s", status_from_vert_rate(ac.vert_rate, ac.on_ground));
 
-        const char *texts[] = {flight, type, alt, spd, dist, hdg, status};
+        const char *texts[] = {flight, type, route, alt, spd, dist, hdg, status};
 
         lv_color_t color = CELL_TEXT;
         if (ac.is_emergency) color = EMERGENCY_CLR;
@@ -336,7 +346,7 @@ static void update_board(lv_timer_t *t) {
     // Clear remaining rows
     for (; row < MAX_ROWS; row++) {
         if (_rows[row].active) {
-            const char *blanks[] = {"", "", "", "", "", "", ""};
+            const char *blanks[] = {"", "", "", "", "", "", "", ""};
             set_row_text(row, blanks, CELL_TEXT, false);
             _rows[row].active = false;
         }
@@ -411,21 +421,41 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_text_color(_title_label, HEADER_TEXT, 0);
     lv_obj_align(_title_label, LV_ALIGN_LEFT_MID, 10, 0);
 
-    // Column header labels — directly on board container, sortable ones are clickable
+    // Column header labels — sortable ones get wide clickable containers
     for (int i = 0; i < NUM_COLS; i++) {
-        lv_obj_t *lbl = lv_label_create(_board_container);
-        lv_label_set_text(lbl, columns[i].name);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(lbl,
-            columns[i].sortable ? lv_color_hex(0x888888) : lv_color_hex(0x666666), 0);
-        lv_obj_set_pos(lbl, columns[i].x, TITLE_H + 2);
+        // Calculate column width (to next column, or to board edge)
+        int col_w = (i < NUM_COLS - 1) ? (columns[i + 1].x - columns[i].x) : (BOARD_W - columns[i].x);
 
         if (columns[i].sortable) {
-            lv_obj_add_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_event_cb(lbl, header_label_click_cb, LV_EVENT_CLICKED,
+            // Clickable container spanning full column width for easy tap target
+            lv_obj_t *btn = lv_obj_create(_board_container);
+            lv_obj_set_size(btn, col_w, COL_HEADER_H);
+            lv_obj_set_pos(btn, columns[i].x, TITLE_H);
+            lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(btn, 0, 0);
+            lv_obj_set_style_pad_all(btn, 0, 0);
+            lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+            // lv_obj_create sets LV_OBJ_FLAG_CLICKABLE by default — keep it
+            lv_obj_add_event_cb(btn, header_label_click_cb, LV_EVENT_CLICKED,
                                 (void *)(intptr_t)i);
+
+            lv_obj_t *lbl = lv_label_create(btn);
+            lv_label_set_text(lbl, columns[i].name);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888), 0);
+            lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
+            _header_labels[i] = lbl;
+        } else {
+            // Non-sortable: plain label, no click handling
+            lv_obj_t *lbl = lv_label_create(_board_container);
+            lv_label_set_text(lbl, columns[i].name);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(0x666666), 0);
+            lv_obj_set_pos(lbl, columns[i].x, TITLE_H + 2);
+            // Prevent non-sortable labels from eating touch events
+            lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+            _header_labels[i] = lbl;
         }
-        _header_labels[i] = lbl;
     }
 
     // Set initial sort indicator
