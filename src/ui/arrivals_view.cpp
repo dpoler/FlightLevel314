@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "arrivals_view.h"
 #include "views.h"
+#include "detail_card.h"
 #include "../config.h"
 #include "../pins_config.h"
 #include "geo.h"
@@ -412,6 +413,37 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_radius(_board_container, 0, 0);
     lv_obj_set_style_pad_all(_board_container, 0, 0);
     lv_obj_clear_flag(_board_container, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_clear_flag(_board_container, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_add_event_cb(_board_container, [](lv_event_t *e) {
+        if (views_get_active_index() != VIEW_ARRIVALS) return;
+
+        if (detail_card_is_visible()) {
+            detail_card_hide();
+            return;
+        }
+
+        lv_point_t point;
+        lv_indev_get_point(lv_indev_active(), &point);
+        int ty = point.y - 30; // offset for status bar
+
+        // Determine which row was tapped
+        int row = (ty - HEADER_H - 4) / ROW_H;
+        if (row < 0 || row >= MAX_ROWS) return;
+        if (!_rows[row].active) return;
+
+        // Look up aircraft by ICAO hex
+        if (!_list->lock(pdMS_TO_TICKS(50))) return;
+        for (int i = 0; i < _list->count; i++) {
+            if (strcmp(_list->aircraft[i].icao_hex, _rows[row].icao_hex) == 0) {
+                Aircraft ac_copy = _list->aircraft[i];
+                _list->unlock();
+                detail_card_show(&ac_copy);
+                return;
+            }
+        }
+        _list->unlock();
+    }, LV_EVENT_CLICKED, nullptr);
 
     // Title bar
     lv_obj_t *title_bg = lv_obj_create(_board_container);
