@@ -218,6 +218,107 @@ static void draw_home_marker(lv_layer_t *layer) {
     lv_draw_line(layer, &line_dsc);
 }
 
+// Rotate a local-coordinate point by heading (0=north) around origin, translate to screen pos
+static inline void rotate_pt(float lx, float ly, float sin_h, float cos_h,
+                              int cx, int cy, lv_point_precise_t &out) {
+    out.x = (lv_value_precise_t)(cx + lx * cos_h + ly * sin_h);
+    out.y = (lv_value_precise_t)(cy - lx * sin_h + ly * cos_h);
+}
+
+// Draw a filled triangle rotated by heading
+static void draw_tri(lv_layer_t *layer, int cx, int cy, float sin_h, float cos_h,
+                     float x0, float y0, float x1, float y1, float x2, float y2,
+                     lv_color_t color, uint8_t opa) {
+    lv_draw_triangle_dsc_t tri;
+    lv_draw_triangle_dsc_init(&tri);
+    tri.color = color;
+    tri.opa = opa;
+    rotate_pt(x0, y0, sin_h, cos_h, cx, cy, tri.p[0]);
+    rotate_pt(x1, y1, sin_h, cos_h, cx, cy, tri.p[1]);
+    rotate_pt(x2, y2, sin_h, cos_h, cx, cy, tri.p[2]);
+    lv_draw_triangle(layer, &tri);
+}
+
+// Jet icon: swept wings, narrow fuselage, tail fins (~16px long)
+//   Local coords: nose at (0,-8), tail at (0,8), wings at y=-1
+static void draw_icon_jet(lv_layer_t *layer, int cx, int cy,
+                          float sin_h, float cos_h, lv_color_t color, uint8_t opa) {
+    // Fuselage (narrow diamond)
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -8,  1.5f, 4,  -1.5f, 4, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -8,  1.5f, 4,  0, 8, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -8,  -1.5f, 4,  0, 8, color, opa);
+    // Main wings (swept back)
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -2,  9, 4,  0, 3, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -2,  -9, 4,  0, 3, color, opa);
+    // Tail fins
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, 5,  4, 8,  0, 8, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, 5,  -4, 8,  0, 8, color, opa);
+}
+
+// GA/prop icon: straight wings, boxy tail (~12px long)
+static void draw_icon_ga(lv_layer_t *layer, int cx, int cy,
+                         float sin_h, float cos_h, lv_color_t color, uint8_t opa) {
+    // Fuselage
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -6,  1.2f, 3,  -1.2f, 3, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             1.2f, 3,  -1.2f, 3,  0, 6, color, opa);
+    // Straight wings
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -1,  7, 1,  0, 2, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -1,  -7, 1,  0, 2, color, opa);
+    // Tail
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, 4,  3, 6,  -3, 6, color, opa);
+}
+
+// Helicopter icon: teardrop body + rotor disc
+static void draw_icon_heli(lv_layer_t *layer, int cx, int cy,
+                           float sin_h, float cos_h, lv_color_t color, uint8_t opa) {
+    // Body (teardrop pointing in heading direction)
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -5,  3, 1,  -3, 1, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             3, 1,  -3, 1,  0, 6, color, opa);
+    // Rotor disc (two crossing lines)
+    lv_draw_line_dsc_t rotor;
+    lv_draw_line_dsc_init(&rotor);
+    rotor.color = color;
+    rotor.width = 1;
+    rotor.opa = (uint8_t)(opa * 3 / 4);
+    lv_point_precise_t r0, r1, r2, r3;
+    rotate_pt(-7, -2, sin_h, cos_h, cx, cy, r0);
+    rotate_pt( 7, -2, sin_h, cos_h, cx, cy, r1);
+    rotate_pt( 0, -8, sin_h, cos_h, cx, cy, r2);
+    rotate_pt( 0,  4, sin_h, cos_h, cx, cy, r3);
+    rotor.p1 = {r0.x, r0.y}; rotor.p2 = {r1.x, r1.y};
+    lv_draw_line(layer, &rotor);
+    rotor.p1 = {r2.x, r2.y}; rotor.p2 = {r3.x, r3.y};
+    lv_draw_line(layer, &rotor);
+}
+
+// Classify aircraft into icon type
+enum IconType { ICON_JET, ICON_GA, ICON_HELI };
+
+static IconType classify_icon(const Aircraft &ac) {
+    // Helicopters: category A7 or known heli type codes
+    if (ac.category[0] == 'A' && ac.category[1] == '7') return ICON_HELI;
+    if (ac.type_code[0] && is_heli_type(ac.type_code)) return ICON_HELI;
+    // Jets: airline callsigns or large aircraft categories (A3+)
+    if (is_airline_callsign(ac.callsign)) return ICON_JET;
+    if (ac.category[0] == 'A' && ac.category[1] >= '3') return ICON_JET;
+    // Everything else: GA/prop
+    return ICON_GA;
+}
+
 static void draw_aircraft(lv_layer_t *layer) {
     if (!_list->lock(pdMS_TO_TICKS(50))) return;
 
@@ -254,47 +355,16 @@ static void draw_aircraft(lv_layer_t *layer) {
             }
         }
 
-        // Draw heading line
+        // Draw aircraft icon rotated to heading
         float heading_rad = ac.heading * M_PI / 180.0f;
-        int hdg_x = sx + (int)(14 * sinf(heading_rad));
-        int hdg_y = sy - (int)(14 * cosf(heading_rad));
-        lv_draw_line_dsc_t hdg_dsc;
-        lv_draw_line_dsc_init(&hdg_dsc);
-        hdg_dsc.color = color;
-        hdg_dsc.width = 2;
-        hdg_dsc.opa = ac_opa;
-        hdg_dsc.p1 = {(lv_value_precise_t)sx, (lv_value_precise_t)sy};
-        hdg_dsc.p2 = {(lv_value_precise_t)hdg_x, (lv_value_precise_t)hdg_y};
-        lv_draw_line(layer, &hdg_dsc);
+        float sin_h = sinf(heading_rad);
+        float cos_h = cosf(heading_rad);
 
-        // Draw aircraft marker (diamond for military, dot for civilian)
-        if (ac.is_military) {
-            lv_draw_line_dsc_t dm;
-            lv_draw_line_dsc_init(&dm);
-            dm.color = color;
-            dm.width = 2;
-            dm.opa = ac_opa;
-            int d = 5;
-            lv_point_precise_t pts[] = {
-                {(lv_value_precise_t)sx, (lv_value_precise_t)(sy - d)},
-                {(lv_value_precise_t)(sx + d), (lv_value_precise_t)sy},
-                {(lv_value_precise_t)sx, (lv_value_precise_t)(sy + d)},
-                {(lv_value_precise_t)(sx - d), (lv_value_precise_t)sy},
-            };
-            for (int j = 0; j < 4; j++) {
-                dm.p1 = {pts[j].x, pts[j].y};
-                dm.p2 = {pts[(j + 1) % 4].x, pts[(j + 1) % 4].y};
-                lv_draw_line(layer, &dm);
-            }
-        } else {
-            lv_draw_rect_dsc_t dot_dsc;
-            lv_draw_rect_dsc_init(&dot_dsc);
-            dot_dsc.bg_color = color;
-            dot_dsc.bg_opa = ac_opa;
-            dot_dsc.radius = 3;
-            lv_area_t dot_area = {(lv_coord_t)(sx - 3), (lv_coord_t)(sy - 3),
-                                   (lv_coord_t)(sx + 3), (lv_coord_t)(sy + 3)};
-            lv_draw_rect(layer, &dot_dsc, &dot_area);
+        IconType icon = classify_icon(ac);
+        switch (icon) {
+            case ICON_JET:  draw_icon_jet(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
+            case ICON_GA:   draw_icon_ga(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
+            case ICON_HELI: draw_icon_heli(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
         }
 
         // Draw callsign label
@@ -304,8 +374,8 @@ static void draw_aircraft(lv_layer_t *layer) {
         lbl_dsc.color = color;
         lbl_dsc.font = &lv_font_montserrat_14;
         lbl_dsc.opa = (uint8_t)((ac_opa * LV_OPA_80) / 255);
-        lv_area_t lbl_area = {(lv_coord_t)(sx + 8), (lv_coord_t)(sy - 7),
-                               (lv_coord_t)(sx + 120), (lv_coord_t)(sy + 10)};
+        lv_area_t lbl_area = {(lv_coord_t)(sx + 12), (lv_coord_t)(sy - 7),
+                               (lv_coord_t)(sx + 130), (lv_coord_t)(sy + 10)};
         lbl_dsc.text = label_text;
         lv_draw_label(layer, &lbl_dsc, &lbl_area);
     }
@@ -324,7 +394,7 @@ static void draw_altitude_legend(lv_layer_t *layer) {
     };
 
     int x = 8;
-    int y = CANVAS_H - 16;
+    int y = CANVAS_H - 18;
 
     for (int i = 0; i < 6; i++) {
         lv_draw_rect_dsc_t swatch;
@@ -344,6 +414,41 @@ static void draw_altitude_legend(lv_layer_t *layer) {
         lbl.text = entries[i].label;
         lv_area_t la = {(lv_coord_t)(x + 12), (lv_coord_t)(y - 2),
                         (lv_coord_t)(x + 60), (lv_coord_t)(y + 12)};
+        lv_draw_label(layer, &lbl, &la);
+
+        x += 58;
+    }
+}
+
+// Draw icon type legend above altitude legend
+static void draw_icon_legend(lv_layer_t *layer) {
+    lv_color_t legend_color = lv_color_hex(0x669966);
+    int y = CANVAS_H - 38;
+
+    // Draw mini icons with labels
+    struct { const char *label; IconType type; } entries[] = {
+        {"JET",  ICON_JET},
+        {"GA",   ICON_GA},
+        {"HELI", ICON_HELI},
+    };
+
+    int x = 8;
+    for (int i = 0; i < 3; i++) {
+        // Draw a small north-facing icon
+        switch (entries[i].type) {
+            case ICON_JET:  draw_icon_jet(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
+            case ICON_GA:   draw_icon_ga(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
+            case ICON_HELI: draw_icon_heli(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
+        }
+
+        lv_draw_label_dsc_t lbl;
+        lv_draw_label_dsc_init(&lbl);
+        lbl.color = legend_color;
+        lbl.font = &lv_font_montserrat_14;
+        lbl.opa = LV_OPA_80;
+        lbl.text = entries[i].label;
+        lv_area_t la = {(lv_coord_t)(x + 16), (lv_coord_t)(y - 1),
+                        (lv_coord_t)(x + 60), (lv_coord_t)(y + 14)};
         lv_draw_label(layer, &lbl, &la);
 
         x += 58;
@@ -376,6 +481,7 @@ static void canvas_draw_cb(lv_event_t *e) {
     draw_range_rings(layer);
     draw_home_marker(layer);
     draw_aircraft(layer);
+    draw_icon_legend(layer);
     draw_altitude_legend(layer);
     draw_filter_label(layer);
 }
