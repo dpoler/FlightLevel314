@@ -4,6 +4,8 @@
 #include "map_view.h"
 #include "radar_view.h"
 #include "arrivals_view.h"
+#include "stats_view.h"
+#include "stats.h"
 #include "../pins_config.h"
 
 static lv_obj_t *tileview;
@@ -66,6 +68,8 @@ static void cycle_timer_cb(lv_timer_t *t) {
 }
 
 void views_init(lv_obj_t *parent, AircraftList *list) {
+    stats_init();
+
     // Tileview fills screen below status bar
     tileview = lv_tileview_create(parent);
     lv_obj_set_pos(tileview, 0, CONTENT_Y);
@@ -88,6 +92,7 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
     map_view_init(tiles[VIEW_MAP], list);
     radar_view_init(tiles[VIEW_RADAR], list);
     arrivals_view_init(tiles[VIEW_ARRIVALS], list);
+    stats_view_init(tiles[VIEW_STATS], list);
 
     // Start auto-cycle timer
     _last_cycle_time = millis();
