@@ -219,8 +219,8 @@ static void draw_home_marker(lv_layer_t *layer) {
 // Rotate a local-coordinate point by heading (0=north) around origin, translate to screen pos
 static inline void rotate_pt(float lx, float ly, float sin_h, float cos_h,
                               int cx, int cy, lv_point_precise_t &out) {
-    out.x = (lv_value_precise_t)(cx + lx * cos_h + ly * sin_h);
-    out.y = (lv_value_precise_t)(cy - lx * sin_h + ly * cos_h);
+    out.x = (lv_value_precise_t)(cx + lx * cos_h - ly * sin_h);
+    out.y = (lv_value_precise_t)(cy + lx * sin_h + ly * cos_h);
 }
 
 // Draw a filled triangle rotated by heading
