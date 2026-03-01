@@ -2,17 +2,15 @@
 #include "map_view.h"
 #include "detail_card.h"
 #include "views.h"
+#include "range.h"
 // #include "tile_cache.h" // disabled: tiles broken on ESP32-P4
 #include "../config.h"
 #include "../pins_config.h"
 
 static AircraftList *_list = nullptr;
 static lv_obj_t *_canvas = nullptr;
+static lv_obj_t *_range_label = nullptr;
 static MapProjection _proj;
-
-// Zoom levels: 50nm, 20nm, 5nm
-static const float ZOOM_LEVELS[] = {50.0f, 20.0f, 5.0f};
-static int _zoom_idx = 0;
 
 // Map filter — single-select, -1 = show all
 #define FILT_NONE     -1
@@ -140,7 +138,7 @@ static void filter_click_cb(lv_event_t *e) {
 #define BG_COLOR lv_color_hex(0x0a0a1a)
 
 static void draw_grid(lv_layer_t *layer) {
-    float radius_nm = ZOOM_LEVELS[_zoom_idx];
+    float radius_nm = range_get_nm();
     float cos_lat = cosf(_proj.center_lat * M_PI / 180.0f);
 
     float grid_deg = radius_nm >= 30 ? 1.0f : (radius_nm >= 10 ? 0.5f : 0.1f);
@@ -187,7 +185,7 @@ static void draw_range_rings(lv_layer_t *layer) {
     arc_dsc.start_angle = 0;
     arc_dsc.end_angle = 360;
 
-    float radius_nm = ZOOM_LEVELS[_zoom_idx];
+    float radius_nm = range_get_nm();
     float scale = (float)CANVAS_H / (radius_nm * 2.0f);
 
     float ring_interval = radius_nm <= 10 ? 2.0f : (radius_nm <= 25 ? 5.0f : 10.0f);
@@ -491,7 +489,7 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
 
     _proj.center_lat = HOME_LAT;
     _proj.center_lon = HOME_LON;
-    _proj.radius_nm = ZOOM_LEVELS[_zoom_idx];
+    _proj.radius_nm = range_get_nm();
     _proj.screen_w = CANVAS_W;
     _proj.screen_h = CANVAS_H;
     _proj.offset_x = 0;
@@ -546,11 +544,6 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
             }
         }
         _list->unlock();
-
-        // No aircraft hit — cycle zoom
-        _zoom_idx = (_zoom_idx + 1) % 3;
-        _proj.radius_nm = ZOOM_LEVELS[_zoom_idx];
-        lv_obj_invalidate(_canvas);
     }, LV_EVENT_CLICKED, nullptr);
 
     // Filter toggle buttons — vertical stack on right edge
@@ -586,9 +579,26 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         _filters[i].lbl = lbl;
     }
 
+    // Range label — bottom-right, tappable
+    _range_label = lv_label_create(parent);
+    lv_label_set_text(_range_label, range_label());
+    lv_obj_set_style_text_font(_range_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(_range_label, lv_color_hex(0x4488ff), 0);
+    lv_obj_set_pos(_range_label, CANVAS_W - 80, CANVAS_H - 28);
+    lv_obj_add_flag(_range_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(_range_label, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_add_event_cb(_range_label, [](lv_event_t *e) {
+        range_cycle();
+        lv_label_set_text(_range_label, range_label());
+        _proj.radius_nm = range_get_nm();
+        lv_obj_invalidate(_canvas);
+    }, LV_EVENT_CLICKED, nullptr);
+
     // Periodic refresh
     lv_timer_create([](lv_timer_t *t) {
         if (views_get_active_index() == VIEW_MAP) {
+            _proj.radius_nm = range_get_nm();
+            lv_label_set_text(_range_label, range_label());
             lv_obj_invalidate(_canvas);
         }
     }, 1000, nullptr);
