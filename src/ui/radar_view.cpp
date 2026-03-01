@@ -4,9 +4,11 @@
 #include "../config.h"
 #include "../pins_config.h"
 #include "geo.h"
+#include "range.h"
 
 static AircraftList *_list = nullptr;
 static lv_obj_t *_radar_obj = nullptr;
+static lv_obj_t *_range_label = nullptr;
 
 static float _sweep_angle = 0.0f; // current sweep angle in degrees
 static uint32_t _last_sweep_ms = 0;
@@ -73,8 +75,18 @@ static void draw_rings(lv_layer_t *layer) {
     arc.center.x = RADAR_CX;
     arc.center.y = RADAR_CY;
 
-    for (int i = 1; i <= 4; i++) {
-        arc.radius = RADAR_R * i / 4;
+    float range = range_get_nm();
+    float ring_nm;
+    if (range >= 100) ring_nm = 25.0f;
+    else if (range >= 50) ring_nm = 10.0f;
+    else if (range >= 20) ring_nm = 5.0f;
+    else ring_nm = 1.0f;
+
+    float scale = (float)RADAR_R / range;
+    for (float r = ring_nm; r <= range; r += ring_nm) {
+        arc.radius = (int)(r * scale);
+        arc.center.x = RADAR_CX;
+        arc.center.y = RADAR_CY;
         lv_draw_arc(layer, &arc);
     }
 
@@ -224,7 +236,7 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
 
     _proj.center_lat = HOME_LAT;
     _proj.center_lon = HOME_LON;
-    _proj.radius_nm = 50.0f;
+    _proj.radius_nm = range_get_nm();
 
     _radar_obj = lv_obj_create(parent);
     lv_obj_set_size(_radar_obj, RADAR_W, RADAR_H);
@@ -237,6 +249,21 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
 
     lv_obj_add_event_cb(_radar_obj, radar_draw_cb, LV_EVENT_DRAW_MAIN_END, nullptr);
 
+    // Range label — bottom-right, tappable
+    _range_label = lv_label_create(parent);
+    lv_label_set_text(_range_label, range_label());
+    lv_obj_set_style_text_font(_range_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(_range_label, COLOR_TEXT, 0);
+    lv_obj_set_pos(_range_label, RADAR_W - 80, RADAR_H - 28);
+    lv_obj_add_flag(_range_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(_range_label, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_add_event_cb(_range_label, [](lv_event_t *e) {
+        range_cycle();
+        lv_label_set_text(_range_label, range_label());
+        _proj.radius_nm = range_get_nm();
+        lv_obj_invalidate(_radar_obj);
+    }, LV_EVENT_CLICKED, nullptr);
+
     // Animate sweep — always update angle, but only redraw when visible
     _last_sweep_ms = millis();
     lv_timer_create([](lv_timer_t *t) {
@@ -245,6 +272,9 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
         _last_sweep_ms = now;
         _sweep_angle += (360.0f * dt) / SWEEP_PERIOD_MS;
         if (_sweep_angle >= 360.0f) _sweep_angle -= 360.0f;
+
+        _proj.radius_nm = range_get_nm();
+        lv_label_set_text(_range_label, range_label());
 
         // Only invalidate when radar view is active (saves frame budget for swipes)
         if (views_get_active_index() == VIEW_RADAR) {
