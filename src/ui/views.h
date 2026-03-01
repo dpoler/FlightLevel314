@@ -6,6 +6,7 @@
 #define VIEW_MAP 0
 #define VIEW_RADAR 1
 #define VIEW_ARRIVALS 2
+#define VIEW_STATS 3
 
 // Initialize the tileview with all view containers
 void views_init(lv_obj_t *parent, AircraftList *list);

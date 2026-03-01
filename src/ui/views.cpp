@@ -7,7 +7,7 @@
 #include "../pins_config.h"
 
 static lv_obj_t *tileview;
-static lv_obj_t *tiles[3];
+static lv_obj_t *tiles[4];
 static int _active_index = VIEW_MAP;
 
 // View cycle state
@@ -24,7 +24,7 @@ static bool _cycle_paused = false;
 static void tileview_changed_cb(lv_event_t *e) {
     lv_obj_t *tv = (lv_obj_t *)lv_event_get_target(e);
     lv_obj_t *active = lv_tileview_get_tile_active(tv);
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         if (tiles[i] == active) {
             _active_index = i;
             status_bar_set_active_dot(i);
@@ -60,7 +60,7 @@ static void cycle_timer_cb(lv_timer_t *t) {
     // Advance to next view
     if (now - _last_cycle_time >= CYCLE_DWELL_MS) {
         _last_cycle_time = now;
-        int next = (_active_index + 1) % 3;
+        int next = (_active_index + 1) % 4;
         lv_tileview_set_tile_by_index(tileview, next, 0, LV_ANIM_ON);
     }
 }
@@ -73,10 +73,11 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_bg_color(tileview, lv_color_hex(0x0a0a1a), 0);
     lv_obj_set_style_bg_opa(tileview, LV_OPA_COVER, 0);
 
-    // Create 3 horizontal tiles
+    // Create 4 horizontal tiles
     tiles[VIEW_MAP] = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_RIGHT);
     tiles[VIEW_RADAR] = lv_tileview_add_tile(tileview, 1, 0, (lv_dir_t)(LV_DIR_LEFT | LV_DIR_RIGHT));
-    tiles[VIEW_ARRIVALS] = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT);
+    tiles[VIEW_ARRIVALS] = lv_tileview_add_tile(tileview, 2, 0, (lv_dir_t)(LV_DIR_LEFT | LV_DIR_RIGHT));
+    tiles[VIEW_STATS] = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_LEFT);
 
     lv_obj_add_event_cb(tileview, tileview_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
