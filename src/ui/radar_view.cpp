@@ -26,6 +26,12 @@ static uint32_t _last_sweep_ms = 0;
 #define COLOR_BLIP lv_color_hex(0x00ff66)
 #define COLOR_MILITARY lv_color_hex(0xffaa00)
 
+#define BLIP_BASE_OPA    LV_OPA_60   // always-visible baseline
+#define BLIP_BOOST_OPA   LV_OPA_COVER // brightness at sweep
+#define SWEEP_BRIGHT_DEG 30.0f        // full brightness zone behind sweep
+#define SWEEP_FADE_DEG   90.0f        // end of fade-back to base
+#define LABEL_VISIBLE_DEG 90.0f       // callsign label visibility zone
+
 static MapProjection _proj;
 
 // Convert lat/lon to radar-relative screen coords
@@ -145,17 +151,17 @@ static void draw_blips(lv_layer_t *layer) {
         int sx, sy;
         if (!to_radar_screen(ac.lat, ac.lon, sx, sy)) continue;
 
-        // Phosphor effect: brightness based on angular distance from sweep
+        // Phosphor: always visible at base, bright flash when sweep passes
         float behind = angle_behind_sweep(blip_angle(sx, sy));
-        // Blips just swept are bright, fade as sweep moves away
-        // Full bright for first 30 degrees behind sweep, then fade over 330 degrees
         uint8_t phosphor_opa;
-        if (behind < 30.0f) {
-            phosphor_opa = LV_OPA_COVER;
+        if (behind < SWEEP_BRIGHT_DEG) {
+            phosphor_opa = BLIP_BOOST_OPA;
+        } else if (behind < SWEEP_FADE_DEG) {
+            // Smooth fade from boost back to base
+            float t = (behind - SWEEP_BRIGHT_DEG) / (SWEEP_FADE_DEG - SWEEP_BRIGHT_DEG);
+            phosphor_opa = BLIP_BOOST_OPA - (uint8_t)(t * (BLIP_BOOST_OPA - BLIP_BASE_OPA));
         } else {
-            // Fade from OPA_COVER to OPA_30 over remaining 330 degrees
-            float fade = (behind - 30.0f) / 330.0f;
-            phosphor_opa = LV_OPA_COVER - (uint8_t)(fade * (LV_OPA_COVER - LV_OPA_30));
+            phosphor_opa = BLIP_BASE_OPA;
         }
 
         uint8_t opa = (uint8_t)((phosphor_opa * ghost_opa) / 255);
@@ -173,7 +179,7 @@ static void draw_blips(lv_layer_t *layer) {
         lv_draw_rect(layer, &dot, &area);
 
         // Callsign — only show for recently swept blips (keeps it clean)
-        if (behind < 120.0f) {
+        if (behind < LABEL_VISIBLE_DEG) {
             const char *label_text = ac.callsign[0] ? ac.callsign : ac.icao_hex;
             lv_draw_label_dsc_t lbl;
             lv_draw_label_dsc_init(&lbl);
