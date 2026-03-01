@@ -265,6 +265,40 @@ static void update_board(lv_timer_t *t) {
     _list->unlock();
 }
 
+// Update header label text to show sort indicator
+static void update_header_labels() {
+    for (int i = 0; i < NUM_COLS; i++) {
+        if (i == _sort_col && _sort_dir != SORT_NONE) {
+            // Active sort column: bright white + arrow
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%s%s", columns[i].name,
+                     _sort_dir == SORT_ASC ? "\xE2\x96\xB2" : "\xE2\x96\xBC"); // ▲ or ▼
+            lv_label_set_text(_header_labels[i], buf);
+            lv_obj_set_style_text_color(_header_labels[i], lv_color_hex(0xffffff), 0);
+        } else {
+            lv_label_set_text(_header_labels[i], columns[i].name);
+            lv_obj_set_style_text_color(_header_labels[i],
+                columns[i].sortable ? lv_color_hex(0x888888) : lv_color_hex(0x666666), 0);
+        }
+    }
+}
+
+static void header_click_cb(lv_event_t *e) {
+    int col = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!columns[col].sortable) return;
+
+    if (_sort_col == col) {
+        // Same column: cycle ASC -> DESC -> NONE
+        if (_sort_dir == SORT_ASC) _sort_dir = SORT_DESC;
+        else if (_sort_dir == SORT_DESC) { _sort_dir = SORT_NONE; _sort_col = -1; }
+    } else {
+        // Different column: switch to it ascending
+        _sort_col = col;
+        _sort_dir = SORT_ASC;
+    }
+    update_header_labels();
+}
+
 void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
 
@@ -294,15 +328,33 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_text_color(_title_label, HEADER_TEXT, 0);
     lv_obj_align(_title_label, LV_ALIGN_LEFT_MID, 10, 0);
 
-    // Column headers — below title bar
+    // Column headers — below title bar, clickable for sort
     for (int i = 0; i < NUM_COLS; i++) {
-        lv_obj_t *lbl = lv_label_create(_board_container);
+        // Create clickable container for larger touch target
+        lv_obj_t *hdr_btn = lv_obj_create(_board_container);
+        int col_w = (i < NUM_COLS - 1) ? (columns[i + 1].x - columns[i].x) : (BOARD_W - columns[i].x);
+        lv_obj_set_size(hdr_btn, col_w, COL_HEADER_H);
+        lv_obj_set_pos(hdr_btn, columns[i].x, TITLE_H);
+        lv_obj_set_style_bg_opa(hdr_btn, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(hdr_btn, 0, 0);
+        lv_obj_set_style_pad_all(hdr_btn, 0, 0);
+        lv_obj_clear_flag(hdr_btn, LV_OBJ_FLAG_SCROLLABLE);
+        if (columns[i].sortable) {
+            lv_obj_add_flag(hdr_btn, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(hdr_btn, header_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        }
+
+        lv_obj_t *lbl = lv_label_create(hdr_btn);
         lv_label_set_text(lbl, columns[i].name);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0x666666), 0);
-        lv_obj_set_pos(lbl, columns[i].x, TITLE_H + 2);
+        lv_obj_set_style_text_color(lbl,
+            columns[i].sortable ? lv_color_hex(0x888888) : lv_color_hex(0x666666), 0);
+        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
         _header_labels[i] = lbl;
     }
+
+    // Set initial sort indicator
+    update_header_labels();
 
     // Create all flip cells
     init_rows(_board_container);
