@@ -7,9 +7,11 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include "range.h"
 
 static AircraftList *_list = nullptr;
 static lv_obj_t *_board_container = nullptr;
+static lv_obj_t *_range_label = nullptr;
 
 #define BOARD_W LCD_H_RES
 #define BOARD_H (LCD_V_RES - 30)
@@ -260,8 +262,10 @@ static void update_board(lv_timer_t *t) {
     for (int i = 0; i < _list->count && n_entries < MAX_AIRCRAFT; i++) {
         Aircraft &ac = _list->aircraft[i];
         if (ac.lat == 0 && ac.lon == 0) continue;
+        float d = MapProjection::distance_nm(HOME_LAT, HOME_LON, ac.lat, ac.lon);
+        if (d > range_get_nm()) continue;
         entries[n_entries].index = i;
-        entries[n_entries].dist_nm = MapProjection::distance_nm(HOME_LAT, HOME_LON, ac.lat, ac.lon);
+        entries[n_entries].dist_nm = d;
         n_entries++;
     }
 
@@ -344,6 +348,8 @@ static void update_board(lv_timer_t *t) {
         row++;
     }
 
+    int displayed_count = row;  // save before clear loop overwrites row
+
     // Clear remaining rows
     for (; row < MAX_ROWS; row++) {
         if (_rows[row].active) {
@@ -353,8 +359,9 @@ static void update_board(lv_timer_t *t) {
         }
     }
 
-    // Update title with count
-    lv_label_set_text_fmt(_title_label, "OVERHEAD TRAFFIC         %d", _list->count);
+    // Update title with range-filtered count
+    lv_label_set_text_fmt(_title_label, "OVERHEAD TRAFFIC  <%s    %d", range_label(), displayed_count);
+    lv_label_set_text(_range_label, range_label());
 
     if (_first_render) _first_render = false;
 
@@ -464,6 +471,19 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
 
     // Create all flip cells
     init_rows(_board_container);
+
+    // Range label — bottom-right, tappable
+    _range_label = lv_label_create(parent);
+    lv_label_set_text(_range_label, range_label());
+    lv_obj_set_style_text_font(_range_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(_range_label, lv_color_hex(0xffdd00), 0);
+    lv_obj_set_pos(_range_label, BOARD_W - 80, BOARD_H - 28);
+    lv_obj_add_flag(_range_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(_range_label, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_add_event_cb(_range_label, [](lv_event_t *e) {
+        range_cycle();
+        lv_label_set_text(_range_label, range_label());
+    }, LV_EVENT_CLICKED, nullptr);
 
     // Flip animation timer (runs fast for smooth rolling effect)
     lv_timer_create(flip_animation_tick, 60, nullptr);
