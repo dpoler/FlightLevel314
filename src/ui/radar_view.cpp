@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "radar_view.h"
 #include "views.h"
+#include "detail_card.h"
 #include "../config.h"
 #include "../pins_config.h"
 #include "geo.h"
@@ -248,6 +249,36 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_clear_flag(_radar_obj, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_add_event_cb(_radar_obj, radar_draw_cb, LV_EVENT_DRAW_MAIN_END, nullptr);
+
+    lv_obj_add_event_cb(_radar_obj, [](lv_event_t *e) {
+        if (views_get_active_index() != VIEW_RADAR) return;
+
+        lv_point_t point;
+        lv_indev_get_point(lv_indev_active(), &point);
+        int tx = point.x;
+        int ty = point.y - 30; // offset for status bar
+
+        if (detail_card_is_visible()) {
+            detail_card_hide();
+            return;
+        }
+
+        if (!_list->lock(pdMS_TO_TICKS(50))) return;
+        for (int i = 0; i < _list->count; i++) {
+            int sx, sy;
+            if (to_radar_screen(_list->aircraft[i].lat, _list->aircraft[i].lon, sx, sy)) {
+                int dx = tx - sx;
+                int dy = ty - sy;
+                if (dx * dx + dy * dy < 400) { // 20px hit radius
+                    Aircraft ac_copy = _list->aircraft[i];
+                    _list->unlock();
+                    detail_card_show(&ac_copy);
+                    return;
+                }
+            }
+        }
+        _list->unlock();
+    }, LV_EVENT_CLICKED, nullptr);
 
     // Range label — bottom-right, tappable
     _range_label = lv_label_create(parent);
