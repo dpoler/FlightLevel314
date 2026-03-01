@@ -14,6 +14,85 @@ static MapProjection _proj;
 static const float ZOOM_LEVELS[] = {50.0f, 20.0f, 5.0f};
 static int _zoom_idx = 0;
 
+// Map filters
+enum FilterBit : uint8_t {
+    FILT_AIRLINE  = 0x01,
+    FILT_MILITARY = 0x02,
+    FILT_EMERGENCY= 0x04,
+    FILT_HELI     = 0x08,
+    FILT_FAST     = 0x10,
+    FILT_SLOW     = 0x20,
+    FILT_ODDBALL  = 0x40,
+};
+
+static uint8_t _active_filters = 0; // bitmask, 0 = show all
+
+struct FilterDef {
+    const char *label;
+    uint8_t bit;
+    lv_color_t color;
+    lv_obj_t *btn;
+    lv_obj_t *lbl;
+};
+
+static FilterDef _filters[] = {
+    {"COM",  FILT_AIRLINE,   lv_color_hex(0x4488ff), nullptr, nullptr},
+    {"MIL",  FILT_MILITARY,  lv_color_hex(0xffaa00), nullptr, nullptr},
+    {"EMG",  FILT_EMERGENCY, lv_color_hex(0xff3333), nullptr, nullptr},
+    {"HELI", FILT_HELI,      lv_color_hex(0x44ddaa), nullptr, nullptr},
+    {"FAST", FILT_FAST,      lv_color_hex(0xff66cc), nullptr, nullptr},
+    {"SLOW", FILT_SLOW,      lv_color_hex(0x88aacc), nullptr, nullptr},
+    {"ODD",  FILT_ODDBALL,   lv_color_hex(0xcc88ff), nullptr, nullptr},
+};
+#define NUM_FILTERS 7
+
+// Classify an aircraft against filter bits
+static bool aircraft_matches_filter(const Aircraft &ac) {
+    if (_active_filters == 0) return true; // no filters = show all
+
+    // Airline: 3-letter ICAO prefix callsign (e.g. AAL, DAL, SWA) or category A3+
+    if (_active_filters & FILT_AIRLINE) {
+        bool is_airline = false;
+        if (ac.callsign[0] >= 'A' && ac.callsign[0] <= 'Z' &&
+            ac.callsign[1] >= 'A' && ac.callsign[1] <= 'Z' &&
+            ac.callsign[2] >= 'A' && ac.callsign[2] <= 'Z' &&
+            ac.callsign[3] >= '0' && ac.callsign[3] <= '9') {
+            is_airline = true;
+        }
+        if (ac.category[0] == 'A' && ac.category[1] >= '3') is_airline = true;
+        if (is_airline) return true;
+    }
+
+    if ((_active_filters & FILT_MILITARY) && ac.is_military) return true;
+    if ((_active_filters & FILT_EMERGENCY) && ac.is_emergency) return true;
+
+    // Rotorcraft: category A7
+    if (_active_filters & FILT_HELI) {
+        if (ac.category[0] == 'A' && ac.category[1] == '7') return true;
+    }
+
+    // Fast movers: >300kt, not on ground
+    if ((_active_filters & FILT_FAST) && ac.speed > 300 && !ac.on_ground) return true;
+
+    // Slow movers: <100kt, airborne
+    if ((_active_filters & FILT_SLOW) && ac.speed > 0 && ac.speed < 100 && !ac.on_ground) return true;
+
+    // Oddballs: B-categories (glider, blimp, parachute, ultralight, UAV), or A1 non-airline
+    if (_active_filters & FILT_ODDBALL) {
+        if (ac.category[0] == 'B') return true;
+        if (ac.category[0] == 'A' && ac.category[1] == '1') {
+            // Light aircraft without airline callsign
+            bool has_airline_call = (ac.callsign[0] >= 'A' && ac.callsign[2] >= 'A' &&
+                                     ac.callsign[3] >= '0');
+            if (!has_airline_call) return true;
+        }
+    }
+
+    return false;
+}
+
+static void update_filter_visuals();
+
 #define CANVAS_W LCD_H_RES
 #define CANVAS_H (LCD_V_RES - 30)  // minus status bar
 #define BG_COLOR lv_color_hex(0x0a0a1a)
@@ -113,6 +192,7 @@ static void draw_aircraft(lv_layer_t *layer) {
         Aircraft &ac = _list->aircraft[i];
         uint8_t ac_opa = compute_aircraft_opacity(ac.stale_since, now);
         if (ac_opa == 0) continue;
+        if (!aircraft_matches_filter(ac)) continue;
 
         int sx, sy;
         if (!_proj.to_screen(ac.lat, ac.lon, sx, sy)) continue;
@@ -227,6 +307,25 @@ static void canvas_draw_cb(lv_event_t *e) {
     draw_altitude_legend(layer);
 }
 
+static void update_filter_visuals() {
+    for (int i = 0; i < NUM_FILTERS; i++) {
+        bool active = (_active_filters & _filters[i].bit) != 0;
+        lv_obj_set_style_bg_color(_filters[i].btn,
+            active ? _filters[i].color : lv_color_hex(0x1a1a2a), 0);
+        lv_obj_set_style_bg_opa(_filters[i].btn,
+            active ? LV_OPA_80 : LV_OPA_50, 0);
+        lv_obj_set_style_text_color(_filters[i].lbl,
+            active ? lv_color_hex(0x000000) : lv_color_hex(0x888888), 0);
+    }
+    if (_canvas) lv_obj_invalidate(_canvas);
+}
+
+static void filter_click_cb(lv_event_t *e) {
+    uint8_t bit = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+    _active_filters ^= bit; // toggle
+    update_filter_visuals();
+}
+
 void map_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
 
@@ -292,6 +391,34 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         // tile_cache_flush_queue();
         lv_obj_invalidate(_canvas);
     }, LV_EVENT_CLICKED, nullptr);
+
+    // Filter toggle buttons — top-right of map
+    int btn_x = CANVAS_W - (NUM_FILTERS * 54) - 4;
+    for (int i = 0; i < NUM_FILTERS; i++) {
+        lv_obj_t *btn = lv_obj_create(parent);
+        lv_obj_set_size(btn, 50, 22);
+        lv_obj_set_pos(btn, btn_x + i * 54, 4);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1a1a2a), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_50, 0);
+        lv_obj_set_style_border_color(btn, _filters[i].color, 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_border_opa(btn, LV_OPA_60, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+        // lv_obj_create sets CLICKABLE by default
+        lv_obj_add_event_cb(btn, filter_click_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)_filters[i].bit);
+
+        lv_obj_t *lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, _filters[i].label);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888), 0);
+        lv_obj_center(lbl);
+
+        _filters[i].btn = btn;
+        _filters[i].lbl = lbl;
+    }
 
     // Periodic refresh — only when map view is active
     lv_timer_create([](lv_timer_t *t) {

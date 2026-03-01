@@ -48,6 +48,8 @@ static void update_aircraft_from_json(Aircraft &a, JsonObject &obj, bool is_new)
     a.registration[sizeof(a.registration) - 1] = '\0';
     strncpy(a.type_code, obj["t"] | "", sizeof(a.type_code) - 1);
     a.type_code[sizeof(a.type_code) - 1] = '\0';
+    strncpy(a.category, obj["category"] | "", sizeof(a.category) - 1);
+    a.category[sizeof(a.category) - 1] = '\0';
 
     a.lat = obj["lat"] | 0.0f;
     a.lon = obj["lon"] | 0.0f;

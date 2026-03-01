@@ -16,6 +16,7 @@ struct Aircraft {
     char callsign[9];       // e.g. "UAL1234"
     char registration[9];   // e.g. "N12345"
     char type_code[5];      // e.g. "B738"
+    char category[3];       // ADS-B emitter category e.g. "A3"
     char origin[5];         // IATA airport code e.g. "ATL"
     char dest[5];           // IATA airport code e.g. "MDW"
     float lat;
