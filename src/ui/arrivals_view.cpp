@@ -201,14 +201,72 @@ static void flip_animation_tick(lv_timer_t *t) {
     }
 }
 
+// Temporary struct for sorting aircraft indices
+struct SortEntry {
+    int index;
+    float dist_nm;  // cached for SORT_DIST
+};
+
+static int sort_compare(const void *a, const void *b) {
+    const SortEntry *ea = (const SortEntry *)a;
+    const SortEntry *eb = (const SortEntry *)b;
+    if (_sort_dir == SORT_NONE) return 0;
+
+    int cmp = 0;
+    const Aircraft &aa = _list->aircraft[ea->index];
+    const Aircraft &ab = _list->aircraft[eb->index];
+
+    switch (_sort_col) {
+        case COL_FLIGHT:
+            cmp = strcasecmp(
+                aa.callsign[0] ? aa.callsign : aa.icao_hex,
+                ab.callsign[0] ? ab.callsign : ab.icao_hex);
+            break;
+        case COL_ALT:
+            cmp = (aa.altitude > ab.altitude) - (aa.altitude < ab.altitude);
+            break;
+        case COL_SPD:
+            cmp = (aa.speed > ab.speed) - (aa.speed < ab.speed);
+            break;
+        case COL_DIST:
+            if (ea->dist_nm < eb->dist_nm) cmp = -1;
+            else if (ea->dist_nm > eb->dist_nm) cmp = 1;
+            break;
+    }
+
+    return (_sort_dir == SORT_DESC) ? -cmp : cmp;
+}
+
 // Update board data from aircraft list
 static void update_board(lv_timer_t *t) {
     if (!_list->lock(pdMS_TO_TICKS(50))) return;
 
-    int row = 0;
-    for (int i = 0; i < _list->count && row < MAX_ROWS; i++) {
+    // Build sortable index of aircraft with valid positions
+    SortEntry entries[MAX_AIRCRAFT];
+    int n_entries = 0;
+    for (int i = 0; i < _list->count && n_entries < MAX_AIRCRAFT; i++) {
         Aircraft &ac = _list->aircraft[i];
         if (ac.lat == 0 && ac.lon == 0) continue;
+        entries[n_entries].index = i;
+        entries[n_entries].dist_nm = MapProjection::distance_nm(HOME_LAT, HOME_LON, ac.lat, ac.lon);
+        n_entries++;
+    }
+
+    // Sort if a mode is active
+    if (_sort_dir != SORT_NONE) {
+        qsort(entries, n_entries, sizeof(SortEntry), sort_compare);
+    }
+
+    int row = 0;
+    for (int e = 0; e < n_entries && row < MAX_ROWS; e++) {
+        Aircraft &ac = _list->aircraft[entries[e].index];
+
+        // Skip fully faded ghosts
+        if (ac.stale_since != 0) {
+            uint32_t now = millis();
+            uint8_t opa = compute_aircraft_opacity(ac.stale_since, now);
+            if (opa == 0) continue;
+        }
 
         bool is_new_row = !_rows[row].active ||
                           strcmp(_rows[row].icao_hex, ac.icao_hex) != 0;
@@ -220,10 +278,10 @@ static void update_board(lv_timer_t *t) {
         snprintf(flight, sizeof(flight), "%-8s", ac.callsign[0] ? ac.callsign : ac.icao_hex);
         snprintf(type, sizeof(type), "%-4s", ac.type_code);
         if (ac.on_ground) snprintf(alt, sizeof(alt), " GND ");
-        else snprintf(alt, sizeof(alt), "%5d", ac.altitude / 100); // flight level
+        else snprintf(alt, sizeof(alt), "%5d", ac.altitude / 100);
         snprintf(spd, sizeof(spd), "%4d", ac.speed);
 
-        float dist_nm = MapProjection::distance_nm(HOME_LAT, HOME_LON, ac.lat, ac.lon);
+        float dist_nm = entries[e].dist_nm;
         if (dist_nm >= 99.95f) snprintf(dist, sizeof(dist), "%5.0f", dist_nm);
         else snprintf(dist, sizeof(dist), "%5.1f", dist_nm);
         snprintf(hdg, sizeof(hdg), "%03d", ac.heading);
@@ -239,8 +297,6 @@ static void update_board(lv_timer_t *t) {
         if (ac.stale_since != 0) {
             uint32_t now = millis();
             uint8_t opa = compute_aircraft_opacity(ac.stale_since, now);
-            if (opa == 0) continue;
-            // Mix color toward dark background proportional to fade
             color = lv_color_make((color.red * opa) / 255,
                                   (color.green * opa) / 255,
                                   (color.blue * opa) / 255);
