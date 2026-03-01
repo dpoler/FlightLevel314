@@ -1,13 +1,17 @@
 #include <Arduino.h>
 #include "status_bar.h"
+#include "views.h"
 #include "../pins_config.h"
 
 static lv_obj_t *wifi_icon;
 static lv_obj_t *ac_count_label;
 static lv_obj_t *update_label;
-static lv_obj_t *view_dots[3];
+static lv_obj_t *nav_btns[3];
+static lv_obj_t *nav_labels[3];
 static lv_obj_t *gear_icon;
 static lv_obj_t *auto_label;
+
+static const char *NAV_NAMES[] = {"MAP", "RADAR", "ARR"};
 
 #define STATUS_BAR_HEIGHT 30
 #define STATUS_BG_COLOR lv_color_hex(0x0d0d1a)
@@ -39,25 +43,45 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     lv_obj_set_style_text_font(ac_count_label, &lv_font_montserrat_14, 0);
     lv_obj_align(ac_count_label, LV_ALIGN_LEFT_MID, 36, 0);
 
-    // View indicator dots (center)
+    // Nav buttons (center)
+    int nav_total_w = 3 * 70 + 2 * 6; // 3 buttons, 6px gaps
+    int nav_x0 = (LCD_H_RES - nav_total_w) / 2;
     for (int i = 0; i < 3; i++) {
-        view_dots[i] = lv_obj_create(bar);
-        lv_obj_set_size(view_dots[i], 8, 8);
-        lv_obj_set_style_radius(view_dots[i], LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(view_dots[i], STATUS_TEXT_COLOR, 0);
-        lv_obj_set_style_bg_opa(view_dots[i], LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(view_dots[i], 0, 0);
-        lv_obj_align(view_dots[i], LV_ALIGN_CENTER, (i - 1) * 16, 0);
-    }
-    // First dot active by default
-    lv_obj_set_style_bg_color(view_dots[0], STATUS_ACCENT_COLOR, 0);
+        nav_btns[i] = lv_obj_create(bar);
+        lv_obj_set_size(nav_btns[i], 70, 24);
+        lv_obj_set_pos(nav_btns[i], nav_x0 + i * 76, 3);
+        lv_obj_set_style_bg_color(nav_btns[i], STATUS_BG_COLOR, 0);
+        lv_obj_set_style_bg_opa(nav_btns[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(nav_btns[i], STATUS_TEXT_COLOR, 0);
+        lv_obj_set_style_border_width(nav_btns[i], 1, 0);
+        lv_obj_set_style_border_opa(nav_btns[i], LV_OPA_40, 0);
+        lv_obj_set_style_radius(nav_btns[i], 4, 0);
+        lv_obj_set_style_pad_all(nav_btns[i], 0, 0);
+        lv_obj_clear_flag(nav_btns[i], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(nav_btns[i], LV_OBJ_FLAG_SCROLL_CHAIN);
+        lv_obj_add_event_cb(nav_btns[i], [](lv_event_t *e) {
+            int idx = (int)(intptr_t)lv_event_get_user_data(e);
+            lv_tileview_set_tile_by_index(views_get_tileview(), idx, 0, LV_ANIM_ON);
+        }, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
-    // AUTO cycle indicator (right of view dots)
+        nav_labels[i] = lv_label_create(nav_btns[i]);
+        lv_label_set_text(nav_labels[i], NAV_NAMES[i]);
+        lv_obj_set_style_text_font(nav_labels[i], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(nav_labels[i], STATUS_TEXT_COLOR, 0);
+        lv_obj_center(nav_labels[i]);
+    }
+    // First button active by default
+    lv_obj_set_style_bg_color(nav_btns[0], STATUS_ACCENT_COLOR, 0);
+    lv_obj_set_style_text_color(nav_labels[0], lv_color_hex(0x000000), 0);
+    lv_obj_set_style_border_opa(nav_btns[0], LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(nav_btns[0], STATUS_ACCENT_COLOR, 0);
+
+    // AUTO cycle indicator (right of nav buttons)
     auto_label = lv_label_create(bar);
     lv_label_set_text(auto_label, "AUTO");
     lv_obj_set_style_text_font(auto_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(auto_label, STATUS_ACCENT_COLOR, 0);
-    lv_obj_align(auto_label, LV_ALIGN_CENTER, 36, 0);
+    lv_obj_set_pos(auto_label, nav_x0 + nav_total_w + 8, 8);
     lv_obj_clear_flag(auto_label, LV_OBJ_FLAG_CLICKABLE);
 
     // Gear icon (right side, before update label)
@@ -102,8 +126,15 @@ void status_bar_set_gear_callback(lv_event_cb_t cb) {
 
 void status_bar_set_active_dot(int view_index) {
     for (int i = 0; i < 3; i++) {
-        lv_obj_set_style_bg_color(view_dots[i],
-            i == view_index ? STATUS_ACCENT_COLOR : STATUS_TEXT_COLOR, 0);
+        bool active = (i == view_index);
+        lv_obj_set_style_bg_color(nav_btns[i],
+            active ? STATUS_ACCENT_COLOR : STATUS_BG_COLOR, 0);
+        lv_obj_set_style_text_color(nav_labels[i],
+            active ? lv_color_hex(0x000000) : STATUS_TEXT_COLOR, 0);
+        lv_obj_set_style_border_color(nav_btns[i],
+            active ? STATUS_ACCENT_COLOR : STATUS_TEXT_COLOR, 0);
+        lv_obj_set_style_border_opa(nav_btns[i],
+            active ? LV_OPA_COVER : LV_OPA_40, 0);
     }
 }
 
