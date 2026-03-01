@@ -435,7 +435,7 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
             lv_obj_set_style_border_width(btn, 0, 0);
             lv_obj_set_style_pad_all(btn, 0, 0);
             lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
-            // lv_obj_create sets LV_OBJ_FLAG_CLICKABLE by default — keep it
+            lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLL_CHAIN); // prevent tileview from stealing clicks
             lv_obj_add_event_cb(btn, header_label_click_cb, LV_EVENT_CLICKED,
                                 (void *)(intptr_t)i);
 

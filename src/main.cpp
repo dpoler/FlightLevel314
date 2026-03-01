@@ -116,6 +116,7 @@ void setup() {
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touch_read_cb);
     lv_indev_set_display(indev, disp);
+    lv_indev_set_scroll_limit(indev, 30); // raise from 10px default — prevents tileview scroll from stealing button clicks
 
     // Init aircraft data
     aircraft_list.init();

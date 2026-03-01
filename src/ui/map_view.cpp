@@ -447,26 +447,32 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_obj_invalidate(_canvas);
     }, LV_EVENT_CLICKED, nullptr);
 
-    // Filter toggle buttons — top-right, single-select exclusive
-    int btn_x = CANVAS_W - (NUM_FILTERS * 54) - 4;
+    // Filter toggle buttons — vertical stack on right edge
+    int btn_w = 64;
+    int btn_h = 48;
+    int btn_gap = 10;
+    int total_h = NUM_FILTERS * btn_h + (NUM_FILTERS - 1) * btn_gap;
+    int btn_x = CANVAS_W - btn_w - 8;
+    int btn_y0 = (CANVAS_H - total_h) / 2;
     for (int i = 0; i < NUM_FILTERS; i++) {
         lv_obj_t *btn = lv_obj_create(parent);
-        lv_obj_set_size(btn, 50, 22);
-        lv_obj_set_pos(btn, btn_x + i * 54, 4);
+        lv_obj_set_size(btn, btn_w, btn_h);
+        lv_obj_set_pos(btn, btn_x, btn_y0 + i * (btn_h + btn_gap));
         lv_obj_set_style_bg_color(btn, lv_color_hex(0x0a0a1a), 0);
         lv_obj_set_style_bg_opa(btn, LV_OPA_70, 0);
         lv_obj_set_style_border_color(btn, _filters[i].color, 0);
         lv_obj_set_style_border_width(btn, 1, 0);
         lv_obj_set_style_border_opa(btn, LV_OPA_40, 0);
-        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_radius(btn, 6, 0);
         lv_obj_set_style_pad_all(btn, 0, 0);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLL_CHAIN); // prevent tileview from stealing clicks
         lv_obj_add_event_cb(btn, filter_click_cb, LV_EVENT_CLICKED,
                             (void *)(intptr_t)i);
 
         lv_obj_t *lbl = lv_label_create(btn);
         lv_label_set_text(lbl, _filters[i].label);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0x666666), 0);
         lv_obj_center(lbl);
 
