@@ -68,7 +68,7 @@ static Column columns[] = {
     {"SPD",      4,  380, true},
     {"DIST",     5,  470, true},
     {"HDG",      3,  580, false},
-    {"STATUS",   7,  640, false},
+    {"STATUS",   7,  660, false},
 };
 #define NUM_COLS 7
 
@@ -90,6 +90,7 @@ struct BoardRow {
 static BoardRow _rows[MAX_ROWS];
 static lv_obj_t *_header_labels[NUM_COLS];
 static lv_obj_t *_title_label = nullptr;
+static bool _first_render = true;
 
 static const char *status_from_vert_rate(int16_t vr, bool on_ground) {
     if (on_ground) return "GROUND ";
@@ -144,8 +145,8 @@ static void init_rows(lv_obj_t *parent) {
     }
 }
 
-// Set a row's target text — triggers flip animation for changed characters
-static void set_row_text(int row, const char *texts[], lv_color_t color, bool is_new_row) {
+// Set a row's target text — animate only for genuinely new aircraft
+static void set_row_text(int row, const char *texts[], lv_color_t color, bool should_animate) {
     int cell_idx = 0;
     for (int col = 0; col < NUM_COLS; col++) {
         const char *text = texts[col];
@@ -159,11 +160,11 @@ static void set_row_text(int row, const char *texts[], lv_color_t color, bool is
 
             if (target != fc.target) {
                 fc.target = target;
-                if (is_new_row) {
-                    // Full roll for new aircraft appearing
-                    fc.rolls_remaining = 2 + (rand() % 3); // 2-4 rolls
+                if (should_animate) {
+                    // Flip animation for genuinely new aircraft
+                    fc.rolls_remaining = 2 + (rand() % 3);
                 } else {
-                    // Instant update for incremental changes (speed/dist/hdg ticking)
+                    // Instant update
                     fc.rolls_remaining = 0;
                     fc.current = target;
                     char buf[2] = {target, 0};
@@ -241,6 +242,16 @@ static int sort_compare(const void *a, const void *b) {
 static void update_board(lv_timer_t *t) {
     if (!_list->lock(pdMS_TO_TICKS(50))) return;
 
+    // Snapshot previously displayed ICAOs (for animation decisions)
+    char prev_icaos[MAX_ROWS][7];
+    int prev_count = 0;
+    for (int r = 0; r < MAX_ROWS; r++) {
+        if (_rows[r].active) {
+            memcpy(prev_icaos[prev_count], _rows[r].icao_hex, 7);
+            prev_count++;
+        }
+    }
+
     // Build sortable index of aircraft with valid positions
     SortEntry entries[MAX_AIRCRAFT];
     int n_entries = 0;
@@ -270,6 +281,22 @@ static void update_board(lv_timer_t *t) {
 
         bool is_new_row = !_rows[row].active ||
                           strcmp(_rows[row].icao_hex, ac.icao_hex) != 0;
+
+        // Decide whether to animate: only for genuinely NEW aircraft
+        // (not first render, not sort reordering)
+        bool should_animate = false;
+        if (is_new_row && !_first_render) {
+            // Check if this aircraft was already visible in any row
+            bool was_visible = false;
+            for (int p = 0; p < prev_count; p++) {
+                if (strcmp(prev_icaos[p], ac.icao_hex) == 0) {
+                    was_visible = true;
+                    break;
+                }
+            }
+            should_animate = !was_visible; // only animate genuinely new aircraft
+        }
+
         _rows[row].active = true;
         strlcpy(_rows[row].icao_hex, ac.icao_hex, sizeof(_rows[row].icao_hex));
 
@@ -302,7 +329,7 @@ static void update_board(lv_timer_t *t) {
                                   (color.blue * opa) / 255);
         }
 
-        set_row_text(row, texts, color, is_new_row);
+        set_row_text(row, texts, color, should_animate);
         row++;
     }
 
@@ -318,6 +345,8 @@ static void update_board(lv_timer_t *t) {
     // Update title with count
     lv_label_set_text_fmt(_title_label, "OVERHEAD TRAFFIC         %d", _list->count);
 
+    if (_first_render) _first_render = false;
+
     _list->unlock();
 }
 
@@ -325,10 +354,9 @@ static void update_board(lv_timer_t *t) {
 static void update_header_labels() {
     for (int i = 0; i < NUM_COLS; i++) {
         if (i == _sort_col && _sort_dir != SORT_NONE) {
-            // Active sort column: bright white + arrow
             char buf[16];
-            snprintf(buf, sizeof(buf), "%s%s", columns[i].name,
-                     _sort_dir == SORT_ASC ? "\xE2\x96\xB2" : "\xE2\x96\xBC"); // ▲ or ▼
+            snprintf(buf, sizeof(buf), "%s %c", columns[i].name,
+                     _sort_dir == SORT_ASC ? '^' : 'v');
             lv_label_set_text(_header_labels[i], buf);
             lv_obj_set_style_text_color(_header_labels[i], lv_color_hex(0xffffff), 0);
         } else {
@@ -339,16 +367,15 @@ static void update_header_labels() {
     }
 }
 
-static void header_click_cb(lv_event_t *e) {
+// Per-label click handler for sort column headers
+static void header_label_click_cb(lv_event_t *e) {
     int col = (int)(intptr_t)lv_event_get_user_data(e);
-    if (!columns[col].sortable) return;
+    if (col < 0 || col >= NUM_COLS || !columns[col].sortable) return;
 
     if (_sort_col == col) {
-        // Same column: cycle ASC -> DESC -> NONE
         if (_sort_dir == SORT_ASC) _sort_dir = SORT_DESC;
         else if (_sort_dir == SORT_DESC) { _sort_dir = SORT_NONE; _sort_col = -1; }
     } else {
-        // Different column: switch to it ascending
         _sort_col = col;
         _sort_dir = SORT_ASC;
     }
@@ -384,28 +411,20 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_text_color(_title_label, HEADER_TEXT, 0);
     lv_obj_align(_title_label, LV_ALIGN_LEFT_MID, 10, 0);
 
-    // Column headers — below title bar, clickable for sort
+    // Column header labels — directly on board container, sortable ones are clickable
     for (int i = 0; i < NUM_COLS; i++) {
-        // Create clickable container for larger touch target
-        lv_obj_t *hdr_btn = lv_obj_create(_board_container);
-        int col_w = (i < NUM_COLS - 1) ? (columns[i + 1].x - columns[i].x) : (BOARD_W - columns[i].x);
-        lv_obj_set_size(hdr_btn, col_w, COL_HEADER_H);
-        lv_obj_set_pos(hdr_btn, columns[i].x, TITLE_H);
-        lv_obj_set_style_bg_opa(hdr_btn, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(hdr_btn, 0, 0);
-        lv_obj_set_style_pad_all(hdr_btn, 0, 0);
-        lv_obj_clear_flag(hdr_btn, LV_OBJ_FLAG_SCROLLABLE);
-        if (columns[i].sortable) {
-            lv_obj_add_flag(hdr_btn, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_event_cb(hdr_btn, header_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        }
-
-        lv_obj_t *lbl = lv_label_create(hdr_btn);
+        lv_obj_t *lbl = lv_label_create(_board_container);
         lv_label_set_text(lbl, columns[i].name);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(lbl,
             columns[i].sortable ? lv_color_hex(0x888888) : lv_color_hex(0x666666), 0);
-        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_pos(lbl, columns[i].x, TITLE_H + 2);
+
+        if (columns[i].sortable) {
+            lv_obj_add_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(lbl, header_label_click_cb, LV_EVENT_CLICKED,
+                                (void *)(intptr_t)i);
+        }
         _header_labels[i] = lbl;
     }
 

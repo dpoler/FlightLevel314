@@ -17,7 +17,7 @@ static uint32_t _last_sweep_ms = 0;
 #define RADAR_CY (RADAR_H / 2)
 #define RADAR_R (RADAR_H / 2 - 10)  // max radius in pixels
 
-#define SWEEP_PERIOD_MS 5000  // one full rotation = 5 seconds
+#define SWEEP_PERIOD_MS 10000  // one full rotation = 10 seconds
 
 #define COLOR_SWEEP lv_color_hex(0x00ff44)
 #define COLOR_RING lv_color_hex(0x0a2a0a)
@@ -26,11 +26,10 @@ static uint32_t _last_sweep_ms = 0;
 #define COLOR_BLIP lv_color_hex(0x00ff66)
 #define COLOR_MILITARY lv_color_hex(0xffaa00)
 
-#define BLIP_BASE_OPA    LV_OPA_60   // always-visible baseline
-#define BLIP_BOOST_OPA   LV_OPA_COVER // brightness at sweep
-#define SWEEP_BRIGHT_DEG 30.0f        // full brightness zone behind sweep
-#define SWEEP_FADE_DEG   90.0f        // end of fade-back to base
-#define LABEL_VISIBLE_DEG 90.0f       // callsign label visibility zone
+#define SWEEP_BRIGHT_DEG 30.0f        // full brightness boost zone
+#define SWEEP_FADE_DEG   90.0f        // fade boost back to normal
+#define BLIP_NORMAL_OPA  LV_OPA_80    // normal blip brightness
+#define LABEL_VISIBLE_DEG 120.0f      // callsign label visibility zone
 
 static MapProjection _proj;
 
@@ -151,45 +150,62 @@ static void draw_blips(lv_layer_t *layer) {
         int sx, sy;
         if (!to_radar_screen(ac.lat, ac.lon, sx, sy)) continue;
 
-        // Phosphor: always visible at base, bright flash when sweep passes
+        // Sweep boost: brief brightness flash when sweep passes, otherwise normal
         float behind = angle_behind_sweep(blip_angle(sx, sy));
-        uint8_t phosphor_opa;
+        uint8_t sweep_opa;
         if (behind < SWEEP_BRIGHT_DEG) {
-            phosphor_opa = BLIP_BOOST_OPA;
+            sweep_opa = LV_OPA_COVER;
         } else if (behind < SWEEP_FADE_DEG) {
-            // Smooth fade from boost back to base
             float t = (behind - SWEEP_BRIGHT_DEG) / (SWEEP_FADE_DEG - SWEEP_BRIGHT_DEG);
-            phosphor_opa = BLIP_BOOST_OPA - (uint8_t)(t * (BLIP_BOOST_OPA - BLIP_BASE_OPA));
+            sweep_opa = LV_OPA_COVER - (uint8_t)(t * (LV_OPA_COVER - BLIP_NORMAL_OPA));
         } else {
-            phosphor_opa = BLIP_BASE_OPA;
+            sweep_opa = BLIP_NORMAL_OPA;
         }
 
-        uint8_t opa = (uint8_t)((phosphor_opa * ghost_opa) / 255);
+        // Combine sweep brightness with ghost fade (stale aircraft fade out)
+        uint8_t opa = (uint8_t)((sweep_opa * ghost_opa) / 255);
 
         lv_color_t color = ac.is_military ? COLOR_MILITARY : COLOR_BLIP;
 
-        // Blip dot
+        // Blip dot — larger for better visibility
         lv_draw_rect_dsc_t dot;
         lv_draw_rect_dsc_init(&dot);
         dot.bg_color = color;
         dot.bg_opa = opa;
-        dot.radius = 3;
-        lv_area_t area = {(lv_coord_t)(sx - 3), (lv_coord_t)(sy - 3),
-                          (lv_coord_t)(sx + 3), (lv_coord_t)(sy + 3)};
+        dot.radius = 4;
+        lv_area_t area = {(lv_coord_t)(sx - 4), (lv_coord_t)(sy - 4),
+                          (lv_coord_t)(sx + 4), (lv_coord_t)(sy + 4)};
         lv_draw_rect(layer, &dot, &area);
 
-        // Callsign — only show for recently swept blips (keeps it clean)
+        // Labels: callsign + alt/speed — show for recently swept blips
         if (behind < LABEL_VISIBLE_DEG) {
+            uint8_t lbl_opa = opa > LV_OPA_50 ? LV_OPA_80 : opa;
+
+            // Callsign
             const char *label_text = ac.callsign[0] ? ac.callsign : ac.icao_hex;
             lv_draw_label_dsc_t lbl;
             lv_draw_label_dsc_init(&lbl);
             lbl.color = color;
             lbl.font = &lv_font_montserrat_14;
-            lbl.opa = opa > LV_OPA_50 ? LV_OPA_70 : opa;
-            lv_area_t lbl_area = {(lv_coord_t)(sx + 6), (lv_coord_t)(sy - 6),
-                                   (lv_coord_t)(sx + 100), (lv_coord_t)(sy + 8)};
+            lbl.opa = lbl_opa;
             lbl.text = label_text;
+            lv_area_t lbl_area = {(lv_coord_t)(sx + 8), (lv_coord_t)(sy - 8),
+                                   (lv_coord_t)(sx + 120), (lv_coord_t)(sy + 6)};
             lv_draw_label(layer, &lbl, &lbl_area);
+
+            // Altitude + speed (smaller, dimmer)
+            char info[24];
+            if (ac.on_ground) snprintf(info, sizeof(info), "GND %dkt", ac.speed);
+            else snprintf(info, sizeof(info), "FL%03d %dkt", ac.altitude / 100, ac.speed);
+            lv_draw_label_dsc_t info_lbl;
+            lv_draw_label_dsc_init(&info_lbl);
+            info_lbl.color = color;
+            info_lbl.font = &lv_font_montserrat_14;
+            info_lbl.opa = (uint8_t)(lbl_opa * 3 / 4);
+            info_lbl.text = info;
+            lv_area_t info_area = {(lv_coord_t)(sx + 8), (lv_coord_t)(sy + 6),
+                                    (lv_coord_t)(sx + 140), (lv_coord_t)(sy + 20)};
+            lv_draw_label(layer, &info_lbl, &info_area);
         }
     }
 
