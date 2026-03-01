@@ -17,7 +17,7 @@ static uint32_t _last_sweep_ms = 0;
 #define RADAR_CY (RADAR_H / 2)
 #define RADAR_R (RADAR_H / 2 - 10)  // max radius in pixels
 
-#define SWEEP_PERIOD_MS 10000  // one full rotation = 10 seconds
+#define SWEEP_PERIOD_MS 30000  // one full rotation = 30 seconds
 
 #define COLOR_SWEEP lv_color_hex(0x00ff44)
 #define COLOR_RING lv_color_hex(0x0a2a0a)
@@ -26,10 +26,10 @@ static uint32_t _last_sweep_ms = 0;
 #define COLOR_BLIP lv_color_hex(0x00ff66)
 #define COLOR_MILITARY lv_color_hex(0xffaa00)
 
-#define SWEEP_BRIGHT_DEG 30.0f        // full brightness boost zone
-#define SWEEP_FADE_DEG   90.0f        // fade boost back to normal
-#define BLIP_NORMAL_OPA  LV_OPA_80    // normal blip brightness
-#define LABEL_VISIBLE_DEG 120.0f      // callsign label visibility zone
+#define SWEEP_BRIGHT_DEG 60.0f        // full brightness boost zone
+#define SWEEP_FADE_DEG   180.0f       // fade boost back to normal
+#define BLIP_NORMAL_OPA  LV_OPA_90    // normal blip brightness
+#define LABEL_VISIBLE_DEG 240.0f      // callsign label visibility zone
 
 static MapProjection _proj;
 

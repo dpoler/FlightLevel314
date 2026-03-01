@@ -13,3 +13,6 @@ void status_bar_set_active_dot(int view_index);
 
 // Set callback for gear icon tap
 void status_bar_set_gear_callback(lv_event_cb_t cb);
+
+// Show/hide the AUTO cycle indicator near view dots
+void status_bar_set_auto_indicator(bool visible);

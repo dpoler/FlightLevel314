@@ -7,6 +7,7 @@ static lv_obj_t *ac_count_label;
 static lv_obj_t *update_label;
 static lv_obj_t *view_dots[3];
 static lv_obj_t *gear_icon;
+static lv_obj_t *auto_label;
 
 #define STATUS_BAR_HEIGHT 30
 #define STATUS_BG_COLOR lv_color_hex(0x0d0d1a)
@@ -50,6 +51,14 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     }
     // First dot active by default
     lv_obj_set_style_bg_color(view_dots[0], STATUS_ACCENT_COLOR, 0);
+
+    // AUTO cycle indicator (right of view dots)
+    auto_label = lv_label_create(bar);
+    lv_label_set_text(auto_label, "AUTO");
+    lv_obj_set_style_text_font(auto_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(auto_label, STATUS_ACCENT_COLOR, 0);
+    lv_obj_align(auto_label, LV_ALIGN_CENTER, 36, 0);
+    lv_obj_clear_flag(auto_label, LV_OBJ_FLAG_CLICKABLE);
 
     // Gear icon (right side, before update label)
     gear_icon = lv_label_create(bar);
@@ -95,5 +104,13 @@ void status_bar_set_active_dot(int view_index) {
     for (int i = 0; i < 3; i++) {
         lv_obj_set_style_bg_color(view_dots[i],
             i == view_index ? STATUS_ACCENT_COLOR : STATUS_TEXT_COLOR, 0);
+    }
+}
+
+void status_bar_set_auto_indicator(bool visible) {
+    if (visible) {
+        lv_obj_clear_flag(auto_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(auto_label, LV_OBJ_FLAG_HIDDEN);
     }
 }

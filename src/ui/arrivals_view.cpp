@@ -64,13 +64,13 @@ struct Column {
 
 static Column columns[] = {
     {"FLIGHT",   8,  10,  true},
-    {"TYPE",     4,  170, false},
-    {"ROUTE",    7,  250, false},
-    {"ALT",      5,  400, true},
-    {"SPD",      4,  500, true},
-    {"DIST",     5,  580, true},
-    {"HDG",      3,  680, false},
-    {"STATUS",   7,  740, false},
+    {"TYPE",     4,  180, false},
+    {"ROUTE",    7,  280, false},
+    {"ALT",      4,  430, true},
+    {"SPD",      3,  520, true},
+    {"DIST",     4,  600, true},
+    {"HDG",      3,  700, false},
+    {"STATUS",   7,  780, false},
 };
 #define NUM_COLS 8
 
@@ -296,14 +296,15 @@ static void update_board(lv_timer_t *t) {
                     break;
                 }
             }
-            should_animate = !was_visible; // only animate genuinely new aircraft
+            // Only animate when view is visible — otherwise queued rolls play as gibberish on cycle back
+            should_animate = !was_visible && (views_get_active_index() == VIEW_ARRIVALS);
         }
 
         _rows[row].active = true;
         strlcpy(_rows[row].icao_hex, ac.icao_hex, sizeof(_rows[row].icao_hex));
 
         // Format each column
-        char flight[9], type[5], route[8], alt[6], spd[5], dist[6], hdg[4], status[8];
+        char flight[9], type[5], route[8], alt[5], spd[4], dist[5], hdg[4], status[8];
         snprintf(flight, sizeof(flight), "%-8s", ac.callsign[0] ? ac.callsign : ac.icao_hex);
         snprintf(type, sizeof(type), "%-4s", ac.type_code);
 
@@ -314,13 +315,13 @@ static void update_board(lv_timer_t *t) {
             snprintf(route, sizeof(route), "       ");
         }
 
-        if (ac.on_ground) snprintf(alt, sizeof(alt), " GND ");
-        else snprintf(alt, sizeof(alt), "%5d", ac.altitude / 100);
-        snprintf(spd, sizeof(spd), "%4d", ac.speed);
+        if (ac.on_ground) snprintf(alt, sizeof(alt), " GND");
+        else snprintf(alt, sizeof(alt), "%4d", ac.altitude / 100);
+        snprintf(spd, sizeof(spd), "%3d", ac.speed);
 
         float dist_nm = entries[e].dist_nm;
-        if (dist_nm >= 99.95f) snprintf(dist, sizeof(dist), "%5.0f", dist_nm);
-        else snprintf(dist, sizeof(dist), "%5.1f", dist_nm);
+        if (dist_nm >= 99.95f) snprintf(dist, sizeof(dist), "%4.0f", dist_nm);
+        else snprintf(dist, sizeof(dist), "%4.1f", dist_nm);
         snprintf(hdg, sizeof(hdg), "%03d", ac.heading);
         snprintf(status, sizeof(status), "%-7s", status_from_vert_rate(ac.vert_rate, ac.on_ground));
 
@@ -469,6 +470,9 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
 
     // Data update timer (sync with fetch interval)
     lv_timer_create(update_board, 2000, nullptr);
+
+    // Immediate first update to avoid blank cells on initial display
+    update_board(nullptr);
 }
 
 void arrivals_view_update() {
