@@ -12,9 +12,7 @@
 /* Tick — provided via lv_tick_set_cb() in code */
 
 /* Display */
-#define LV_USE_LOG 1
-#define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
-#define LV_LOG_PRINTF 1
+#define LV_USE_LOG 0
 
 /* Fonts - enable the ones we need */
 #define LV_FONT_MONTSERRAT_14 1

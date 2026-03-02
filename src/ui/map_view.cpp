@@ -318,7 +318,7 @@ static IconType classify_icon(const Aircraft &ac) {
 }
 
 static void draw_aircraft(lv_layer_t *layer) {
-    if (!_list->lock(pdMS_TO_TICKS(50))) return;
+    if (!_list->lock(pdMS_TO_TICKS(5))) return; // short timeout: skip frame if data locked
 
     uint32_t now = millis();
     for (int i = 0; i < _list->count; i++) {
@@ -504,6 +504,7 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_radius(_canvas, 0, 0);
     lv_obj_set_style_pad_all(_canvas, 0, 0);
     lv_obj_clear_flag(_canvas, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(_canvas, LV_OBJ_FLAG_SCROLL_CHAIN); // prevent tileview from stealing clicks
 
     lv_obj_add_event_cb(_canvas, canvas_draw_cb, LV_EVENT_DRAW_MAIN_END, nullptr);
 
@@ -528,21 +529,25 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
             return;
         }
 
+        Serial.printf("MAP tap: (%d,%d)\n", tx, ty);
+
         // Hit test against aircraft (20px radius)
-        if (!_list->lock(pdMS_TO_TICKS(50))) return;
+        if (!_list->lock(pdMS_TO_TICKS(10))) { Serial.println("MAP: lock failed"); return; }
         for (int i = 0; i < _list->count; i++) {
             int sx, sy;
             if (_proj.to_screen(_list->aircraft[i].lat, _list->aircraft[i].lon, sx, sy)) {
                 int dx = tx - sx;
                 int dy = ty - sy;
-                if (dx * dx + dy * dy < 400) {
+                if (dx * dx + dy * dy < 900) { // 30px hit radius for touchscreen
                     Aircraft ac_copy = _list->aircraft[i];
                     _list->unlock();
+                    Serial.printf("MAP: hit %s at (%d,%d)\n", ac_copy.callsign, tx, ty);
                     detail_card_show(&ac_copy);
                     return;
                 }
             }
         }
+        Serial.println("MAP: no hit");
         _list->unlock();
     }, LV_EVENT_CLICKED, nullptr);
 

@@ -121,6 +121,7 @@ static FlipCell create_cell(lv_obj_t *parent, int x, int y) {
     lv_obj_set_style_border_width(bg, 0, 0);
     lv_obj_set_style_pad_all(bg, 0, 0);
     lv_obj_clear_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(bg, LV_OBJ_FLAG_CLICKABLE); // let clicks pass through to board_container
 
     // Character label
     cell.label = lv_label_create(bg);
@@ -245,7 +246,8 @@ static int sort_compare(const void *a, const void *b) {
 
 // Update board data from aircraft list
 static void update_board(lv_timer_t *t) {
-    if (!_list->lock(pdMS_TO_TICKS(50))) return;
+    if (views_get_active_index() != VIEW_ARRIVALS) return;
+    if (!_list->lock(pdMS_TO_TICKS(5))) return; // short timeout: skip update if data locked
 
     // Snapshot previously displayed ICAOs (for animation decisions)
     char prev_icaos[MAX_ROWS][7];
@@ -432,16 +434,20 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
         if (row < 0 || row >= MAX_ROWS) return;
         if (!_rows[row].active) return;
 
+        Serial.printf("ARR tap: row=%d icao=%s\n", row, _rows[row].icao_hex);
+
         // Look up aircraft by ICAO hex
-        if (!_list->lock(pdMS_TO_TICKS(50))) return;
+        if (!_list->lock(pdMS_TO_TICKS(10))) { Serial.println("ARR: lock failed"); return; }
         for (int i = 0; i < _list->count; i++) {
             if (strcmp(_list->aircraft[i].icao_hex, _rows[row].icao_hex) == 0) {
                 Aircraft ac_copy = _list->aircraft[i];
                 _list->unlock();
+                Serial.printf("ARR: hit %s\n", ac_copy.callsign);
                 detail_card_show(&ac_copy);
                 return;
             }
         }
+        Serial.println("ARR: no match in list");
         _list->unlock();
     }, LV_EVENT_CLICKED, nullptr);
 

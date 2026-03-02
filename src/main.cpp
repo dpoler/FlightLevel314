@@ -92,17 +92,18 @@ void setup() {
     lv_init();
     lv_tick_set_cb([]() -> uint32_t { return (uint32_t)millis(); });
 
-    // Allocate framebuffers in PSRAM
-    uint32_t buf_size = LCD_H_RES * LCD_V_RES;
+    // Allocate render buffers in PSRAM — 1/10 screen for PARTIAL mode
+    // (1/4 crashes WiFi driver — DMA descriptors exhaust internal RAM)
+    uint32_t buf_size = LCD_H_RES * LCD_V_RES / 10;
     buf0 = (uint16_t *)heap_caps_malloc(buf_size * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     buf1 = (uint16_t *)heap_caps_malloc(buf_size * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     assert(buf0 && buf1);
 
-    // Create LVGL display
+    // Create LVGL display — PARTIAL mode only redraws dirty regions
     disp = lv_display_create(LCD_H_RES, LCD_V_RES);
     lv_display_set_flush_cb(disp, disp_flush_cb);
     lv_display_set_buffers(disp, buf0, buf1, buf_size * sizeof(uint16_t),
-                           LV_DISPLAY_RENDER_MODE_FULL);
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     // Register vsync callback for proper flush synchronization
     bsp_lcd_handles_t lcd_handles;
@@ -116,7 +117,10 @@ void setup() {
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touch_read_cb);
     lv_indev_set_display(indev, disp);
-    lv_indev_set_scroll_limit(indev, 30); // raise from 10px default — prevents tileview scroll from stealing button clicks
+    lv_indev_set_scroll_limit(indev, 20); // above default 10px to handle touchscreen jitter
+
+    // Poll touch at 10ms (vs 30ms default) — catches fast taps between render frames
+    lv_timer_set_period(lv_indev_get_read_timer(indev), 10);
 
     // Init aircraft data
     aircraft_list.init();
@@ -167,5 +171,6 @@ void setup() {
 
 void loop() {
     lv_timer_handler();
-    delay(5);
+    // Yield briefly to FreeRTOS — 1ms instead of 5ms for better touch responsiveness
+    vTaskDelay(pdMS_TO_TICKS(1));
 }

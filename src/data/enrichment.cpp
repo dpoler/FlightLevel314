@@ -12,6 +12,11 @@ static int _cache_count = 0;
 static void (*_pending_callback)(AircraftEnrichment *) = nullptr;
 static AircraftEnrichment *_pending_result = nullptr;
 
+struct EnrichParams {
+    char icao_hex[7];
+    char callsign[9];
+};
+
 AircraftEnrichment *enrichment_get_cached(const char *icao_hex) {
     for (int i = 0; i < _cache_count; i++) {
         if (strcmp(_cache_keys[i], icao_hex) == 0 && _cache[i].loaded) {
@@ -34,51 +39,71 @@ static AircraftEnrichment *get_or_create_cache_entry(const char *icao_hex) {
 }
 
 static void fetch_task(void *param) {
-    char *icao_hex = (char *)param;
-    AircraftEnrichment *entry = get_or_create_cache_entry(icao_hex);
+    EnrichParams *params = (EnrichParams *)param;
+    AircraftEnrichment *entry = get_or_create_cache_entry(params->icao_hex);
     entry->loading = true;
 
-    // Fetch route info from adsb.lol
-    {
+    // Stage 1: Full airport names from adsbdb callsign API
+    if (params->callsign[0]) {
         char url[128];
-        snprintf(url, sizeof(url), "https://api.adsb.lol/v2/hex/%s", icao_hex);
+        snprintf(url, sizeof(url), "https://api.adsbdb.com/v0/callsign/%s", params->callsign);
         HTTPClient http;
         http.begin(url);
-        http.setTimeout(10000);
+        http.setTimeout(5000);
         int code = http.GET();
         if (code == HTTP_CODE_OK) {
             JsonDocument doc;
             if (!deserializeJson(doc, http.getString())) {
-                JsonArray ac = doc["ac"].as<JsonArray>();
-                if (ac.size() > 0) {
-                    JsonObject obj = ac[0];
-                    strlcpy(entry->airline, obj["ownOp"] | "", sizeof(entry->airline));
-                    // Route: "KJFK-KLAX" format
-                    const char *route = obj["route"] | "";
-                    if (strlen(route) > 0) {
-                        char route_buf[96];
-                        strlcpy(route_buf, route, sizeof(route_buf));
-                        char *dash = strchr(route_buf, '-');
-                        if (dash) {
-                            *dash = '\0';
-                            strlcpy(entry->origin_airport, route_buf, sizeof(entry->origin_airport));
-                            strlcpy(entry->destination_airport, dash + 1, sizeof(entry->destination_airport));
-                        }
-                    }
-                }
+                JsonObject route = doc["response"]["flightroute"];
+                const char *orig_name = route["origin"]["name"] | "";
+                const char *dest_name = route["destination"]["name"] | "";
+                strlcpy(entry->origin_airport, orig_name, sizeof(entry->origin_airport));
+                strlcpy(entry->destination_airport, dest_name, sizeof(entry->destination_airport));
+                // Also grab airline if available
+                const char *airline = route["airline"]["name"] | "";
+                if (airline[0]) strlcpy(entry->airline, airline, sizeof(entry->airline));
             }
         }
         http.end();
+        if (_pending_callback) _pending_callback(entry);
     }
 
-    // Fetch photo from planespotters.net
+    // Stage 2: Aircraft details from adsbdb
     {
         char url[128];
         snprintf(url, sizeof(url),
-                 "https://api.planespotters.net/pub/photos/hex/%s", icao_hex);
+                 "https://api.adsbdb.com/v0/aircraft/%s", params->icao_hex);
         HTTPClient http;
         http.begin(url);
-        http.setTimeout(10000);
+        http.setTimeout(5000);
+        int code = http.GET();
+        if (code == HTTP_CODE_OK) {
+            JsonDocument doc;
+            if (!deserializeJson(doc, http.getString())) {
+                JsonObject ac = doc["response"]["aircraft"];
+                strlcpy(entry->manufacturer, ac["manufacturer"] | "", sizeof(entry->manufacturer));
+                strlcpy(entry->model, ac["type"] | "", sizeof(entry->model));
+                strlcpy(entry->owner, ac["registered_owner"] | "", sizeof(entry->owner));
+                strlcpy(entry->registered_country, ac["registered_owner_country_name"] | "",
+                        sizeof(entry->registered_country));
+                entry->engine_count = ac["engine_count"] | 0;
+                strlcpy(entry->engine_type, ac["engine_type"] | "", sizeof(entry->engine_type));
+                entry->year_built = ac["year_built"] | 0;
+            }
+        }
+        http.end();
+        if (_pending_callback) _pending_callback(entry);
+    }
+
+    // Stage 3: Photo from planespotters.net (brief delay for rate limit)
+    vTaskDelay(pdMS_TO_TICKS(200));
+    {
+        char url[128];
+        snprintf(url, sizeof(url),
+                 "https://api.planespotters.net/pub/photos/hex/%s", params->icao_hex);
+        HTTPClient http;
+        http.begin(url);
+        http.setTimeout(5000);
         int code = http.GET();
         if (code == HTTP_CODE_OK) {
             JsonDocument doc;
@@ -87,6 +112,8 @@ static void fetch_task(void *param) {
                 if (photos.size() > 0) {
                     const char *thumb = photos[0]["thumbnail_large"]["src"] | "";
                     strlcpy(entry->photo_url, thumb, sizeof(entry->photo_url));
+                    const char *photog = photos[0]["photographer"] | "";
+                    strlcpy(entry->photo_photographer, photog, sizeof(entry->photo_photographer));
                 }
             }
         }
@@ -101,11 +128,12 @@ static void fetch_task(void *param) {
         _pending_callback = nullptr;
     }
 
-    free(icao_hex);
+    free(params);
     vTaskDelete(nullptr);
 }
 
 void enrichment_fetch(const char *icao_hex, const char *registration,
+                      const char *callsign,
                       void (*callback)(AircraftEnrichment *data)) {
     // Check cache first
     AircraftEnrichment *cached = enrichment_get_cached(icao_hex);
@@ -115,6 +143,8 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
     }
 
     _pending_callback = callback;
-    char *hex_copy = strdup(icao_hex);
-    xTaskCreatePinnedToCore(fetch_task, "enrich", 8192, hex_copy, 0, nullptr, 1);
+    EnrichParams *params = (EnrichParams *)malloc(sizeof(EnrichParams));
+    strlcpy(params->icao_hex, icao_hex, sizeof(params->icao_hex));
+    strlcpy(params->callsign, callsign ? callsign : "", sizeof(params->callsign));
+    xTaskCreatePinnedToCore(fetch_task, "enrich", 10240, params, 0, nullptr, 1);
 }

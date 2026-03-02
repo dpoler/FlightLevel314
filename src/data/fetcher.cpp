@@ -45,41 +45,59 @@ static int find_aircraft(const char *hex) {
     return -1;
 }
 
-// Update an aircraft entry from JSON, preserving trail data
-static void update_aircraft_from_json(Aircraft &a, JsonObject &obj, bool is_new) {
-    const char *hex = obj["hex"] | "";
-    strncpy(a.icao_hex, hex, sizeof(a.icao_hex) - 1);
-    a.icao_hex[sizeof(a.icao_hex) - 1] = '\0';
-    strncpy(a.callsign, obj["flight"] | "", sizeof(a.callsign) - 1);
-    a.callsign[sizeof(a.callsign) - 1] = '\0';
-    for (int i = strlen(a.callsign) - 1; i >= 0 && a.callsign[i] == ' '; i--)
-        a.callsign[i] = '\0';
+// Pre-parsed aircraft entry — extracted from JSON without holding the lock
+struct ParsedEntry {
+    char hex[7];
+    char callsign[9];
+    char registration[9];
+    char type_code[5];
+    char category[3];
+    char desc[40];
+    char owner_op[32];
+    float lat, lon;
+    int32_t altitude;
+    int16_t speed, heading, vert_rate;
+    uint16_t squawk;
+    bool on_ground;
+    float mach;
+    int16_t ias, tas;
+    int32_t nav_altitude;
+    float roll;
+    float nav_qnh;
+};
 
-    strncpy(a.registration, obj["r"] | "", sizeof(a.registration) - 1);
-    a.registration[sizeof(a.registration) - 1] = '\0';
-    strncpy(a.type_code, obj["t"] | "", sizeof(a.type_code) - 1);
-    a.type_code[sizeof(a.type_code) - 1] = '\0';
-    strncpy(a.category, obj["category"] | "", sizeof(a.category) - 1);
-    a.category[sizeof(a.category) - 1] = '\0';
-
-    a.lat = obj["lat"] | 0.0f;
-    a.lon = obj["lon"] | 0.0f;
-    a.altitude = obj["alt_baro"].is<int>() ? obj["alt_baro"].as<int>() : 0;
-    a.speed = (int16_t)(obj["gs"] | 0.0f);
-    a.heading = (int16_t)(obj["track"] | 0.0f);
-    a.vert_rate = (int16_t)(obj["baro_rate"] | 0.0f);
-    a.squawk = strtoul(obj["squawk"] | "0", nullptr, 10);
-    a.on_ground = obj["alt_baro"] == "ground";
-
+// Apply a pre-parsed entry to an Aircraft in the main list
+static void apply_parsed(Aircraft &a, const ParsedEntry &p, bool is_new) {
+    strlcpy(a.icao_hex, p.hex, sizeof(a.icao_hex));
+    strlcpy(a.callsign, p.callsign, sizeof(a.callsign));
+    strlcpy(a.registration, p.registration, sizeof(a.registration));
+    strlcpy(a.type_code, p.type_code, sizeof(a.type_code));
+    strlcpy(a.category, p.category, sizeof(a.category));
+    strlcpy(a.desc, p.desc, sizeof(a.desc));
+    strlcpy(a.owner_op, p.owner_op, sizeof(a.owner_op));
+    // Don't overwrite enriched route data (origin/dest set by route_enrich_task)
+    a.lat = p.lat;
+    a.lon = p.lon;
+    a.altitude = p.altitude;
+    a.speed = p.speed;
+    a.heading = p.heading;
+    a.vert_rate = p.vert_rate;
+    a.squawk = p.squawk;
+    a.on_ground = p.on_ground;
+    a.mach = p.mach;
+    a.ias = p.ias;
+    a.tas = p.tas;
+    a.nav_altitude = p.nav_altitude;
+    a.roll = p.roll;
+    a.nav_qnh = p.nav_qnh;
     a.is_military = check_military(a.icao_hex);
     a.is_emergency = check_emergency(a.squawk);
     a.is_watched = false;
     a.last_seen = millis();
-    a.stale_since = 0; // fresh
+    a.stale_since = 0;
 
     if (is_new) a.trail_count = 0;
 
-    // Append to trail
     if (a.lat != 0.0f || a.lon != 0.0f) {
         if (a.trail_count < TRAIL_LENGTH) {
             a.trail[a.trail_count] = {a.lat, a.lon, a.altitude, a.last_seen};
@@ -92,31 +110,60 @@ static void update_aircraft_from_json(Aircraft &a, JsonObject &obj, bool is_new)
 }
 
 static void parse_aircraft_json(JsonDocument &doc) {
-    if (!_aircraft_list->lock()) return;
-
-    uint32_t now = millis();
-
-    // Track which existing aircraft were seen this cycle
-    bool seen[MAX_AIRCRAFT] = {};
-
     JsonArray ac = doc["ac"].as<JsonArray>();
 
+    // Phase 1: Parse JSON into flat array — no lock needed
+    static ParsedEntry parsed[MAX_AIRCRAFT];
+    int parsed_count = 0;
+
     for (JsonObject obj : ac) {
-        const char *hex = obj["hex"] | "";
+        if (parsed_count >= MAX_AIRCRAFT) break;
         float lat = obj["lat"] | 0.0f;
         float lon = obj["lon"] | 0.0f;
         if (lat == 0.0f && lon == 0.0f) continue;
 
-        int idx = find_aircraft(hex);
+        ParsedEntry &p = parsed[parsed_count];
+        strlcpy(p.hex, obj["hex"] | "", sizeof(p.hex));
+        strlcpy(p.callsign, obj["flight"] | "", sizeof(p.callsign));
+        for (int i = strlen(p.callsign) - 1; i >= 0 && p.callsign[i] == ' '; i--)
+            p.callsign[i] = '\0';
+        strlcpy(p.registration, obj["r"] | "", sizeof(p.registration));
+        strlcpy(p.type_code, obj["t"] | "", sizeof(p.type_code));
+        strlcpy(p.category, obj["category"] | "", sizeof(p.category));
+        strlcpy(p.desc, obj["desc"] | "", sizeof(p.desc));
+        strlcpy(p.owner_op, obj["ownOp"] | "", sizeof(p.owner_op));
+        p.lat = lat;
+        p.lon = lon;
+        p.altitude = obj["alt_baro"].is<int>() ? obj["alt_baro"].as<int>() : 0;
+        p.speed = (int16_t)(obj["gs"] | 0.0f);
+        p.heading = (int16_t)(obj["track"] | 0.0f);
+        p.vert_rate = (int16_t)(obj["baro_rate"] | 0.0f);
+        p.squawk = strtoul(obj["squawk"] | "0", nullptr, 10);
+        p.on_ground = obj["alt_baro"] == "ground";
+        p.mach = obj["mach"] | 0.0f;
+        p.ias = (int16_t)(obj["ias"] | 0.0f);
+        p.tas = (int16_t)(obj["tas"] | 0.0f);
+        p.nav_altitude = obj["nav_altitude_mcp"] | 0;
+        p.roll = obj["roll"] | 0.0f;
+        p.nav_qnh = obj["nav_qnh"] | 0.0f;
+        parsed_count++;
+    }
+
+    // Phase 2: Brief lock to merge parsed data into aircraft list
+    if (!_aircraft_list->lock()) return;
+
+    uint32_t now = millis();
+    bool seen[MAX_AIRCRAFT] = {};
+
+    for (int p = 0; p < parsed_count; p++) {
+        int idx = find_aircraft(parsed[p].hex);
         if (idx >= 0) {
-            // Update existing aircraft in-place
-            update_aircraft_from_json(_aircraft_list->aircraft[idx], obj, false);
+            apply_parsed(_aircraft_list->aircraft[idx], parsed[p], false);
             seen[idx] = true;
         } else if (_aircraft_list->count < MAX_AIRCRAFT) {
-            // Append new aircraft
             int new_idx = _aircraft_list->count;
             _aircraft_list->aircraft[new_idx].clear();
-            update_aircraft_from_json(_aircraft_list->aircraft[new_idx], obj, true);
+            apply_parsed(_aircraft_list->aircraft[new_idx], parsed[p], true);
             _aircraft_list->count++;
             seen[new_idx] = true;
         }
@@ -127,9 +174,8 @@ static void parse_aircraft_json(JsonDocument &doc) {
     for (int i = 0; i < _aircraft_list->count; i++) {
         Aircraft &a = _aircraft_list->aircraft[i];
         if (!seen[i]) {
-            // Not in this cycle's response
             if (a.stale_since == 0) a.stale_since = now;
-            if (now - a.stale_since > GHOST_TIMEOUT_MS) continue; // expired, skip
+            if (now - a.stale_since > GHOST_TIMEOUT_MS) continue;
         }
         if (write != i) _aircraft_list->aircraft[write] = _aircraft_list->aircraft[i];
         write++;
@@ -139,7 +185,7 @@ static void parse_aircraft_json(JsonDocument &doc) {
     // Check for alerts
     for (int i = 0; i < _aircraft_list->count; i++) {
         Aircraft &a = _aircraft_list->aircraft[i];
-        if (a.stale_since != 0) continue; // don't alert on stale aircraft
+        if (a.stale_since != 0) continue;
         if (a.is_emergency) {
             char msg[48];
             snprintf(msg, sizeof(msg), "Squawk %04d - %s", a.squawk,

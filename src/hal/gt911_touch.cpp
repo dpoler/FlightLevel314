@@ -32,7 +32,7 @@ void gt911_touch::begin()
     i2c_master_get_bus_handle(1,&i2c_handle);
 
     esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
-    tp_io_config.scl_speed_hz = 100000;
+    tp_io_config.scl_speed_hz = 400000;
     ESP_LOGI(TAG, "Initialize touch IO (I2C)");
     esp_lcd_new_panel_io_i2c(i2c_handle, &tp_io_config, &tp_io_handle);
 

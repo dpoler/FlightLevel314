@@ -61,6 +61,7 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
         lv_obj_clear_flag(nav_btns[i], LV_OBJ_FLAG_SCROLL_CHAIN);
         lv_obj_add_event_cb(nav_btns[i], [](lv_event_t *e) {
             int idx = (int)(intptr_t)lv_event_get_user_data(e);
+            views_pause_cycle();
             lv_tileview_set_tile_by_index(views_get_tileview(), idx, 0, LV_ANIM_ON);
         }, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 

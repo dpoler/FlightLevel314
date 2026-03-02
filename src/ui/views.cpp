@@ -12,8 +12,13 @@ static lv_obj_t *tileview;
 static lv_obj_t *tiles[4];
 static int _active_index = VIEW_MAP;
 
-// View cycle state
-#define CYCLE_DWELL_MS   60000  // 60s per view
+// View cycle state — per-view dwell times (ms)
+static const uint32_t CYCLE_DWELL_MS[] = {
+    60000,  // MAP:      60s
+    60000,  // RADAR:    60s
+    60000,  // ARRIVALS: 60s
+    5000,   // STATS:     5s (glance only during auto-cycle)
+};
 #define CYCLE_PAUSE_MS   60000  // 60s pause after touch
 static uint32_t _last_touch_time = 0;
 static uint32_t _last_cycle_time = 0;
@@ -59,8 +64,8 @@ static void cycle_timer_cb(lv_timer_t *t) {
         return;
     }
 
-    // Advance to next view
-    if (now - _last_cycle_time >= CYCLE_DWELL_MS) {
+    // Advance to next view (dwell time depends on current view)
+    if (now - _last_cycle_time >= CYCLE_DWELL_MS[_active_index]) {
         _last_cycle_time = now;
         int next = (_active_index + 1) % 4;
         lv_tileview_set_tile_by_index(tileview, next, 0, LV_ANIM_ON);
@@ -110,4 +115,13 @@ int views_get_active_index() {
 
 lv_obj_t *views_get_tileview() {
     return tileview;
+}
+
+void views_pause_cycle() {
+    _last_touch_time = millis();
+    _last_cycle_time = _last_touch_time;
+    if (!_cycle_paused) {
+        _cycle_paused = true;
+        status_bar_set_auto_indicator(false);
+    }
 }

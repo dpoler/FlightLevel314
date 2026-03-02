@@ -19,3 +19,6 @@ int views_get_active_index();
 
 // Get the tileview object (for view cycling)
 lv_obj_t *views_get_tileview();
+
+// Pause auto-cycle (call when user manually selects a view)
+void views_pause_cycle();

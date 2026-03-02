@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <esp_heap_caps.h>
+#include <esp_wifi.h>
 #include "stats_view.h"
 #include "stats.h"
 #include "views.h"
@@ -43,6 +45,19 @@ static lv_obj_t *_uptime_val = nullptr;
 
 // Top types
 static lv_obj_t *_type_labels[5] = {};
+
+// System health
+static lv_obj_t *_heap_val = nullptr;
+static lv_obj_t *_psram_val = nullptr;
+static lv_obj_t *_watermark_val = nullptr;
+static lv_obj_t *_rssi_val = nullptr;
+static lv_obj_t *_fps_val = nullptr;
+static lv_obj_t *_tasks_val = nullptr;
+
+// FPS measurement
+static uint32_t _frame_count = 0;
+static uint32_t _fps_last_time = 0;
+static uint16_t _fps = 0;
 
 #define BAR_MAX_W 280
 #define BAR_H 16
@@ -146,6 +161,28 @@ static void refresh_stats(lv_timer_t *t) {
             lv_label_set_text(_type_labels[i], "");
         }
     }
+
+    // System health
+    uint32_t heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    uint32_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    uint32_t heap_min = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+    lv_label_set_text_fmt(_heap_val, "%luK", (unsigned long)(heap_free / 1024));
+    lv_label_set_text_fmt(_psram_val, "%.1fM", (double)psram_free / (1024.0 * 1024.0));
+    lv_label_set_text_fmt(_watermark_val, "%luK", (unsigned long)(heap_min / 1024));
+
+    // WiFi RSSI
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        lv_label_set_text_fmt(_rssi_val, "%d dBm", ap_info.rssi);
+    } else {
+        lv_label_set_text(_rssi_val, "N/A");
+    }
+
+    // FPS
+    lv_label_set_text_fmt(_fps_val, "%d", _fps);
+
+    // Task count
+    lv_label_set_text_fmt(_tasks_val, "%lu", (unsigned long)uxTaskGetNumberOfTasks());
 }
 
 void stats_view_init(lv_obj_t *parent, AircraftList *list) {
@@ -296,6 +333,72 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_obj_set_pos(_type_labels[i], rx, ty + 20 + i * 20);
         lv_obj_clear_flag(_type_labels[i], LV_OBJ_FLAG_CLICKABLE);
     }
+
+    // === SYSTEM HEALTH (left column, below fastest/closest) ===
+    int sys_y = 320;
+    lv_obj_t *sys_header = lv_label_create(_container);
+    lv_label_set_text(sys_header, "SYSTEM");
+    lv_obj_set_style_text_font(sys_header, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(sys_header, DIM_COLOR, 0);
+    lv_obj_set_pos(sys_header, lx, sys_y);
+    lv_obj_clear_flag(sys_header, LV_OBJ_FLAG_CLICKABLE);
+
+    // Row 1: HEAP / PSRAM / WATERMARK
+    struct SysField { const char *name; int x; lv_obj_t **val; };
+    SysField fields[] = {
+        {"HEAP",      lx,       &_heap_val},
+        {"PSRAM",     lx + 120, &_psram_val},
+        {"HEAP MIN",  lx + 240, &_watermark_val},
+    };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *lbl = lv_label_create(_container);
+        lv_label_set_text(lbl, fields[i].name);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, DIM_COLOR, 0);
+        lv_obj_set_pos(lbl, fields[i].x, sys_y + 20);
+        lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+
+        *fields[i].val = lv_label_create(_container);
+        lv_label_set_text(*fields[i].val, "--");
+        lv_obj_set_style_text_font(*fields[i].val, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(*fields[i].val, lv_color_hex(0x44cc88), 0);
+        lv_obj_set_pos(*fields[i].val, fields[i].x, sys_y + 36);
+        lv_obj_clear_flag(*fields[i].val, LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    // Row 2: RSSI / FPS / TASKS
+    SysField fields2[] = {
+        {"WIFI",   lx,       &_rssi_val},
+        {"FPS",    lx + 120, &_fps_val},
+        {"TASKS",  lx + 240, &_tasks_val},
+    };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *lbl = lv_label_create(_container);
+        lv_label_set_text(lbl, fields2[i].name);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, DIM_COLOR, 0);
+        lv_obj_set_pos(lbl, fields2[i].x, sys_y + 62);
+        lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+
+        *fields2[i].val = lv_label_create(_container);
+        lv_label_set_text(*fields2[i].val, "--");
+        lv_obj_set_style_text_font(*fields2[i].val, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(*fields2[i].val, lv_color_hex(0x44cc88), 0);
+        lv_obj_set_pos(*fields2[i].val, fields2[i].x, sys_y + 78);
+        lv_obj_clear_flag(*fields2[i].val, LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    // FPS counter — increment each refresh, calculate every second
+    _fps_last_time = millis();
+    lv_timer_create([](lv_timer_t *t) {
+        _frame_count++;
+        uint32_t now = millis();
+        if (now - _fps_last_time >= 1000) {
+            _fps = (uint16_t)(_frame_count * 1000 / (now - _fps_last_time));
+            _frame_count = 0;
+            _fps_last_time = now;
+        }
+    }, 33, nullptr); // count at ~30fps rate
 
     // Refresh timer
     lv_timer_create(refresh_stats, 2000, nullptr);
