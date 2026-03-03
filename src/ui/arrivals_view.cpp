@@ -26,7 +26,7 @@ static lv_obj_t *_range_label = nullptr;
 #define TITLE_H 30
 #define COL_HEADER_H 18
 #define HEADER_H (TITLE_H + COL_HEADER_H)
-#define MAX_ROWS 14
+#define MAX_ROWS 16
 
 // Sort modes
 enum SortMode {
@@ -95,7 +95,6 @@ struct BoardRow {
 static BoardRow _rows[MAX_ROWS];
 static lv_obj_t *_header_labels[8];
 static lv_obj_t *_title_label = nullptr;
-static bool _first_render = true;
 
 static const char *status_from_vert_rate(int16_t vr, bool on_ground) {
     if (on_ground) return "GROUND ";
@@ -244,20 +243,50 @@ static int sort_compare(const void *a, const void *b) {
     return (_sort_dir == SORT_DESC) ? -cmp : cmp;
 }
 
+// Fill all rows with random gibberish (split-flap reset effect)
+// When true, next update_board renders instantly (no flip animation) — gibberish→data transition
+static bool _awaiting_data = true;
+
+static void reset_board_gibberish() {
+    static const char chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    for (int row = 0; row < MAX_ROWS; row++) {
+        _rows[row].active = true;
+        memset(_rows[row].icao_hex, 0, sizeof(_rows[row].icao_hex));
+        for (int c = 0; c < _rows[row].total_cells; c++) {
+            FlipCell &fc = _rows[row].cells[c];
+            char ch = chars[rand() % (sizeof(chars) - 1)];
+            char buf[2] = {ch, 0};
+            lv_label_set_text(fc.label, buf);
+            fc.current = ch;
+            fc.target = ch;
+            fc.rolls_remaining = 0;
+        }
+    }
+    _awaiting_data = true;
+}
+
+static float _last_range_nm = -1;
+
 // Update board data from aircraft list
 static void update_board(lv_timer_t *t) {
     if (views_get_active_index() != VIEW_ARRIVALS) return;
     if (!_list->lock(pdMS_TO_TICKS(5))) return; // short timeout: skip update if data locked
 
-    // Snapshot previously displayed ICAOs (for animation decisions)
-    char prev_icaos[MAX_ROWS][7];
-    int prev_count = 0;
-    for (int r = 0; r < MAX_ROWS; r++) {
-        if (_rows[r].active) {
-            memcpy(prev_icaos[prev_count], _rows[r].icao_hex, 7);
-            prev_count++;
-        }
+    // Detect range change — reset board with gibberish and skip this cycle
+    float current_range = range_get_nm();
+    if (_last_range_nm >= 0 && current_range != _last_range_nm) {
+        _last_range_nm = current_range;
+        reset_board_gibberish();
+        lv_label_set_text_fmt(_title_label, "OVERHEAD TRAFFIC  <%s  Loading...", range_label());
+        lv_label_set_text(_range_label, range_label());
+        _list->unlock();
+        return; // show gibberish this cycle, real data next cycle
     }
+    _last_range_nm = current_range;
+
+    // First render after gibberish: instant overwrite, no flip animation
+    bool instant = _awaiting_data;
+    if (instant) _awaiting_data = false;
 
     // Build sortable index of aircraft with valid positions
     SortEntry entries[MAX_AIRCRAFT];
@@ -286,25 +315,6 @@ static void update_board(lv_timer_t *t) {
             uint32_t now = millis();
             uint8_t opa = compute_aircraft_opacity(ac.stale_since, now);
             if (opa == 0) continue;
-        }
-
-        bool is_new_row = !_rows[row].active ||
-                          strcmp(_rows[row].icao_hex, ac.icao_hex) != 0;
-
-        // Decide whether to animate: only for genuinely NEW aircraft
-        // (not first render, not sort reordering)
-        bool should_animate = false;
-        if (is_new_row && !_first_render) {
-            // Check if this aircraft was already visible in any row
-            bool was_visible = false;
-            for (int p = 0; p < prev_count; p++) {
-                if (strcmp(prev_icaos[p], ac.icao_hex) == 0) {
-                    was_visible = true;
-                    break;
-                }
-            }
-            // Only animate when view is visible — otherwise queued rolls play as gibberish on cycle back
-            should_animate = !was_visible && (views_get_active_index() == VIEW_ARRIVALS);
         }
 
         _rows[row].active = true;
@@ -347,26 +357,25 @@ static void update_board(lv_timer_t *t) {
                                   (color.blue * opa) / 255);
         }
 
-        set_row_text(row, texts, color, should_animate);
+        set_row_text(row, texts, color, !instant);
         row++;
     }
 
     int displayed_count = row;  // save before clear loop overwrites row
 
-    // Clear remaining rows
+    // Clear remaining rows — unconditional when instant (wipes leftover gibberish)
     for (; row < MAX_ROWS; row++) {
-        if (_rows[row].active) {
+        if (instant || _rows[row].active) {
             const char *blanks[] = {"", "", "", "", "", "", "", ""};
             set_row_text(row, blanks, CELL_TEXT, false);
             _rows[row].active = false;
+            memset(_rows[row].icao_hex, 0, sizeof(_rows[row].icao_hex));
         }
     }
 
     // Update title with range-filtered count
     lv_label_set_text_fmt(_title_label, "OVERHEAD TRAFFIC  <%s    %d", range_label(), displayed_count);
     lv_label_set_text(_range_label, range_label());
-
-    if (_first_render) _first_render = false;
 
     _list->unlock();
 }
@@ -405,6 +414,11 @@ static void header_label_click_cb(lv_event_t *e) {
 
 void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
+
+    // Make tile fully opaque so radar/map don't bleed through
+    lv_obj_set_style_pad_all(parent, 0, 0);
+    lv_obj_set_style_bg_color(parent, BOARD_BG, 0);
+    lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
     _board_container = lv_obj_create(parent);
     lv_obj_set_size(_board_container, BOARD_W, BOARD_H);
@@ -462,7 +476,7 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_clear_flag(title_bg, LV_OBJ_FLAG_SCROLLABLE);
 
     _title_label = lv_label_create(title_bg);
-    lv_label_set_text(_title_label, "OVERHEAD TRAFFIC");
+    lv_label_set_text(_title_label, "OVERHEAD TRAFFIC  Loading...");
     lv_obj_set_style_text_font(_title_label, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(_title_label, HEADER_TEXT, 0);
     lv_obj_align(_title_label, LV_ALIGN_LEFT_MID, 10, 0);
@@ -510,6 +524,9 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     // Create all flip cells
     init_rows(_board_container);
 
+    // Pre-load: fill all cells with random static characters until real data arrives
+    reset_board_gibberish();
+
     // Range label — bottom-right, tappable
     _range_label = lv_label_create(parent);
     lv_label_set_text(_range_label, range_label());
@@ -528,9 +545,6 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
 
     // Data update timer (sync with fetch interval)
     lv_timer_create(update_board, 2000, nullptr);
-
-    // Immediate first update to avoid blank cells on initial display
-    update_board(nullptr);
 }
 
 void arrivals_view_update() {
