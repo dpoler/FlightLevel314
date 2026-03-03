@@ -3,6 +3,7 @@
 #include "detail_card.h"
 #include "views.h"
 #include "range.h"
+#include "filters.h"
 // #include "tile_cache.h" // disabled: tiles broken on ESP32-P4
 #include "../config.h"
 #include "../pins_config.h"
@@ -12,111 +13,29 @@ static lv_obj_t *_canvas = nullptr;
 static lv_obj_t *_range_label = nullptr;
 static MapProjection _proj;
 
-// Map filter — single-select, -1 = show all
-#define FILT_NONE     -1
-#define FILT_AIRLINE   0
-#define FILT_MILITARY  1
-#define FILT_EMERGENCY 2
-#define FILT_HELI      3
-#define FILT_FAST      4
-#define FILT_SLOW      5
-#define FILT_ODDBALL   6
-#define NUM_FILTERS    7
-
-static int _active_filter = FILT_NONE;
 static bool _filter_just_clicked = false; // guard against zoom cycle
 
-struct FilterDef {
-    const char *label;
-    lv_color_t color;
-    lv_obj_t *btn;
-    lv_obj_t *lbl;
-};
-
-static FilterDef _filters[] = {
-    {"COM",  lv_color_hex(0x4488ff), nullptr, nullptr},
-    {"MIL",  lv_color_hex(0xffaa00), nullptr, nullptr},
-    {"EMG",  lv_color_hex(0xff3333), nullptr, nullptr},
-    {"HELI", lv_color_hex(0x44ddaa), nullptr, nullptr},
-    {"FAST", lv_color_hex(0xff66cc), nullptr, nullptr},
-    {"SLOW", lv_color_hex(0x88aacc), nullptr, nullptr},
-    {"ODD",  lv_color_hex(0xcc88ff), nullptr, nullptr},
-};
-
-// Helper: does callsign look like an airline ICAO code?
-static bool is_airline_callsign(const char *cs) {
-    return cs[0] >= 'A' && cs[0] <= 'Z' &&
-           cs[1] >= 'A' && cs[1] <= 'Z' &&
-           cs[2] >= 'A' && cs[2] <= 'Z' &&
-           cs[3] >= '0' && cs[3] <= '9';
-}
-
-// Helper: check type_code against known helicopter types
-static bool is_heli_type(const char *t) {
-    static const char *heli_types[] = {
-        "R22", "R44", "R66", "EC35", "EC45", "EC55",
-        "A109", "A139", "A169", "B06", "B212", "B412",
-        "S76", "S92", "B407", "B429", "B505",
-        "H135", "H145", "H160", "H175", "H225",
-        "AS50", "AS55", "AS65", "MD52", "MD60",
-        "NH90", "CH47", "V22", "UH1", "BK17",
-        nullptr
-    };
-    for (int i = 0; heli_types[i]; i++) {
-        if (strcmp(t, heli_types[i]) == 0) return true;
-    }
-    return false;
-}
-
-// Single-filter match
-static bool aircraft_passes_filter(const Aircraft &ac) {
-    if (_active_filter == FILT_NONE) return true;
-
-    switch (_active_filter) {
-        case FILT_AIRLINE:
-            if (is_airline_callsign(ac.callsign)) return true;
-            if (ac.category[0] == 'A' && ac.category[1] >= '3') return true;
-            return false;
-        case FILT_MILITARY:
-            return ac.is_military;
-        case FILT_EMERGENCY:
-            return ac.is_emergency;
-        case FILT_HELI:
-            if (ac.category[0] == 'A' && ac.category[1] == '7') return true;
-            if (ac.type_code[0] && is_heli_type(ac.type_code)) return true;
-            return false;
-        case FILT_FAST:
-            return ac.speed > 300 && !ac.on_ground;
-        case FILT_SLOW:
-            return ac.speed > 0 && ac.speed < 100 && !ac.on_ground;
-        case FILT_ODDBALL:
-            if (ac.category[0] == 'B') return true;
-            if (ac.registration[0] == 'N' && !is_airline_callsign(ac.callsign)) {
-                if (ac.category[0] == 'A' && (ac.category[1] == '1' || ac.category[1] == '2')) return true;
-                if (!ac.category[0] && ac.speed < 200) return true;
-            }
-            return false;
-    }
-    return true;
-}
+// Per-view button/label pointers for filter buttons
+static lv_obj_t *_filter_btns[NUM_FILTERS] = {};
+static lv_obj_t *_filter_lbls[NUM_FILTERS] = {};
 
 static void update_filter_visuals() {
+    int active = filter_get_active();
     for (int i = 0; i < NUM_FILTERS; i++) {
-        bool active = (_active_filter == i);
-        if (active) {
-            lv_obj_set_style_bg_color(_filters[i].btn, _filters[i].color, 0);
-            lv_obj_set_style_bg_opa(_filters[i].btn, LV_OPA_COVER, 0);
-            lv_obj_set_style_border_color(_filters[i].btn, lv_color_hex(0xffffff), 0);
-            lv_obj_set_style_border_width(_filters[i].btn, 2, 0);
-            lv_obj_set_style_border_opa(_filters[i].btn, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(_filters[i].lbl, lv_color_hex(0x000000), 0);
+        if (active == i) {
+            lv_obj_set_style_bg_color(_filter_btns[i], filter_defs[i].color, 0);
+            lv_obj_set_style_bg_opa(_filter_btns[i], LV_OPA_COVER, 0);
+            lv_obj_set_style_border_color(_filter_btns[i], lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_border_width(_filter_btns[i], 2, 0);
+            lv_obj_set_style_border_opa(_filter_btns[i], LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(_filter_lbls[i], lv_color_hex(0x000000), 0);
         } else {
-            lv_obj_set_style_bg_color(_filters[i].btn, lv_color_hex(0x0a0a1a), 0);
-            lv_obj_set_style_bg_opa(_filters[i].btn, LV_OPA_70, 0);
-            lv_obj_set_style_border_color(_filters[i].btn, _filters[i].color, 0);
-            lv_obj_set_style_border_width(_filters[i].btn, 1, 0);
-            lv_obj_set_style_border_opa(_filters[i].btn, LV_OPA_40, 0);
-            lv_obj_set_style_text_color(_filters[i].lbl, lv_color_hex(0x666666), 0);
+            lv_obj_set_style_bg_color(_filter_btns[i], lv_color_hex(0x0a0a1a), 0);
+            lv_obj_set_style_bg_opa(_filter_btns[i], LV_OPA_70, 0);
+            lv_obj_set_style_border_color(_filter_btns[i], filter_defs[i].color, 0);
+            lv_obj_set_style_border_width(_filter_btns[i], 1, 0);
+            lv_obj_set_style_border_opa(_filter_btns[i], LV_OPA_40, 0);
+            lv_obj_set_style_text_color(_filter_lbls[i], lv_color_hex(0x666666), 0);
         }
     }
     if (_canvas) lv_obj_invalidate(_canvas);
@@ -125,11 +44,7 @@ static void update_filter_visuals() {
 static void filter_click_cb(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
     _filter_just_clicked = true; // prevent zoom cycle
-    if (_active_filter == idx) {
-        _active_filter = FILT_NONE; // toggle off
-    } else {
-        _active_filter = idx; // switch to this filter
-    }
+    filter_toggle(idx);
     update_filter_visuals();
 }
 
@@ -237,8 +152,31 @@ static void draw_tri(lv_layer_t *layer, int cx, int cy, float sin_h, float cos_h
     lv_draw_triangle(layer, &tri);
 }
 
-// Jet icon: swept wings, narrow fuselage, tail fins (~16px long)
-//   Local coords: nose at (0,-8), tail at (0,8), wings at y=-1
+// Airliner icon: long fuselage, long straight wings (~24px long, 40px wingspan)
+//   Think 737/A320 top-down — wide straight wings, clearly distinct from fighter
+static void draw_icon_airliner(lv_layer_t *layer, int cx, int cy,
+                                float sin_h, float cos_h, lv_color_t color, uint8_t opa) {
+    // Fuselage — long, narrow tube (30px nose to tail)
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -15,  1.5f, 0,  -1.5f, 0, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -15,  1.5f, 0,  0, 15, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -15,  -1.5f, 0,  0, 15, color, opa);
+    // Wings — long, nearly straight, minimal sweep (40px tip to tip)
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -1,  20, 1,  0, 3, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, -1,  -20, 1,  0, 3, color, opa);
+    // Horizontal stabilizer at tail
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, 11,  7, 14,  0, 15, color, opa);
+    draw_tri(layer, cx, cy, sin_h, cos_h,
+             0, 11,  -7, 14,  0, 15, color, opa);
+}
+
+// Military jet icon: swept delta wings, narrow fuselage, tail fins (~16px long)
+//   Fighter/fast-jet silhouette
 static void draw_icon_jet(lv_layer_t *layer, int cx, int cy,
                           float sin_h, float cos_h, lv_color_t color, uint8_t opa) {
     // Fuselage (narrow diamond)
@@ -260,22 +198,22 @@ static void draw_icon_jet(lv_layer_t *layer, int cx, int cy,
              0, 5,  -4, 8,  0, 8, color, opa);
 }
 
-// GA/prop icon: straight wings, boxy tail (~12px long)
+// GA/prop icon: straight high wings, short body — Cessna silhouette (~10px long)
 static void draw_icon_ga(lv_layer_t *layer, int cx, int cy,
                          float sin_h, float cos_h, lv_color_t color, uint8_t opa) {
-    // Fuselage
+    // Fuselage — shorter, stubbier
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, -6,  1.2f, 3,  -1.2f, 3, color, opa);
+             0, -5,  1, 0,  -1, 0, color, opa);
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             1.2f, 3,  -1.2f, 3,  0, 6, color, opa);
-    // Straight wings
+             1, 0,  -1, 0,  0, 5, color, opa);
+    // High straight wings — nearly zero sweep
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, -1,  7, 1,  0, 2, color, opa);
+             0, -2,  8, -1,  0, 0, color, opa);
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, -1,  -7, 1,  0, 2, color, opa);
-    // Tail
+             0, -2,  -8, -1,  0, 0, color, opa);
+    // Simple horizontal tail
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, 4,  3, 6,  -3, 6, color, opa);
+             0, 3,  3, 5,  -3, 5, color, opa);
 }
 
 // Helicopter icon: teardrop body + rotor disc
@@ -304,15 +242,17 @@ static void draw_icon_heli(lv_layer_t *layer, int cx, int cy,
 }
 
 // Classify aircraft into icon type
-enum IconType { ICON_JET, ICON_GA, ICON_HELI };
+enum IconType { ICON_AIRLINER, ICON_JET, ICON_GA, ICON_HELI };
 
 static IconType classify_icon(const Aircraft &ac) {
     // Helicopters: category A7 or known heli type codes
     if (ac.category[0] == 'A' && ac.category[1] == '7') return ICON_HELI;
     if (ac.type_code[0] && is_heli_type(ac.type_code)) return ICON_HELI;
-    // Jets: airline callsigns or large aircraft categories (A3+)
-    if (is_airline_callsign(ac.callsign)) return ICON_JET;
-    if (ac.category[0] == 'A' && ac.category[1] >= '3') return ICON_JET;
+    // Military → fighter jet silhouette
+    if (ac.is_military) return ICON_JET;
+    // Airliners: airline callsigns or large aircraft categories (A3+)
+    if (is_airline_callsign(ac.callsign)) return ICON_AIRLINER;
+    if (ac.category[0] == 'A' && ac.category[1] >= '3') return ICON_AIRLINER;
     // Everything else: GA/prop
     return ICON_GA;
 }
@@ -360,9 +300,10 @@ static void draw_aircraft(lv_layer_t *layer) {
 
         IconType icon = classify_icon(ac);
         switch (icon) {
-            case ICON_JET:  draw_icon_jet(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
-            case ICON_GA:   draw_icon_ga(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
-            case ICON_HELI: draw_icon_heli(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
+            case ICON_AIRLINER: draw_icon_airliner(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
+            case ICON_JET:      draw_icon_jet(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
+            case ICON_GA:       draw_icon_ga(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
+            case ICON_HELI:     draw_icon_heli(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
         }
 
         // Draw callsign label
@@ -425,18 +366,20 @@ static void draw_icon_legend(lv_layer_t *layer) {
 
     // Draw mini icons with labels
     struct { const char *label; IconType type; } entries[] = {
-        {"JET",  ICON_JET},
+        {"AIR",  ICON_AIRLINER},
         {"GA",   ICON_GA},
+        {"MIL",  ICON_JET},
         {"HELI", ICON_HELI},
     };
 
     int x = 8;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         // Draw a small north-facing icon
         switch (entries[i].type) {
-            case ICON_JET:  draw_icon_jet(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
-            case ICON_GA:   draw_icon_ga(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
-            case ICON_HELI: draw_icon_heli(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
+            case ICON_AIRLINER: draw_icon_airliner(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
+            case ICON_JET:      draw_icon_jet(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
+            case ICON_GA:       draw_icon_ga(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
+            case ICON_HELI:     draw_icon_heli(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
         }
 
         lv_draw_label_dsc_t lbl;
@@ -455,15 +398,15 @@ static void draw_icon_legend(lv_layer_t *layer) {
 
 // Draw active filter indicator on canvas
 static void draw_filter_label(lv_layer_t *layer) {
-    if (_active_filter == FILT_NONE) return;
+    int af = filter_get_active();
+    if (af == FILT_NONE) return;
 
-    const char *names[] = {"COMMERCIAL", "MILITARY", "EMERGENCY", "HELICOPTERS", "FAST >300kt", "SLOW <100kt", "ODDBALL"};
     char buf[32];
-    snprintf(buf, sizeof(buf), "FILTER: %s", names[_active_filter]);
+    snprintf(buf, sizeof(buf), "FILTER: %s", filter_defs[af].full_name);
 
     lv_draw_label_dsc_t lbl;
     lv_draw_label_dsc_init(&lbl);
-    lbl.color = _filters[_active_filter].color;
+    lbl.color = filter_defs[af].color;
     lbl.font = &lv_font_montserrat_14;
     lbl.opa = LV_OPA_COVER;
     lbl.text = buf;
@@ -564,24 +507,24 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_obj_set_pos(btn, btn_x, btn_y0 + i * (btn_h + btn_gap));
         lv_obj_set_style_bg_color(btn, lv_color_hex(0x0a0a1a), 0);
         lv_obj_set_style_bg_opa(btn, LV_OPA_70, 0);
-        lv_obj_set_style_border_color(btn, _filters[i].color, 0);
+        lv_obj_set_style_border_color(btn, filter_defs[i].color, 0);
         lv_obj_set_style_border_width(btn, 1, 0);
         lv_obj_set_style_border_opa(btn, LV_OPA_40, 0);
         lv_obj_set_style_radius(btn, 6, 0);
         lv_obj_set_style_pad_all(btn, 0, 0);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLL_CHAIN); // prevent tileview from stealing clicks
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLL_CHAIN);
         lv_obj_add_event_cb(btn, filter_click_cb, LV_EVENT_CLICKED,
                             (void *)(intptr_t)i);
 
         lv_obj_t *lbl = lv_label_create(btn);
-        lv_label_set_text(lbl, _filters[i].label);
+        lv_label_set_text(lbl, filter_defs[i].label);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0x666666), 0);
         lv_obj_center(lbl);
 
-        _filters[i].btn = btn;
-        _filters[i].lbl = lbl;
+        _filter_btns[i] = btn;
+        _filter_lbls[i] = lbl;
     }
 
     // Range label — bottom-right, tappable
@@ -600,7 +543,14 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
     }, LV_EVENT_CLICKED, nullptr);
 
     // Periodic refresh
+    static int _last_synced_filter = FILT_NONE;
     lv_timer_create([](lv_timer_t *t) {
+        // Sync filter button visuals if filter changed from another view
+        int af = filter_get_active();
+        if (af != _last_synced_filter) {
+            _last_synced_filter = af;
+            update_filter_visuals();
+        }
         if (views_get_active_index() == VIEW_MAP) {
             _proj.radius_nm = range_get_nm();
             lv_label_set_text(_range_label, range_label());

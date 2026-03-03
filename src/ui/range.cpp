@@ -1,8 +1,8 @@
 #include "range.h"
 #include <cstdio>
 
-static const float RANGE_LEVELS[] = {100.0f, 50.0f, 20.0f, 5.0f, 1.0f};
-static int _range_idx = 1; // default 50nm
+static const float RANGE_LEVELS[] = {150.0f, 100.0f, 50.0f, 20.0f, 5.0f, 1.0f};
+static int _range_idx = 2; // default 50nm
 static char _label_buf[8];
 
 float range_get_nm() {

@@ -1,4 +1,5 @@
 #include "fetcher.h"
+#include "http_mutex.h"
 #include "../config.h"
 #include "../ui/alerts.h"
 #include <WiFi.h>
@@ -9,6 +10,25 @@ static AircraftList *_aircraft_list = nullptr;
 static uint32_t _last_update = 0;
 static TaskHandle_t _fetch_task_handle = nullptr;
 static TaskHandle_t _route_task_handle = nullptr;
+
+// Military alert dedup — circular buffer of already-alerted ICAO hexes
+#define ALERTED_MAX 64
+static char _alerted_hexes[ALERTED_MAX][7];
+static int _alerted_count = 0;
+static int _alerted_write = 0;
+
+static bool already_alerted(const char *hex) {
+    for (int i = 0; i < _alerted_count; i++) {
+        if (strcmp(_alerted_hexes[i], hex) == 0) return true;
+    }
+    return false;
+}
+
+static void mark_alerted(const char *hex) {
+    strlcpy(_alerted_hexes[_alerted_write], hex, 7);
+    _alerted_write = (_alerted_write + 1) % ALERTED_MAX;
+    if (_alerted_count < ALERTED_MAX) _alerted_count++;
+}
 
 // Check if ICAO hex is in known military ranges
 static bool check_military(const char *hex) {
@@ -187,12 +207,14 @@ static void parse_aircraft_json(JsonDocument &doc) {
         Aircraft &a = _aircraft_list->aircraft[i];
         if (a.stale_since != 0) continue;
         if (a.is_emergency) {
+            // Emergency alerts always fire (no dedup)
             char msg[48];
             snprintf(msg, sizeof(msg), "Squawk %04d - %s", a.squawk,
                      a.squawk == 7500 ? "HIJACK" : a.squawk == 7600 ? "COMMS FAIL" : "EMERGENCY");
-            alerts_queue(ALERT_EMERGENCY, a.callsign[0] ? a.callsign : a.icao_hex, msg);
-        } else if (a.is_military && a.trail_count <= 1) {
-            alerts_queue(ALERT_MILITARY, a.callsign[0] ? a.callsign : a.icao_hex, a.type_code);
+            alerts_queue(ALERT_EMERGENCY, a.callsign[0] ? a.callsign : a.icao_hex, msg, a.icao_hex);
+        } else if (a.is_military && !already_alerted(a.icao_hex)) {
+            mark_alerted(a.icao_hex);
+            alerts_queue(ALERT_MILITARY, a.callsign[0] ? a.callsign : a.icao_hex, a.type_code, a.icao_hex);
         }
     }
 
@@ -217,25 +239,28 @@ static void fetch_task(void *param) {
     // Main fetch loop
     while (true) {
         if (WiFi.status() == WL_CONNECTED) {
-            HTTPClient http;
-            http.begin(url);
-            http.setTimeout(10000);
-            int httpCode = http.GET();
+            if (http_mutex_acquire(pdMS_TO_TICKS(15000))) {
+                HTTPClient http;
+                http.begin(url);
+                http.setTimeout(10000);
+                int httpCode = http.GET();
 
-            if (httpCode == HTTP_CODE_OK) {
-                String payload = http.getString();
-                JsonDocument doc;
-                DeserializationError err = deserializeJson(doc, payload);
-                if (!err) {
-                    parse_aircraft_json(doc);
-                    Serial.printf("Fetched %d aircraft\n", _aircraft_list->count);
+                if (httpCode == HTTP_CODE_OK) {
+                    String payload = http.getString();
+                    JsonDocument doc;
+                    DeserializationError err = deserializeJson(doc, payload);
+                    if (!err) {
+                        parse_aircraft_json(doc);
+                        Serial.printf("Fetched %d aircraft\n", _aircraft_list->count);
+                    } else {
+                        Serial.printf("JSON parse error: %s\n", err.c_str());
+                    }
                 } else {
-                    Serial.printf("JSON parse error: %s\n", err.c_str());
+                    Serial.printf("HTTP error: %d\n", httpCode);
                 }
-            } else {
-                Serial.printf("HTTP error: %d\n", httpCode);
+                http.end();
+                http_mutex_release();
             }
-            http.end();
         } else {
             Serial.println("WiFi disconnected, reconnecting...");
             WiFi.reconnect();
@@ -277,27 +302,30 @@ static void route_enrich_task(void *param) {
         }
 
         // Fetch route from adsbdb
-        char url[128];
-        snprintf(url, sizeof(url), "https://api.adsbdb.com/v0/callsign/%s", callsign);
-        HTTPClient http;
-        http.begin(url);
-        http.setTimeout(8000);
-        int code = http.GET();
-
         char origin[5] = {};
         char dest[5] = {};
 
-        if (code == HTTP_CODE_OK) {
-            JsonDocument doc;
-            if (!deserializeJson(doc, http.getString())) {
-                JsonObject route = doc["response"]["flightroute"];
-                const char *orig_iata = route["origin"]["iata_code"] | "";
-                const char *dest_iata = route["destination"]["iata_code"] | "";
-                strlcpy(origin, orig_iata, sizeof(origin));
-                strlcpy(dest, dest_iata, sizeof(dest));
+        if (http_mutex_acquire(pdMS_TO_TICKS(12000))) {
+            char url[128];
+            snprintf(url, sizeof(url), "https://api.adsbdb.com/v0/callsign/%s", callsign);
+            HTTPClient http;
+            http.begin(url);
+            http.setTimeout(8000);
+            int code = http.GET();
+
+            if (code == HTTP_CODE_OK) {
+                JsonDocument doc;
+                if (!deserializeJson(doc, http.getString())) {
+                    JsonObject route = doc["response"]["flightroute"];
+                    const char *orig_iata = route["origin"]["iata_code"] | "";
+                    const char *dest_iata = route["destination"]["iata_code"] | "";
+                    strlcpy(origin, orig_iata, sizeof(origin));
+                    strlcpy(dest, dest_iata, sizeof(dest));
+                }
             }
+            http.end();
+            http_mutex_release();
         }
-        http.end();
 
         // Write results back (even empty — marks as "tried" so we don't re-fetch)
         if (_aircraft_list->lock(pdMS_TO_TICKS(100))) {
@@ -319,6 +347,7 @@ static void route_enrich_task(void *param) {
 
 void fetcher_init(AircraftList *list) {
     _aircraft_list = list;
+    http_mutex_init();
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);

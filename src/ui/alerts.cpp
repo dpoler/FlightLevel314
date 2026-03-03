@@ -1,14 +1,22 @@
 #include "alerts.h"
+#include "detail_card.h"
+#include "../data/aircraft.h"
 #include "../pins_config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <cstring>
+
+// Aircraft list reference for tap-to-detail
+extern AircraftList aircraft_list;
 
 static lv_obj_t *_toast = nullptr;
 static lv_obj_t *_toast_title = nullptr;
 static lv_obj_t *_toast_detail = nullptr;
 static lv_obj_t *_toast_icon = nullptr;
 static lv_timer_t *_dismiss_timer = nullptr;
+
+// ICAO hex of the currently displayed toast (for tap-to-detail lookup)
+static char _current_hex[7] = {};
 
 #define TOAST_W 500
 #define TOAST_H 50
@@ -19,6 +27,7 @@ struct PendingAlert {
     AlertType type;
     char title[16];
     char detail[48];
+    char icao_hex[7];
 };
 
 #define ALERT_QUEUE_SIZE 8
@@ -75,7 +84,7 @@ static void process_queue(lv_timer_t *t) {
 
         // Release mutex while showing (alerts_show may take time)
         xSemaphoreGive(_queue_mutex);
-        alerts_show(pa.type, pa.title, pa.detail);
+        alerts_show(pa.type, pa.title, pa.detail, pa.icao_hex);
         if (xSemaphoreTake(_queue_mutex, 0) != pdTRUE) return;
     }
 
@@ -110,8 +119,21 @@ void alerts_init(lv_obj_t *parent) {
     lv_obj_set_style_text_color(_toast_detail, lv_color_hex(0xaaaaaa), 0);
     lv_obj_align(_toast_detail, LV_ALIGN_LEFT_MID, 32, 10);
 
-    // Tap to dismiss
+    // Tap: look up aircraft and show detail card, then dismiss
     lv_obj_add_event_cb(_toast, [](lv_event_t *e) {
+        if (_current_hex[0] && aircraft_list.lock(pdMS_TO_TICKS(10))) {
+            for (int i = 0; i < aircraft_list.count; i++) {
+                if (strcmp(aircraft_list.aircraft[i].icao_hex, _current_hex) == 0) {
+                    Aircraft ac_copy = aircraft_list.aircraft[i];
+                    aircraft_list.unlock();
+                    detail_card_show(&ac_copy);
+                    dismiss_toast(nullptr);
+                    return;
+                }
+            }
+            aircraft_list.unlock();
+        }
+        // If aircraft not found, just dismiss
         dismiss_toast(nullptr);
     }, LV_EVENT_CLICKED, nullptr);
 
@@ -120,8 +142,15 @@ void alerts_init(lv_obj_t *parent) {
 }
 
 void alerts_show(AlertType type, const char *title, const char *detail,
-                 uint32_t timeout_ms) {
+                 const char *icao_hex, uint32_t timeout_ms) {
     lv_color_t color = alert_color(type);
+
+    // Store hex for tap-to-detail
+    if (icao_hex && icao_hex[0]) {
+        strlcpy(_current_hex, icao_hex, sizeof(_current_hex));
+    } else {
+        _current_hex[0] = '\0';
+    }
 
     lv_obj_set_style_border_color(_toast, color, 0);
     lv_label_set_text(_toast_icon, alert_icon(type));
@@ -147,7 +176,8 @@ void alerts_show(AlertType type, const char *title, const char *detail,
     lv_timer_set_repeat_count(_dismiss_timer, 1);
 }
 
-void alerts_queue(AlertType type, const char *title, const char *detail) {
+void alerts_queue(AlertType type, const char *title, const char *detail,
+                  const char *icao_hex) {
     if (!_queue_mutex) return;
     if (xSemaphoreTake(_queue_mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
 
@@ -159,6 +189,11 @@ void alerts_queue(AlertType type, const char *title, const char *detail) {
         pa.title[sizeof(pa.title) - 1] = '\0';
         strncpy(pa.detail, detail, sizeof(pa.detail) - 1);
         pa.detail[sizeof(pa.detail) - 1] = '\0';
+        if (icao_hex && icao_hex[0]) {
+            strlcpy(pa.icao_hex, icao_hex, sizeof(pa.icao_hex));
+        } else {
+            pa.icao_hex[0] = '\0';
+        }
         _queue_head = next;
     }
 

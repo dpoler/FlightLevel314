@@ -68,7 +68,7 @@ static void cycle_timer_cb(lv_timer_t *t) {
     if (now - _last_cycle_time >= CYCLE_DWELL_MS[_active_index]) {
         _last_cycle_time = now;
         int next = (_active_index + 1) % 4;
-        lv_tileview_set_tile_by_index(tileview, next, 0, LV_ANIM_ON);
+        lv_tileview_set_tile_by_index(tileview, next, 0, LV_ANIM_OFF);
     }
 }
 
@@ -82,11 +82,16 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_bg_color(tileview, lv_color_hex(0x0a0a1a), 0);
     lv_obj_set_style_bg_opa(tileview, LV_OPA_COVER, 0);
 
-    // Create 4 horizontal tiles
+    // Create 4 horizontal tiles — all get opaque backgrounds to prevent bleed-through during scroll animation
     tiles[VIEW_MAP] = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_RIGHT);
     tiles[VIEW_RADAR] = lv_tileview_add_tile(tileview, 1, 0, (lv_dir_t)(LV_DIR_LEFT | LV_DIR_RIGHT));
     tiles[VIEW_ARRIVALS] = lv_tileview_add_tile(tileview, 2, 0, (lv_dir_t)(LV_DIR_LEFT | LV_DIR_RIGHT));
     tiles[VIEW_STATS] = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_LEFT);
+    for (int i = 0; i < 4; i++) {
+        lv_obj_set_style_bg_color(tiles[i], lv_color_hex(0x0a0a1a), 0);
+        lv_obj_set_style_bg_opa(tiles[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(tiles[i], 0, 0);
+    }
 
     lv_obj_add_event_cb(tileview, tileview_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 

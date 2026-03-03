@@ -171,6 +171,18 @@ void setup() {
 
 void loop() {
     lv_timer_handler();
+
+    // Heap monitor — log every 10s for crash diagnosis
+    static uint32_t last_heap_log = 0;
+    uint32_t now = millis();
+    if (now - last_heap_log >= 10000) {
+        last_heap_log = now;
+        Serial.printf("HEAP int=%lu min=%lu  PSRAM=%lu\n",
+            (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+            (unsigned long)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+            (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    }
+
     // Yield briefly to FreeRTOS — 1ms instead of 5ms for better touch responsiveness
     vTaskDelay(pdMS_TO_TICKS(1));
 }

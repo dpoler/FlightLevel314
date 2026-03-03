@@ -2,6 +2,7 @@
 #include "radar_view.h"
 #include "views.h"
 #include "detail_card.h"
+#include "filters.h"
 #include "../config.h"
 #include "../pins_config.h"
 #include "geo.h"
@@ -36,6 +37,11 @@ static uint32_t _last_sweep_ms = 0;
 #define LABEL_VISIBLE_DEG 240.0f      // callsign label visibility zone
 
 static MapProjection _proj;
+
+// Per-view filter button/label pointers
+static lv_obj_t *_filter_btns[NUM_FILTERS] = {};
+static lv_obj_t *_filter_lbls[NUM_FILTERS] = {};
+static bool _filter_just_clicked = false;
 
 // Convert lat/lon to radar-relative screen coords
 static bool to_radar_screen(float lat, float lon, int &sx, int &sy) {
@@ -160,6 +166,7 @@ static void draw_blips(lv_layer_t *layer) {
         Aircraft &ac = _list->aircraft[i];
         uint8_t ghost_opa = compute_aircraft_opacity(ac.stale_since, now);
         if (ghost_opa == 0) continue;
+        if (!aircraft_passes_filter(ac)) continue;
 
         int sx, sy;
         if (!to_radar_screen(ac.lat, ac.lon, sx, sy)) continue;
@@ -308,11 +315,59 @@ static void draw_blips(lv_layer_t *layer) {
     _list->unlock();
 }
 
+static void draw_filter_label(lv_layer_t *layer) {
+    int af = filter_get_active();
+    if (af == FILT_NONE) return;
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), "FILTER: %s", filter_defs[af].full_name);
+
+    lv_draw_label_dsc_t lbl;
+    lv_draw_label_dsc_init(&lbl);
+    lbl.color = filter_defs[af].color;
+    lbl.font = &lv_font_montserrat_14;
+    lbl.opa = LV_OPA_COVER;
+    lbl.text = buf;
+    lv_area_t la = {(lv_coord_t)8, (lv_coord_t)4,
+                    (lv_coord_t)300, (lv_coord_t)20};
+    lv_draw_label(layer, &lbl, &la);
+}
+
 static void radar_draw_cb(lv_event_t *e) {
     lv_layer_t *layer = lv_event_get_layer(e);
     draw_rings(layer);
     draw_sweep(layer);
     draw_blips(layer);
+    draw_filter_label(layer);
+}
+
+static void update_filter_visuals() {
+    int active = filter_get_active();
+    for (int i = 0; i < NUM_FILTERS; i++) {
+        if (active == i) {
+            lv_obj_set_style_bg_color(_filter_btns[i], filter_defs[i].color, 0);
+            lv_obj_set_style_bg_opa(_filter_btns[i], LV_OPA_COVER, 0);
+            lv_obj_set_style_border_color(_filter_btns[i], lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_border_width(_filter_btns[i], 2, 0);
+            lv_obj_set_style_border_opa(_filter_btns[i], LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(_filter_lbls[i], lv_color_hex(0x000000), 0);
+        } else {
+            lv_obj_set_style_bg_color(_filter_btns[i], lv_color_hex(0x0a0a1a), 0);
+            lv_obj_set_style_bg_opa(_filter_btns[i], LV_OPA_70, 0);
+            lv_obj_set_style_border_color(_filter_btns[i], filter_defs[i].color, 0);
+            lv_obj_set_style_border_width(_filter_btns[i], 1, 0);
+            lv_obj_set_style_border_opa(_filter_btns[i], LV_OPA_40, 0);
+            lv_obj_set_style_text_color(_filter_lbls[i], lv_color_hex(0x666666), 0);
+        }
+    }
+    if (_radar_obj) lv_obj_invalidate(_radar_obj);
+}
+
+static void radar_filter_click_cb(lv_event_t *e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    _filter_just_clicked = true;
+    filter_toggle(idx);
+    update_filter_visuals();
 }
 
 void radar_view_init(lv_obj_t *parent, AircraftList *list) {
@@ -336,6 +391,11 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
 
     lv_obj_add_event_cb(_radar_obj, [](lv_event_t *e) {
         if (views_get_active_index() != VIEW_RADAR) return;
+
+        if (_filter_just_clicked) {
+            _filter_just_clicked = false;
+            return;
+        }
 
         lv_point_t point;
         lv_indev_get_point(lv_indev_active(), &point);
@@ -368,6 +428,39 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
         _list->unlock();
     }, LV_EVENT_CLICKED, nullptr);
 
+    // Filter toggle buttons — vertical stack on right edge (same layout as map)
+    {
+        int btn_w = 64, btn_h = 48, btn_gap = 10;
+        int total_h = NUM_FILTERS * btn_h + (NUM_FILTERS - 1) * btn_gap;
+        int btn_x = RADAR_W - btn_w - 8;
+        int btn_y0 = (RADAR_H - total_h) / 2;
+        for (int i = 0; i < NUM_FILTERS; i++) {
+            lv_obj_t *btn = lv_obj_create(parent);
+            lv_obj_set_size(btn, btn_w, btn_h);
+            lv_obj_set_pos(btn, btn_x, btn_y0 + i * (btn_h + btn_gap));
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0x0a0a1a), 0);
+            lv_obj_set_style_bg_opa(btn, LV_OPA_70, 0);
+            lv_obj_set_style_border_color(btn, filter_defs[i].color, 0);
+            lv_obj_set_style_border_width(btn, 1, 0);
+            lv_obj_set_style_border_opa(btn, LV_OPA_40, 0);
+            lv_obj_set_style_radius(btn, 6, 0);
+            lv_obj_set_style_pad_all(btn, 0, 0);
+            lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLL_CHAIN);
+            lv_obj_add_event_cb(btn, radar_filter_click_cb, LV_EVENT_CLICKED,
+                                (void *)(intptr_t)i);
+
+            lv_obj_t *lbl = lv_label_create(btn);
+            lv_label_set_text(lbl, filter_defs[i].label);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(0x666666), 0);
+            lv_obj_center(lbl);
+
+            _filter_btns[i] = btn;
+            _filter_lbls[i] = lbl;
+        }
+    }
+
     // Range label — bottom-right, tappable
     _range_label = lv_label_create(parent);
     lv_label_set_text(_range_label, range_label());
@@ -385,6 +478,7 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
 
     // Animate sweep — always update angle, but only redraw when visible
     _last_sweep_ms = millis();
+    static int _last_synced_filter = FILT_NONE;
     lv_timer_create([](lv_timer_t *t) {
         uint32_t now = millis();
         uint32_t dt = now - _last_sweep_ms;
@@ -394,6 +488,13 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
 
         _proj.radius_nm = range_get_nm();
         lv_label_set_text(_range_label, range_label());
+
+        // Sync filter button visuals if filter changed from another view
+        int af = filter_get_active();
+        if (af != _last_synced_filter) {
+            _last_synced_filter = af;
+            update_filter_visuals();
+        }
 
         // Only invalidate when radar view is active (saves frame budget for swipes)
         if (views_get_active_index() == VIEW_RADAR) {

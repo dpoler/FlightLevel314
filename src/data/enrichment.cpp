@@ -1,4 +1,5 @@
 #include "enrichment.h"
+#include "http_mutex.h"
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <cstring>
@@ -11,6 +12,7 @@ static int _cache_count = 0;
 
 static void (*_pending_callback)(AircraftEnrichment *) = nullptr;
 static AircraftEnrichment *_pending_result = nullptr;
+static volatile bool _task_running = false;
 
 struct EnrichParams {
     char icao_hex[7];
@@ -39,12 +41,13 @@ static AircraftEnrichment *get_or_create_cache_entry(const char *icao_hex) {
 }
 
 static void fetch_task(void *param) {
+    _task_running = true;
     EnrichParams *params = (EnrichParams *)param;
     AircraftEnrichment *entry = get_or_create_cache_entry(params->icao_hex);
     entry->loading = true;
 
     // Stage 1: Full airport names from adsbdb callsign API
-    if (params->callsign[0]) {
+    if (params->callsign[0] && http_mutex_acquire(pdMS_TO_TICKS(8000))) {
         char url[128];
         snprintf(url, sizeof(url), "https://api.adsbdb.com/v0/callsign/%s", params->callsign);
         HTTPClient http;
@@ -59,17 +62,17 @@ static void fetch_task(void *param) {
                 const char *dest_name = route["destination"]["name"] | "";
                 strlcpy(entry->origin_airport, orig_name, sizeof(entry->origin_airport));
                 strlcpy(entry->destination_airport, dest_name, sizeof(entry->destination_airport));
-                // Also grab airline if available
                 const char *airline = route["airline"]["name"] | "";
                 if (airline[0]) strlcpy(entry->airline, airline, sizeof(entry->airline));
             }
         }
         http.end();
+        http_mutex_release();
         if (_pending_callback) _pending_callback(entry);
     }
 
     // Stage 2: Aircraft details from adsbdb
-    {
+    if (http_mutex_acquire(pdMS_TO_TICKS(8000))) {
         char url[128];
         snprintf(url, sizeof(url),
                  "https://api.adsbdb.com/v0/aircraft/%s", params->icao_hex);
@@ -92,12 +95,13 @@ static void fetch_task(void *param) {
             }
         }
         http.end();
+        http_mutex_release();
         if (_pending_callback) _pending_callback(entry);
     }
 
     // Stage 3: Photo from planespotters.net (brief delay for rate limit)
     vTaskDelay(pdMS_TO_TICKS(200));
-    {
+    if (http_mutex_acquire(pdMS_TO_TICKS(8000))) {
         char url[128];
         snprintf(url, sizeof(url),
                  "https://api.planespotters.net/pub/photos/hex/%s", params->icao_hex);
@@ -118,6 +122,7 @@ static void fetch_task(void *param) {
             }
         }
         http.end();
+        http_mutex_release();
     }
 
     entry->loaded = true;
@@ -129,6 +134,7 @@ static void fetch_task(void *param) {
     }
 
     free(params);
+    _task_running = false;
     vTaskDelete(nullptr);
 }
 
@@ -139,6 +145,12 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
     AircraftEnrichment *cached = enrichment_get_cached(icao_hex);
     if (cached) {
         callback(cached);
+        return;
+    }
+
+    // Only one enrichment task at a time — concurrent HTTP exhausts WiFi TX buffers
+    if (_task_running) {
+        Serial.println("enrich: skipped (task already running)");
         return;
     }
 
