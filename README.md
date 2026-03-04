@@ -6,6 +6,17 @@ Real-time aircraft tracker on an ESP32-P4 with a 1024x600 touchscreen. Pulls liv
 ![Platform](https://img.shields.io/badge/platform-ESP32--P4-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Main map screen](docs/images/map.JPG) | ![Aircraft detail](docs/images/detail.JPG) |
+| Main map screen | Aircraft detail |
+| ![Radar simulation](docs/images/radar.JPG) | ![Arrival board style view](docs/images/arrivals.JPG) |
+| Radar simulation | Arrival board style view |
+| ![Stats](docs/images/stats.JPG) | ![Settings](docs/images/settings.PNG) |
+| Stats | Settings |
+
 ## Views
 
 - **Map** — Top-down map with aircraft icons (airliner/jet/GA/heli), altitude-colored trails, and static pre-rendered OSM backgrounds at 6 zoom levels
