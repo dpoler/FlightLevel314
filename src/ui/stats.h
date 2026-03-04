@@ -17,6 +17,12 @@ struct SessionStats {
     int alt_very_high; // >= 35000
     char fastest_callsign[9];
     int fastest_speed;
+    char slowest_callsign[9];
+    int slowest_speed;
+    char highest_callsign[9];
+    int32_t highest_alt;
+    char lowest_callsign[9];
+    int32_t lowest_alt;
     char closest_callsign[9];
     float closest_dist;
 

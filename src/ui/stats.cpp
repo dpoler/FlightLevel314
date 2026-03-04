@@ -152,8 +152,14 @@ void stats_update(AircraftList *list) {
     _stats.alt_high = 0;
     _stats.alt_very_high = 0;
     _stats.fastest_speed = 0;
-    _stats.closest_dist = 9999.0f;
     _stats.fastest_callsign[0] = 0;
+    _stats.slowest_speed = 99999;
+    _stats.slowest_callsign[0] = 0;
+    _stats.highest_alt = -9999;
+    _stats.highest_callsign[0] = 0;
+    _stats.lowest_alt = 999999;
+    _stats.lowest_callsign[0] = 0;
+    _stats.closest_dist = 9999.0f;
     _stats.closest_callsign[0] = 0;
     _stats.spd_gnd = 0;
     _stats.spd_slow = 0;
@@ -201,10 +207,35 @@ void stats_update(AircraftList *list) {
         else if (ac.altitude < 35000) _stats.alt_high++;
         else _stats.alt_very_high++;
 
+        // Fastest (any aircraft with speed data)
         if (ac.speed > _stats.fastest_speed) {
             _stats.fastest_speed = ac.speed;
             strlcpy(_stats.fastest_callsign,
                     ac.callsign[0] ? ac.callsign : ac.icao_hex, 9);
+        }
+
+        // Airborne-only records: filter out on_ground and zero/bogus values
+        if (!ac.on_ground && ac.speed > 30) {
+            // Slowest airborne (>30kt filters out parked/taxiing with bad on_ground)
+            if (ac.speed < _stats.slowest_speed) {
+                _stats.slowest_speed = ac.speed;
+                strlcpy(_stats.slowest_callsign,
+                        ac.callsign[0] ? ac.callsign : ac.icao_hex, 9);
+            }
+        }
+        if (!ac.on_ground && ac.altitude > 100) {
+            // Highest
+            if (ac.altitude > _stats.highest_alt) {
+                _stats.highest_alt = ac.altitude;
+                strlcpy(_stats.highest_callsign,
+                        ac.callsign[0] ? ac.callsign : ac.icao_hex, 9);
+            }
+            // Lowest airborne (>100ft filters out just-landed with bad on_ground)
+            if (ac.altitude < _stats.lowest_alt) {
+                _stats.lowest_alt = ac.altitude;
+                strlcpy(_stats.lowest_callsign,
+                        ac.callsign[0] ? ac.callsign : ac.icao_hex, 9);
+            }
         }
 
         float d = MapProjection::distance_nm(HOME_LAT, HOME_LON, ac.lat, ac.lon);

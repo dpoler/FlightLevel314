@@ -18,7 +18,9 @@ UserConfig storage_load_config() {
     cfg.home_lon = HOME_LON;
     cfg.radius_nm = ADSB_RADIUS_NM;
     cfg.use_metric = false;
+    cfg.use_ethernet = false; // WiFi by default
     cfg.watchlist_count = 0;
+    cfg.alert_autofocus = true; // auto-switch to map on mil/emg alerts
     cfg.cycle_enabled = false;
     cfg.cycle_interval_s = 30;
     cfg.cycle_inactivity_s = 60;
@@ -40,6 +42,8 @@ UserConfig storage_load_config() {
     cfg.home_lon = _prefs.getFloat("lon", cfg.home_lon);
     cfg.radius_nm = _prefs.getInt("radius", cfg.radius_nm);
     cfg.use_metric = _prefs.getBool("metric", cfg.use_metric);
+    cfg.use_ethernet = _prefs.getBool("use_eth", cfg.use_ethernet);
+    cfg.alert_autofocus = _prefs.getBool("alrt_af", cfg.alert_autofocus);
     cfg.cycle_enabled = _prefs.getBool("cyc_on", cfg.cycle_enabled);
     cfg.cycle_interval_s = _prefs.getInt("cyc_int", cfg.cycle_interval_s);
     cfg.cycle_inactivity_s = _prefs.getInt("cyc_idle", cfg.cycle_inactivity_s);
@@ -64,6 +68,8 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putFloat("lon", cfg.home_lon);
     _prefs.putInt("radius", cfg.radius_nm);
     _prefs.putBool("metric", cfg.use_metric);
+    _prefs.putBool("use_eth", cfg.use_ethernet);
+    _prefs.putBool("alrt_af", cfg.alert_autofocus);
     _prefs.putBool("cyc_on", cfg.cycle_enabled);
     _prefs.putInt("cyc_int", cfg.cycle_interval_s);
     _prefs.putInt("cyc_idle", cfg.cycle_inactivity_s);

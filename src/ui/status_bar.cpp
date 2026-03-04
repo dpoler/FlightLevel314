@@ -3,6 +3,7 @@
 #include "views.h"
 #include "../config.h"
 #include "../pins_config.h"
+#include "../data/fetcher.h"
 
 static lv_obj_t *wifi_icon;
 static lv_obj_t *ac_count_label;
@@ -30,13 +31,9 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     lv_obj_set_style_pad_all(bar, 0, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Network indicator (left side) — different icon for WiFi vs Ethernet
+    // Network indicator (left side) — updated dynamically
     wifi_icon = lv_label_create(bar);
-#ifdef USE_ETHERNET
-    lv_label_set_text(wifi_icon, "ETH");
-#else
-    lv_label_set_text(wifi_icon, LV_SYMBOL_WIFI);
-#endif
+    lv_label_set_text(wifi_icon, "...");
     lv_obj_set_style_text_color(wifi_icon, STATUS_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_14, 0);
     lv_obj_align(wifi_icon, LV_ALIGN_LEFT_MID, 8, 0);
@@ -110,9 +107,18 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
 }
 
 void status_bar_update(bool wifi_connected, int aircraft_count, uint32_t last_update_ms) {
-    // WiFi color
-    lv_obj_set_style_text_color(wifi_icon,
-        wifi_connected ? STATUS_ACCENT_COLOR : lv_color_hex(0xcc3333), 0);
+    // Network icon — show type and color by status
+    NetType net = fetcher_connection_type();
+    if (net == NET_ETHERNET) {
+        lv_label_set_text(wifi_icon, "ETH");
+        lv_obj_set_style_text_color(wifi_icon, STATUS_ACCENT_COLOR, 0);
+    } else if (net == NET_WIFI) {
+        lv_label_set_text(wifi_icon, LV_SYMBOL_WIFI);
+        lv_obj_set_style_text_color(wifi_icon, STATUS_ACCENT_COLOR, 0);
+    } else {
+        lv_label_set_text(wifi_icon, "---");
+        lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0xcc3333), 0);
+    }
 
     // Aircraft count
     lv_label_set_text_fmt(ac_count_label, "%d aircraft", aircraft_count);

@@ -19,6 +19,8 @@ static lv_obj_t *_ta_lon = nullptr;
 static lv_obj_t *_slider_radius = nullptr;
 static lv_obj_t *_radius_label = nullptr;
 static lv_obj_t *_sw_metric = nullptr;
+static lv_obj_t *_sw_ethernet = nullptr;
+static lv_obj_t *_sw_autofocus = nullptr;
 static lv_obj_t *_sw_trails = nullptr;
 static lv_obj_t *_slider_trail_len = nullptr;
 static lv_obj_t *_trail_len_label = nullptr;
@@ -95,6 +97,8 @@ static lv_obj_t *create_switch(lv_obj_t *parent, int x, int y, bool checked) {
 }
 
 static void save_and_close(lv_event_t *e) {
+    bool old_use_ethernet = _cfg.use_ethernet;
+
     // Read values from text areas
     strncpy(_cfg.wifi_ssid, lv_textarea_get_text(_ta_ssid), sizeof(_cfg.wifi_ssid) - 1);
     _cfg.wifi_ssid[sizeof(_cfg.wifi_ssid) - 1] = '\0';
@@ -104,6 +108,8 @@ static void save_and_close(lv_event_t *e) {
     _cfg.home_lon = atof(lv_textarea_get_text(_ta_lon));
     _cfg.radius_nm = lv_slider_get_value(_slider_radius);
     _cfg.use_metric = lv_obj_has_state(_sw_metric, LV_STATE_CHECKED);
+    _cfg.use_ethernet = lv_obj_has_state(_sw_ethernet, LV_STATE_CHECKED);
+    _cfg.alert_autofocus = lv_obj_has_state(_sw_autofocus, LV_STATE_CHECKED);
     _cfg.trails_enabled = lv_obj_has_state(_sw_trails, LV_STATE_CHECKED);
     _cfg.trail_max_points = lv_slider_get_value(_slider_trail_len);
     _cfg.cycle_enabled = lv_obj_has_state(_sw_cycle, LV_STATE_CHECKED);
@@ -115,6 +121,13 @@ static void save_and_close(lv_event_t *e) {
     if (_on_change) _on_change(&_cfg);
 
     settings_hide();
+
+    // Network mode change requires reboot (can't switch ETH/WiFi at runtime)
+    if (_cfg.use_ethernet != old_use_ethernet) {
+        Serial.println("Network mode changed, rebooting...");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        ESP.restart();
+    }
 }
 
 void settings_init(lv_obj_t *parent) {
@@ -190,6 +203,19 @@ void settings_init(lv_obj_t *parent) {
     // Metric
     create_label(_panel, "Metric Units", 0, 202);
     _sw_metric = create_switch(_panel, 110, 200, _cfg.use_metric);
+
+    // Network mode (Ethernet toggle — off=WiFi, on=Ethernet)
+    create_label(_panel, "Ethernet", 0, 236);
+    _sw_ethernet = create_switch(_panel, 110, 234, _cfg.use_ethernet);
+    lv_obj_t *net_hint = lv_label_create(_panel);
+    lv_label_set_text(net_hint, "(reboot)");
+    lv_obj_set_style_text_color(net_hint, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(net_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(net_hint, 160, 238);
+
+    // Alert auto-focus (switch to map on military/emergency)
+    create_label(_panel, "Alert Focus", 0, 268);
+    _sw_autofocus = create_switch(_panel, 110, 266, _cfg.alert_autofocus);
 
     // === RIGHT SIDE (x=240) ===
     int rx = 240;
@@ -299,6 +325,12 @@ void settings_show() {
 
     if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
     else lv_obj_clear_state(_sw_metric, LV_STATE_CHECKED);
+
+    if (_cfg.alert_autofocus) lv_obj_add_state(_sw_autofocus, LV_STATE_CHECKED);
+    else lv_obj_clear_state(_sw_autofocus, LV_STATE_CHECKED);
+
+    if (_cfg.use_ethernet) lv_obj_add_state(_sw_ethernet, LV_STATE_CHECKED);
+    else lv_obj_clear_state(_sw_ethernet, LV_STATE_CHECKED);
 
     if (_cfg.trails_enabled) lv_obj_add_state(_sw_trails, LV_STATE_CHECKED);
     else lv_obj_clear_state(_sw_trails, LV_STATE_CHECKED);

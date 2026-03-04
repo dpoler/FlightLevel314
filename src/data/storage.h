@@ -7,6 +7,7 @@ struct UserConfig {
     float home_lon;
     int radius_nm;
     bool use_metric;
+    bool use_ethernet;       // true=Ethernet, false=WiFi (default: WiFi)
     char watchlist[10][7]; // up to 10 ICAO hex codes
     int watchlist_count;
 
@@ -14,6 +15,9 @@ struct UserConfig {
     bool cycle_enabled;
     int cycle_interval_s;    // seconds between auto-advance (default 30)
     int cycle_inactivity_s;  // seconds before resuming cycling after touch (default 60)
+
+    // Alert settings
+    bool alert_autofocus;    // auto-switch to map on military/emergency alerts
 
     // Trail settings
     bool trails_enabled;

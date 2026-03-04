@@ -1,11 +1,17 @@
 #pragma once
 #include "aircraft.h"
 
-// Initialize WiFi and start the background fetch task
+// Connection type
+enum NetType { NET_NONE, NET_ETHERNET, NET_WIFI };
+
+// Initialize network and start the background fetch task
 void fetcher_init(AircraftList *list);
 
-// Returns true if WiFi is connected
+// Returns true if any network is connected
 bool fetcher_wifi_connected();
+
+// Returns which network is currently active
+NetType fetcher_connection_type();
 
 // Returns the timestamp of the last successful fetch
 uint32_t fetcher_last_update();

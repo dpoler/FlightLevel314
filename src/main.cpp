@@ -20,6 +20,7 @@
 #include "ui/radar_view.h"
 #include "ui/arrivals_view.h"
 #include "data/storage.h"
+#include "data/error_log.h"
 
 // Global touch state — read by view timers to defer heavy rendering during interaction
 volatile bool touch_active = false;
@@ -175,6 +176,7 @@ void setup() {
         (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
         (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
+    error_log_init();
     fetcher_init(&aircraft_list);
     // tile_cache_init(); // disabled: lv_draw_image broken on ESP32-P4 PPA
 }

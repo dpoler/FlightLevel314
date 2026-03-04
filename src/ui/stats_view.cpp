@@ -7,6 +7,7 @@
 #include "views.h"
 #include "../pins_config.h"
 #include "../data/fetcher.h"
+#include "../data/error_log.h"
 
 #define STATS_W LCD_H_RES
 #define STATS_H (LCD_V_RES - 30)
@@ -43,8 +44,11 @@ static BarRow _spd_rows[6];
 static const char *SPD_NAMES[] = {"GND", "<200", "<300", "<400", "<500", "500+"};
 static const uint32_t SPD_COLORS[] = {0x666666, 0x4488cc, 0x4488ff, 0x8844ff, 0xcc44ff, 0xff44aa};
 
-// Fastest / Closest
+// Records
 static lv_obj_t *_fastest_val = nullptr;
+static lv_obj_t *_slowest_val = nullptr;
+static lv_obj_t *_highest_val = nullptr;
+static lv_obj_t *_lowest_val = nullptr;
 static lv_obj_t *_closest_val = nullptr;
 
 // Session stats
@@ -54,6 +58,9 @@ static lv_obj_t *_uptime_val = nullptr;
 
 // Top airlines
 static lv_obj_t *_airline_labels[5] = {};
+
+// Top types
+static lv_obj_t *_type_labels[5] = {};
 
 // System health
 static lv_obj_t *_heap_val = nullptr;
@@ -72,6 +79,10 @@ static lv_obj_t *_enrich_val = nullptr;
 static lv_obj_t *_bytes_val = nullptr;
 static lv_obj_t *_latency_val = nullptr;
 static lv_obj_t *_rssi_val = nullptr;
+
+// Error log
+static lv_obj_t *_err_count_lbl = nullptr;
+static lv_obj_t *_err_list_lbl = nullptr;
 
 // FPS measurement
 static uint32_t _frame_count = 0;
@@ -189,11 +200,30 @@ static void refresh_stats(lv_timer_t *t) {
         update_bar(&_spd_rows[i], spd_counts[i], spd_max);
     }
 
-    // Fastest / Closest
+    // Records
     if (s->fastest_callsign[0]) {
         lv_label_set_text_fmt(_fastest_val, "%s %dkt", s->fastest_callsign, s->fastest_speed);
     } else {
         lv_label_set_text(_fastest_val, "--");
+    }
+    if (s->slowest_callsign[0] && s->slowest_speed < 99999) {
+        lv_label_set_text_fmt(_slowest_val, "%s %dkt", s->slowest_callsign, s->slowest_speed);
+    } else {
+        lv_label_set_text(_slowest_val, "--");
+    }
+    if (s->highest_callsign[0] && s->highest_alt > -9999) {
+        if (s->highest_alt >= 18000) {
+            lv_label_set_text_fmt(_highest_val, "%s FL%d", s->highest_callsign, s->highest_alt / 100);
+        } else {
+            lv_label_set_text_fmt(_highest_val, "%s %dft", s->highest_callsign, s->highest_alt);
+        }
+    } else {
+        lv_label_set_text(_highest_val, "--");
+    }
+    if (s->lowest_callsign[0] && s->lowest_alt < 999999) {
+        lv_label_set_text_fmt(_lowest_val, "%s %dft", s->lowest_callsign, s->lowest_alt);
+    } else {
+        lv_label_set_text(_lowest_val, "--");
     }
     if (s->closest_callsign[0] && s->closest_dist < 9999.0f) {
         lv_label_set_text_fmt(_closest_val, "%s %.1fnm", s->closest_callsign, (double)s->closest_dist);
@@ -217,6 +247,15 @@ static void refresh_stats(lv_timer_t *t) {
             lv_label_set_text_fmt(_airline_labels[i], "%-3s %d", s->top_airlines[i].code, s->top_airlines[i].count);
         } else {
             lv_label_set_text(_airline_labels[i], "");
+        }
+    }
+
+    // Top types
+    for (int i = 0; i < 5; i++) {
+        if (s->top_types[i].type[0]) {
+            lv_label_set_text_fmt(_type_labels[i], "%-4s %d", s->top_types[i].type, s->top_types[i].count);
+        } else {
+            lv_label_set_text(_type_labels[i], "");
         }
     }
 
@@ -271,17 +310,43 @@ static void refresh_stats(lv_timer_t *t) {
         lv_label_set_text_fmt(_latency_val, "%lums", (unsigned long)fs->last_fetch_ms);
     }
 
-    // WiFi RSSI or ETH status
-#ifdef USE_ETHERNET
-    lv_label_set_text(_rssi_val, "ETH 100M");
-#else
-    wifi_ap_record_t ap_info;
-    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-        lv_label_set_text_fmt(_rssi_val, "%d dBm", ap_info.rssi);
+    // Link type + signal info
+    NetType net = fetcher_connection_type();
+    if (net == NET_ETHERNET) {
+        lv_label_set_text(_rssi_val, "ETH 100M");
+    } else if (net == NET_WIFI) {
+        wifi_ap_record_t ap_info;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+            lv_label_set_text_fmt(_rssi_val, "WiFi %d dBm", ap_info.rssi);
+        } else {
+            lv_label_set_text(_rssi_val, "WiFi --");
+        }
     } else {
-        lv_label_set_text(_rssi_val, "N/A");
+        lv_label_set_text(_rssi_val, "No link");
     }
-#endif
+
+    // === ERROR LOG ===
+    uint32_t err_total = error_log_total_count();
+    lv_label_set_text_fmt(_err_count_lbl, "ERRORS (%lu)", (unsigned long)err_total);
+
+    ErrorSnapshot snap = error_log_snapshot();
+    if (snap.count == 0) {
+        lv_label_set_text(_err_list_lbl, "(none)");
+    } else {
+        static char err_buf[512];
+        int pos = 0;
+        uint32_t now_ms = millis();
+        // Show newest first
+        for (int i = snap.count - 1; i >= 0 && pos < (int)sizeof(err_buf) - 60; i--) {
+            uint32_t age_s = (now_ms - snap.entries[i].timestamp) / 1000;
+            int m = age_s / 60;
+            int s = age_s % 60;
+            pos += snprintf(err_buf + pos, sizeof(err_buf) - pos,
+                "%dm%02ds %s\n", m, s, snap.entries[i].msg);
+        }
+        if (pos > 0) err_buf[pos - 1] = '\0'; // strip trailing newline
+        lv_label_set_text(_err_list_lbl, err_buf);
+    }
 }
 
 static void create_section_header(lv_obj_t *parent, const char *text, int x, int y) {
@@ -333,33 +398,52 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
                        lx, cat_y + i * 22);
     }
 
-    // Fastest + Closest
-    int fc_y = 180;
-    create_section_header(_container, "FASTEST", lx, fc_y);
-    _fastest_val = lv_label_create(_container);
-    lv_label_set_text(_fastest_val, "--");
-    lv_obj_set_style_text_font(_fastest_val, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_fastest_val, lv_color_hex(0xff66cc), 0);
-    lv_obj_set_pos(_fastest_val, lx, fc_y + 16);
-    lv_obj_clear_flag(_fastest_val, LV_OBJ_FLAG_CLICKABLE);
+    // Records — compact rows with inline header + value
+    int rc_y = 178;
+    create_section_header(_container, "RECORDS", lx, rc_y);
 
-    create_section_header(_container, "CLOSEST", lx, fc_y + 38);
-    _closest_val = lv_label_create(_container);
-    lv_label_set_text(_closest_val, "--");
-    lv_obj_set_style_text_font(_closest_val, &lv_font_montserrat_14, 0);
+    lv_color_t rec_hdr = DIM_COLOR;
+    lv_color_t rec_val = lv_color_hex(0xccccdd);
+    int rr = rc_y + 18; // first row
+    int rh = 16;         // row height
+
+    auto make_rec_row = [&](const char *hdr, int y) -> lv_obj_t* {
+        lv_obj_t *h = lv_label_create(_container);
+        lv_label_set_text(h, hdr);
+        lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(h, rec_hdr, 0);
+        lv_obj_set_pos(h, lx, y);
+        lv_obj_clear_flag(h, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t *v = lv_label_create(_container);
+        lv_label_set_text(v, "--");
+        lv_obj_set_style_text_font(v, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(v, rec_val, 0);
+        lv_obj_set_pos(v, lx + 68, y);
+        lv_obj_clear_flag(v, LV_OBJ_FLAG_CLICKABLE);
+        return v;
+    };
+
+    _fastest_val = make_rec_row("FASTEST", rr);
+    lv_obj_set_style_text_color(_fastest_val, lv_color_hex(0xff66cc), 0);
+    _slowest_val = make_rec_row("SLOWEST", rr + rh);
+    lv_obj_set_style_text_color(_slowest_val, lv_color_hex(0x66aaff), 0);
+    _highest_val = make_rec_row("HIGHEST", rr + rh * 2);
+    lv_obj_set_style_text_color(_highest_val, lv_color_hex(0xcc8800), 0);
+    _lowest_val  = make_rec_row("LOWEST",  rr + rh * 3);
+    lv_obj_set_style_text_color(_lowest_val, lv_color_hex(0x00cc44), 0);
+    _closest_val = make_rec_row("CLOSEST", rr + rh * 4);
     lv_obj_set_style_text_color(_closest_val, lv_color_hex(0x44ddaa), 0);
-    lv_obj_set_pos(_closest_val, lx, fc_y + 54);
-    lv_obj_clear_flag(_closest_val, LV_OBJ_FLAG_CLICKABLE);
 
     // Session
-    int ss_y = 280;
+    int ss_y = rr + rh * 5 + 10;
     create_section_header(_container, "SESSION", lx, ss_y);
     _unique_val = create_stat_pair(_container, "UNIQUE", lx, ss_y + 18, ACCENT_COLOR);
     _peak_val = create_stat_pair(_container, "PEAK", lx + 80, ss_y + 18, ACCENT_COLOR);
     _uptime_val = create_stat_pair(_container, "UPTIME", lx + 150, ss_y + 18, ACCENT_COLOR);
 
     // Top airlines
-    int al_y = 340;
+    int al_y = ss_y + 56;
     create_section_header(_container, "TOP AIRLINES", lx, al_y);
     for (int i = 0; i < 5; i++) {
         _airline_labels[i] = lv_label_create(_container);
@@ -368,6 +452,18 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_obj_set_style_text_color(_airline_labels[i], lv_color_hex(0xccccdd), 0);
         lv_obj_set_pos(_airline_labels[i], lx + (i % 3) * 80, al_y + 18 + (i / 3) * 18);
         lv_obj_clear_flag(_airline_labels[i], LV_OBJ_FLAG_CLICKABLE);
+    }
+
+    // Top aircraft types
+    int ty_y = al_y + 56;
+    create_section_header(_container, "TOP TYPES", lx, ty_y);
+    for (int i = 0; i < 5; i++) {
+        _type_labels[i] = lv_label_create(_container);
+        lv_label_set_text(_type_labels[i], "");
+        lv_obj_set_style_text_font(_type_labels[i], &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(_type_labels[i], lv_color_hex(0xccccdd), 0);
+        lv_obj_set_pos(_type_labels[i], lx + (i % 3) * 80, ty_y + 18 + (i / 3) * 18);
+        lv_obj_clear_flag(_type_labels[i], LV_OBJ_FLAG_CLICKABLE);
     }
 
     // ============================================================
@@ -419,6 +515,46 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     _enrich_val = create_stat_pair(_container, "ENRICH", rx, 128, SYS_COLOR);
     _bytes_val = create_stat_pair(_container, "RX DATA", rx, 162, SYS_COLOR);
     _latency_val = create_stat_pair(_container, "LATENCY", rx, 196, SYS_COLOR);
+
+    // Error log section
+    int ey = 240;
+    _err_count_lbl = lv_label_create(_container);
+    lv_label_set_text(_err_count_lbl, "ERRORS (0)");
+    lv_obj_set_style_text_font(_err_count_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_err_count_lbl, DIM_COLOR, 0);
+    lv_obj_set_pos(_err_count_lbl, rx, ey);
+    lv_obj_clear_flag(_err_count_lbl, LV_OBJ_FLAG_CLICKABLE);
+
+    // CLR button
+    lv_obj_t *clr_btn = lv_obj_create(_container);
+    lv_obj_set_size(clr_btn, 40, 22);
+    lv_obj_set_pos(clr_btn, rx + 120, ey - 2);
+    lv_obj_set_style_bg_color(clr_btn, lv_color_hex(0x1a1a2a), 0);
+    lv_obj_set_style_bg_opa(clr_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(clr_btn, lv_color_hex(0x444466), 0);
+    lv_obj_set_style_border_width(clr_btn, 1, 0);
+    lv_obj_set_style_radius(clr_btn, 4, 0);
+    lv_obj_set_style_pad_all(clr_btn, 0, 0);
+    lv_obj_clear_flag(clr_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(clr_btn, LV_OBJ_FLAG_SCROLL_CHAIN);
+    lv_obj_add_event_cb(clr_btn, [](lv_event_t *e) {
+        error_log_clear();
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t *clr_lbl = lv_label_create(clr_btn);
+    lv_label_set_text(clr_lbl, "CLR");
+    lv_obj_set_style_text_font(clr_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(clr_lbl, lv_color_hex(0xff6666), 0);
+    lv_obj_center(clr_lbl);
+
+    // Error list label
+    _err_list_lbl = lv_label_create(_container);
+    lv_label_set_text(_err_list_lbl, "(none)");
+    lv_obj_set_style_text_font(_err_list_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_err_list_lbl, lv_color_hex(0xff6666), 0);
+    lv_obj_set_pos(_err_list_lbl, rx, ey + 20);
+    lv_obj_set_width(_err_list_lbl, 310);
+    lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     // FPS counter — increment each refresh, calculate every second
     _fps_last_time = millis();

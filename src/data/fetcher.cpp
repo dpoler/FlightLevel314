@@ -1,14 +1,30 @@
 #include "fetcher.h"
+#include "error_log.h"
 #include "http_mutex.h"
 #include "../config.h"
+#include "../data/storage.h"
 #include "../ui/alerts.h"
-#ifdef USE_ETHERNET
 #include <ETH.h>
-#else
 #include <WiFi.h>
-#endif
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
+
+// PSRAM allocator for ArduinoJson — keeps internal RAM free for SDIO/WiFi buffers
+struct PsramAllocator : ArduinoJson::Allocator {
+    void* allocate(size_t size) override {
+        return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+    }
+    void deallocate(void* p) override {
+        heap_caps_free(p);
+    }
+    void* reallocate(void* p, size_t size) override {
+        return heap_caps_realloc(p, size, MALLOC_CAP_SPIRAM);
+    }
+};
+static PsramAllocator _psram_alloc;
+
+static volatile NetType _active_net = NET_NONE;
 
 static AircraftList *_aircraft_list = nullptr;
 static uint32_t _last_update = 0;
@@ -228,26 +244,40 @@ static void parse_aircraft_json(JsonDocument &doc) {
 }
 
 static bool network_connected() {
-#ifdef USE_ETHERNET
-    return ETH.linkUp() && ETH.localIP() != IPAddress(0, 0, 0, 0);
-#else
-    return WiFi.status() == WL_CONNECTED;
-#endif
+    if (g_config.use_ethernet) {
+        if (ETH.linkUp() && ETH.localIP() != IPAddress(0, 0, 0, 0)) {
+            _active_net = NET_ETHERNET;
+            return true;
+        }
+    } else {
+        if (WiFi.status() == WL_CONNECTED) {
+            _active_net = NET_WIFI;
+            return true;
+        }
+    }
+    _active_net = NET_NONE;
+    return false;
+}
+
+static void update_ip_addr() {
+    if (_active_net == NET_ETHERNET)
+        strlcpy(_fstats.ip_addr, ETH.localIP().toString().c_str(), sizeof(_fstats.ip_addr));
+    else if (_active_net == NET_WIFI)
+        strlcpy(_fstats.ip_addr, WiFi.localIP().toString().c_str(), sizeof(_fstats.ip_addr));
+    else
+        strlcpy(_fstats.ip_addr, "N/A", sizeof(_fstats.ip_addr));
 }
 
 static void fetch_task(void *param) {
-    Serial.print("Fetcher: waiting for network");
+    // Wait for network to come up
+    Serial.printf("Fetcher: waiting for %s", g_config.use_ethernet ? "Ethernet" : "WiFi");
     while (!network_connected()) {
         vTaskDelay(pdMS_TO_TICKS(500));
         Serial.print(".");
     }
-#ifdef USE_ETHERNET
-    Serial.printf("\nEthernet connected, IP: %s\n", ETH.localIP().toString().c_str());
-    strlcpy(_fstats.ip_addr, ETH.localIP().toString().c_str(), sizeof(_fstats.ip_addr));
-#else
-    Serial.printf("\nWiFi connected, IP: %s\n", WiFi.localIP().toString().c_str());
-    strlcpy(_fstats.ip_addr, WiFi.localIP().toString().c_str(), sizeof(_fstats.ip_addr));
-#endif
+    update_ip_addr();
+    const char *net_name = (_active_net == NET_ETHERNET) ? "Ethernet" : "WiFi";
+    Serial.printf("\n%s connected, IP: %s\n", net_name, _fstats.ip_addr);
 
     // Build API URL
     char url[128];
@@ -266,33 +296,68 @@ static void fetch_task(void *param) {
                 int httpCode = http.GET();
 
                 if (httpCode == HTTP_CODE_OK) {
-                    String payload = http.getString();
+                    // Read response into PSRAM buffer (avoids internal heap spike)
+                    int content_len = http.getSize();
+                    size_t buf_size = (content_len > 0) ? (size_t)content_len + 1 : 256 * 1024;
+                    char *buf = (char *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
+                    size_t total = 0;
+                    if (buf) {
+                        // Read with deadline loop — single readBytes can return short
+                        size_t target = (content_len > 0) ? (size_t)content_len : buf_size - 1;
+                        WiFiClient *stream = http.getStreamPtr();
+                        uint32_t deadline = millis() + 15000;
+                        while (total < target && millis() < deadline) {
+                            int avail = stream->available();
+                            if (avail > 0) {
+                                int to_read = min((size_t)avail, target - total);
+                                total += stream->readBytes(buf + total, to_read);
+                            } else if (!stream->connected()) {
+                                break;
+                            } else {
+                                vTaskDelay(1);
+                            }
+                        }
+                        buf[total] = '\0';
+                    }
                     _fstats.last_fetch_ms = millis() - t0;
-                    _fstats.bytes_received += payload.length();
-                    JsonDocument doc;
-                    DeserializationError err = deserializeJson(doc, payload);
-                    if (!err) {
-                        parse_aircraft_json(doc);
-                        _fstats.fetch_ok++;
-                        Serial.printf("Fetched %d aircraft\n", _aircraft_list->count);
+                    _fstats.bytes_received += total;
+
+                    if (buf && total > 0) {
+                        JsonDocument doc(&_psram_alloc);
+                        DeserializationError err = deserializeJson(doc, buf, total);
+                        heap_caps_free(buf);
+                        if (!err) {
+                            parse_aircraft_json(doc);
+                            _fstats.fetch_ok++;
+                            Serial.printf("Fetched %d ac, heap=%lu\n",
+                                _aircraft_list->count,
+                                (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                        } else {
+                            _fstats.fetch_fail++;
+                            error_log_add("JSON: %s (%uB)", err.c_str(), total);
+                            Serial.printf("JSON error: %s (%u bytes)\n", err.c_str(), total);
+                        }
                     } else {
+                        if (buf) heap_caps_free(buf);
                         _fstats.fetch_fail++;
-                        Serial.printf("JSON parse error: %s\n", err.c_str());
+                        error_log_add("PSRAM alloc fail / empty resp");
+                        Serial.println("PSRAM alloc failed or empty response");
                     }
                 } else {
                     _fstats.fetch_fail++;
+                    error_log_add("HTTP %d", httpCode);
                     Serial.printf("HTTP error: %d\n", httpCode);
                 }
                 http.end();
                 http_mutex_release();
             }
         } else {
-#ifdef USE_ETHERNET
-            Serial.println("Ethernet link down, waiting...");
-#else
-            Serial.println("WiFi disconnected, reconnecting...");
-            WiFi.reconnect();
-#endif
+            error_log_add("Network down");
+            Serial.println("Network down, waiting...");
+            update_ip_addr();
+            if (!g_config.use_ethernet && WiFi.status() != WL_CONNECTED) {
+                WiFi.reconnect();
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(ADSB_POLL_INTERVAL_MS));
     }
@@ -343,17 +408,49 @@ static void route_enrich_task(void *param) {
             int code = http.GET();
 
             if (code == HTTP_CODE_OK) {
-                JsonDocument doc;
-                if (!deserializeJson(doc, http.getString())) {
-                    JsonObject route = doc["response"]["flightroute"];
-                    const char *orig_iata = route["origin"]["iata_code"] | "";
-                    const char *dest_iata = route["destination"]["iata_code"] | "";
-                    strlcpy(origin, orig_iata, sizeof(origin));
-                    strlcpy(dest, dest_iata, sizeof(dest));
-                    _fstats.enrich_ok++;
+                // Read into PSRAM buffer, then parse
+                int rlen = http.getSize();
+                char *rbuf = (char *)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
+                size_t rtotal = 0;
+                if (rbuf) {
+                    if (rlen > 0 && rlen < 8192) {
+                        rtotal = http.getStreamPtr()->readBytes(rbuf, rlen);
+                    } else {
+                        WiFiClient *stream = http.getStreamPtr();
+                        uint32_t deadline = millis() + 10000;
+                        while (rtotal < 8191 && millis() < deadline) {
+                            int avail = stream->available();
+                            if (avail > 0) {
+                                int to_read = min((size_t)avail, 8191 - rtotal);
+                                rtotal += stream->readBytes(rbuf + rtotal, to_read);
+                            } else if (!stream->connected()) {
+                                break;
+                            } else {
+                                vTaskDelay(1);
+                            }
+                        }
+                    }
+                    rbuf[rtotal] = '\0';
+                    JsonDocument doc(&_psram_alloc);
+                    if (!deserializeJson(doc, rbuf, rtotal)) {
+                        JsonObject route = doc["response"]["flightroute"];
+                        const char *orig_iata = route["origin"]["iata_code"] | "";
+                        const char *dest_iata = route["destination"]["iata_code"] | "";
+                        strlcpy(origin, orig_iata, sizeof(origin));
+                        strlcpy(dest, dest_iata, sizeof(dest));
+                        _fstats.enrich_ok++;
+                    } else {
+                        _fstats.enrich_fail++;
+                        error_log_add("Route JSON fail: %s", callsign);
+                    }
+                    heap_caps_free(rbuf);
                 }
             } else {
                 _fstats.enrich_fail++;
+                // 404 = no route data (normal for GA/private) — don't log
+                if (code != 404) {
+                    error_log_add("Route HTTP %d: %s", code, callsign);
+                }
             }
             http.end();
             http_mutex_release();
@@ -381,14 +478,15 @@ void fetcher_init(AircraftList *list) {
     _aircraft_list = list;
     http_mutex_init();
 
-#ifdef USE_ETHERNET
-    ETH.begin();
-    Serial.println("Ethernet initialization started");
-#else
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    Serial.println("WiFi initialization started");
-#endif
+    // Only init ONE network stack per boot to avoid ESP32-P4 SDIO conflicts
+    if (g_config.use_ethernet) {
+        ETH.begin();
+        Serial.println("Ethernet initialization started");
+    } else {
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(g_config.wifi_ssid, g_config.wifi_pass);
+        Serial.println("WiFi initialization started");
+    }
 
     xTaskCreatePinnedToCore(fetch_task, "adsb_fetch", 32768, nullptr, 1, &_fetch_task_handle, 1);
     xTaskCreatePinnedToCore(route_enrich_task, "route_enrich", 16384, nullptr, 0, &_route_task_handle, 1);
@@ -396,6 +494,10 @@ void fetcher_init(AircraftList *list) {
 
 bool fetcher_wifi_connected() {
     return network_connected();
+}
+
+NetType fetcher_connection_type() {
+    return _active_net;
 }
 
 uint32_t fetcher_last_update() {
