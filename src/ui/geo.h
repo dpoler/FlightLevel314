@@ -38,7 +38,7 @@ struct MapProjection {
     }
 };
 
-// Altitude to color (green=low, yellow=mid, red=high)
+// Altitude to color for trails (green=low, yellow=mid, red=high)
 static inline lv_color_t altitude_color(int32_t alt_ft) {
     if (alt_ft <= 0) return lv_color_hex(0x666666);       // ground
     if (alt_ft < 5000) return lv_color_hex(0x00cc44);     // green
@@ -47,3 +47,10 @@ static inline lv_color_t altitude_color(int32_t alt_ft) {
     if (alt_ft < 35000) return lv_color_hex(0xcc8800);    // orange
     return lv_color_hex(0xcc2200);                         // red (high altitude)
 }
+
+// Aircraft category colors — distinctive per type
+#define COLOR_COMMERCIAL  lv_color_hex(0x00bbff)  // cyan-blue
+#define COLOR_MILITARY    lv_color_hex(0xffaa00)  // amber/gold
+#define COLOR_GA_PRIVATE  lv_color_hex(0x44dd44)  // bright green
+#define COLOR_HELI_CAT    lv_color_hex(0xdd44ff)  // magenta/purple
+#define COLOR_EMERGENCY   lv_color_hex(0xff3333)  // red

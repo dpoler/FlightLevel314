@@ -28,8 +28,6 @@ static uint32_t _last_sweep_ms = 0;
 #define COLOR_RING lv_color_hex(0x0a2a0a)
 #define COLOR_TEXT lv_color_hex(0x00cc33)
 #define COLOR_BG lv_color_hex(0x000800)
-#define COLOR_BLIP lv_color_hex(0x00ff66)
-#define COLOR_MILITARY lv_color_hex(0xffaa00)
 
 #define SWEEP_BRIGHT_DEG 60.0f        // full brightness boost zone
 #define SWEEP_FADE_DEG   180.0f       // fade boost back to normal
@@ -187,19 +185,30 @@ static void draw_blips(lv_layer_t *layer) {
         // Combine sweep brightness with ghost fade (stale aircraft fade out)
         uint8_t opa = (uint8_t)((sweep_opa * ghost_opa) / 255);
 
-        lv_color_t color = ac.is_military ? COLOR_MILITARY : COLOR_BLIP;
+        // Category color for blip
+        lv_color_t color;
+        if (ac.is_emergency)  color = COLOR_EMERGENCY;
+        else if (ac.is_military)   color = COLOR_MILITARY;
+        else if ((ac.category[0] == 'A' && ac.category[1] == '7') ||
+                 (ac.type_code[0] && is_heli_type(ac.type_code)))
+            color = COLOR_HELI_CAT;
+        else if (is_airline_callsign(ac.callsign) ||
+                 (ac.category[0] == 'A' && ac.category[1] >= '3'))
+            color = COLOR_COMMERCIAL;
+        else
+            color = COLOR_GA_PRIVATE;
 
-        // Draw trail segments (if enabled)
+        // Draw trail segments (if enabled) — altitude-colored
         if (ac.trail_count > 1 && g_config.trails_enabled) {
             int max_pts = g_config.trail_max_points;
             int start = (ac.trail_count > max_pts) ? ac.trail_count - max_pts : 0;
             lv_draw_rect_dsc_t tdot;
             lv_draw_rect_dsc_init(&tdot);
-            tdot.bg_color = color;
             tdot.radius = 1;
             for (int t = start; t < ac.trail_count; t++) {
                 int tx, ty;
                 if (to_radar_screen(ac.trail[t].lat, ac.trail[t].lon, tx, ty)) {
+                    tdot.bg_color = altitude_color(ac.trail[t].alt);
                     uint8_t t_opa = (uint8_t)(LV_OPA_20 + ((t - start) * LV_OPA_40 / (ac.trail_count - start)));
                     tdot.bg_opa = (uint8_t)((t_opa * opa) / 255);
                     lv_area_t ta = {(lv_coord_t)(tx - 1), (lv_coord_t)(ty - 1),

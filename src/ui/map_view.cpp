@@ -165,23 +165,23 @@ static void draw_tri(lv_layer_t *layer, int cx, int cy, float sin_h, float cos_h
 //   Think 737/A320 top-down — wide straight wings, clearly distinct from fighter
 static void draw_icon_airliner(lv_layer_t *layer, int cx, int cy,
                                 float sin_h, float cos_h, lv_color_t color, uint8_t opa) {
-    // Fuselage — long, narrow tube (30px nose to tail)
+    // Fuselage — long, narrow tube (36px nose to tail)
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, -15,  1.5f, 0,  -1.5f, 0, color, opa);
+             0, -18,  1.5f, 0,  -1.5f, 0, color, opa);
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, -15,  1.5f, 0,  0, 15, color, opa);
+             0, -18,  1.5f, 0,  0, 18, color, opa);
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, -15,  -1.5f, 0,  0, 15, color, opa);
-    // Wings — long, nearly straight, minimal sweep (40px tip to tip)
+             0, -18,  -1.5f, 0,  0, 18, color, opa);
+    // Wings — swept back, airliner proportion (28px tip to tip)
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, -1,  20, 1,  0, 3, color, opa);
+             0, -3,  14, 2,  0, 4, color, opa);
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, -1,  -20, 1,  0, 3, color, opa);
+             0, -3,  -14, 2,  0, 4, color, opa);
     // Horizontal stabilizer at tail
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, 11,  7, 14,  0, 15, color, opa);
+             0, 13,  6, 17,  0, 18, color, opa);
     draw_tri(layer, cx, cy, sin_h, cos_h,
-             0, 11,  -7, 14,  0, 15, color, opa);
+             0, 13,  -6, 17,  0, 18, color, opa);
 }
 
 // Military jet icon: swept delta wings, narrow fuselage, tail fins (~16px long)
@@ -279,11 +279,16 @@ static void draw_aircraft(lv_layer_t *layer) {
         int sx, sy;
         if (!_proj.to_screen(ac.lat, ac.lon, sx, sy)) continue;
 
-        lv_color_t color = ac.is_military ? lv_color_hex(0xffaa00) :
-                           ac.is_emergency ? lv_color_hex(0xff3333) :
-                           altitude_color(ac.altitude);
+        // Category color for the aircraft icon
+        IconType icon = classify_icon(ac);
+        lv_color_t color;
+        if (ac.is_emergency)       color = COLOR_EMERGENCY;
+        else if (ac.is_military)   color = COLOR_MILITARY;
+        else if (icon == ICON_HELI) color = COLOR_HELI_CAT;
+        else if (icon == ICON_GA)  color = COLOR_GA_PRIVATE;
+        else                       color = COLOR_COMMERCIAL;
 
-        // Draw trail (if enabled in settings)
+        // Draw trail (if enabled in settings) — altitude-colored
         if (ac.trail_count > 1 && g_config.trails_enabled) {
             int max_pts = g_config.trail_max_points;
             int start = (ac.trail_count > max_pts) ? ac.trail_count - max_pts : 0;
@@ -310,7 +315,6 @@ static void draw_aircraft(lv_layer_t *layer) {
         float sin_h = sinf(heading_rad);
         float cos_h = cosf(heading_rad);
 
-        IconType icon = classify_icon(ac);
         switch (icon) {
             case ICON_AIRLINER: draw_icon_airliner(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
             case ICON_JET:      draw_icon_jet(layer, sx, sy, sin_h, cos_h, color, ac_opa); break;
@@ -371,32 +375,29 @@ static void draw_altitude_legend(lv_layer_t *layer) {
     }
 }
 
-// Draw icon type legend above altitude legend
+// Draw icon type legend above altitude legend — uses category colors
 static void draw_icon_legend(lv_layer_t *layer) {
-    lv_color_t legend_color = lv_color_hex(0x669966);
     int y = CANVAS_H - 38;
 
-    // Draw mini icons with labels
-    struct { const char *label; IconType type; } entries[] = {
-        {"AIR",  ICON_AIRLINER},
-        {"GA",   ICON_GA},
-        {"MIL",  ICON_JET},
-        {"HELI", ICON_HELI},
+    struct { const char *label; IconType type; lv_color_t color; } entries[] = {
+        {"AIR",  ICON_AIRLINER, COLOR_COMMERCIAL},
+        {"GA",   ICON_GA,       COLOR_GA_PRIVATE},
+        {"MIL",  ICON_JET,      COLOR_MILITARY},
+        {"HELI", ICON_HELI,     COLOR_HELI_CAT},
     };
 
     int x = 8;
     for (int i = 0; i < 4; i++) {
-        // Draw a small north-facing icon
         switch (entries[i].type) {
-            case ICON_AIRLINER: draw_icon_airliner(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
-            case ICON_JET:      draw_icon_jet(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
-            case ICON_GA:       draw_icon_ga(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
-            case ICON_HELI:     draw_icon_heli(layer, x + 6, y + 6, 0, 1, legend_color, LV_OPA_80); break;
+            case ICON_AIRLINER: draw_icon_airliner(layer, x + 6, y + 6, 0, 1, entries[i].color, LV_OPA_80); break;
+            case ICON_JET:      draw_icon_jet(layer, x + 6, y + 6, 0, 1, entries[i].color, LV_OPA_80); break;
+            case ICON_GA:       draw_icon_ga(layer, x + 6, y + 6, 0, 1, entries[i].color, LV_OPA_80); break;
+            case ICON_HELI:     draw_icon_heli(layer, x + 6, y + 6, 0, 1, entries[i].color, LV_OPA_80); break;
         }
 
         lv_draw_label_dsc_t lbl;
         lv_draw_label_dsc_init(&lbl);
-        lbl.color = legend_color;
+        lbl.color = entries[i].color;
         lbl.font = &lv_font_montserrat_14;
         lbl.opa = LV_OPA_80;
         lbl.text = entries[i].label;
