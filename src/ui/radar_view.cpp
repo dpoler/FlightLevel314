@@ -476,6 +476,7 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
     // Animate sweep — always update angle, but only redraw when visible and not touching
     _last_sweep_ms = millis();
     static int _last_synced_filter = FILT_NONE;
+    static float _last_range = -1;
     lv_timer_create([](lv_timer_t *t) {
         uint32_t now = millis();
         uint32_t dt = now - _last_sweep_ms;
@@ -483,8 +484,13 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
         _sweep_angle += (360.0f * dt) / SWEEP_PERIOD_MS;
         if (_sweep_angle >= 360.0f) _sweep_angle -= 360.0f;
 
-        _proj.radius_nm = range_get_nm();
-        lv_label_set_text(_range_label, range_label());
+        // Only update range label when range actually changes
+        float r = range_get_nm();
+        if (r != _last_range) {
+            _last_range = r;
+            _proj.radius_nm = r;
+            lv_label_set_text(_range_label, range_label());
+        }
 
         // Sync filter button visuals if filter changed from another view
         int af = filter_get_active();
@@ -493,9 +499,8 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
             update_filter_visuals();
         }
 
-        // Skip rendering when touch is active — prioritize gesture processing
-        lv_indev_t *indev = lv_indev_active();
-        if (indev && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) return;
+        // Skip rendering when touch is active — use global flag (lv_indev_active() is null in timers)
+        if (touch_active) return;
 
         // Only invalidate when radar view is active
         if (views_get_active_index() == VIEW_RADAR) {

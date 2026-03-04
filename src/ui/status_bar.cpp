@@ -30,7 +30,7 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     lv_obj_set_style_pad_all(bar, 0, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Network indicator (left side)
+    // Network indicator (left side) — different icon for WiFi vs Ethernet
     wifi_icon = lv_label_create(bar);
 #ifdef USE_ETHERNET
     lv_label_set_text(wifi_icon, "ETH");
@@ -46,7 +46,7 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     lv_label_set_text(ac_count_label, "0 aircraft");
     lv_obj_set_style_text_color(ac_count_label, STATUS_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(ac_count_label, &lv_font_montserrat_14, 0);
-    lv_obj_align(ac_count_label, LV_ALIGN_LEFT_MID, 36, 0);
+    lv_obj_align(ac_count_label, LV_ALIGN_LEFT_MID, 42, 0);
 
     // Nav buttons (center)
     int nav_total_w = 4 * 60 + 3 * 6; // 4 buttons, 6px gaps

@@ -83,6 +83,7 @@ struct FlipCell {
     char target;
     char current;
     int rolls_remaining; // 0 = settled, >0 = still flipping
+    char buf[2];         // static buffer for lv_label_set_text_static
 };
 
 struct BoardRow {
@@ -109,6 +110,8 @@ static FlipCell create_cell(lv_obj_t *parent, int x, int y) {
     cell.target = ' ';
     cell.current = ' ';
     cell.rolls_remaining = 0;
+    cell.buf[0] = ' ';
+    cell.buf[1] = '\0';
 
     // Background tile
     lv_obj_t *bg = lv_obj_create(parent);
@@ -122,9 +125,9 @@ static FlipCell create_cell(lv_obj_t *parent, int x, int y) {
     lv_obj_clear_flag(bg, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(bg, LV_OBJ_FLAG_CLICKABLE); // let clicks pass through to board_container
 
-    // Character label
+    // Character label — use static text buffer to avoid alloc churn
     cell.label = lv_label_create(bg);
-    lv_label_set_text(cell.label, " ");
+    lv_label_set_text_static(cell.label, cell.buf);
     lv_obj_set_style_text_font(cell.label, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(cell.label, CELL_TEXT, 0);
     lv_obj_center(cell.label);
@@ -150,8 +153,24 @@ static void init_rows(lv_obj_t *parent) {
     }
 }
 
-// Set a row's target text — animate only for genuinely new aircraft
-static void set_row_text(int row, const char *texts[], lv_color_t color, bool should_animate) {
+// Set a row's target text
+// rolls_base: 0 = instant, >0 = animate with this many base rolls (+ random jitter)
+static lv_color_t _row_colors[MAX_ROWS]; // track per-row color to skip unchanged writes
+
+static void set_row_text(int row, const char *texts[], lv_color_t color, int rolls_base) {
+    // Only update color if changed
+    if (_row_colors[row].red != color.red || _row_colors[row].green != color.green ||
+        _row_colors[row].blue != color.blue) {
+        _row_colors[row] = color;
+        int ci = 0;
+        for (int col = 0; col < NUM_COLS; col++) {
+            for (int ch = 0; ch < columns[col].chars; ch++) {
+                lv_obj_set_style_text_color(_rows[row].cells[ci].label, color, 0);
+                ci++;
+            }
+        }
+    }
+
     int cell_idx = 0;
     for (int col = 0; col < NUM_COLS; col++) {
         const char *text = texts[col];
@@ -160,20 +179,15 @@ static void set_row_text(int row, const char *texts[], lv_color_t color, bool sh
             char target = (ch < len) ? text[ch] : ' ';
             FlipCell &fc = _rows[row].cells[cell_idx];
 
-            // Set color
-            lv_obj_set_style_text_color(fc.label, color, 0);
-
-            if (target != fc.target) {
+            if (target != fc.current || rolls_base > 0) {
                 fc.target = target;
-                if (should_animate) {
-                    // Flip animation for genuinely new aircraft
-                    fc.rolls_remaining = 2 + (rand() % 3);
+                if (rolls_base > 0) {
+                    fc.rolls_remaining = rolls_base + (rand() % 3);
                 } else {
-                    // Instant update
                     fc.rolls_remaining = 0;
                     fc.current = target;
-                    char buf[2] = {target, 0};
-                    lv_label_set_text(fc.label, buf);
+                    fc.buf[0] = target;
+                    lv_label_set_text_static(fc.label, fc.buf);
                 }
             }
             cell_idx++;
@@ -182,26 +196,29 @@ static void set_row_text(int row, const char *texts[], lv_color_t color, bool sh
 }
 
 // Animation tick — called frequently to advance flip animations
+// Budget-capped to limit LVGL invalidation per tick
+#define FLIP_BUDGET 100  // max cell updates per tick
+
 static void flip_animation_tick(lv_timer_t *t) {
     if (views_get_active_index() != VIEW_ARRIVALS) return;
 
     static const char flip_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -./";
+    int updates = 0;
 
-    for (int row = 0; row < MAX_ROWS; row++) {
+    for (int row = 0; row < MAX_ROWS && updates < FLIP_BUDGET; row++) {
         if (!_rows[row].active) continue;
-        for (int c = 0; c < _rows[row].total_cells; c++) {
+        for (int c = 0; c < _rows[row].total_cells && updates < FLIP_BUDGET; c++) {
             FlipCell &fc = _rows[row].cells[c];
             if (fc.rolls_remaining > 0) {
-                // Show random character
-                char random_char = flip_chars[rand() % (sizeof(flip_chars) - 1)];
-                char buf[2] = {random_char, 0};
-                lv_label_set_text(fc.label, buf);
+                fc.buf[0] = flip_chars[rand() % (sizeof(flip_chars) - 1)];
+                lv_label_set_text_static(fc.label, fc.buf);
                 fc.rolls_remaining--;
+                updates++;
             } else if (fc.current != fc.target) {
-                // Settle on target
-                char buf[2] = {fc.target, 0};
-                lv_label_set_text(fc.label, buf);
+                fc.buf[0] = fc.target;
+                lv_label_set_text_static(fc.label, fc.buf);
                 fc.current = fc.target;
+                updates++;
             }
         }
     }
@@ -255,8 +272,8 @@ static void reset_board_gibberish() {
         for (int c = 0; c < _rows[row].total_cells; c++) {
             FlipCell &fc = _rows[row].cells[c];
             char ch = chars[rand() % (sizeof(chars) - 1)];
-            char buf[2] = {ch, 0};
-            lv_label_set_text(fc.label, buf);
+            fc.buf[0] = ch;
+            lv_label_set_text_static(fc.label, fc.buf);
             fc.current = ch;
             fc.target = ch;
             fc.rolls_remaining = 0;
@@ -272,21 +289,12 @@ static void update_board(lv_timer_t *t) {
     if (views_get_active_index() != VIEW_ARRIVALS) return;
     if (!_list->lock(pdMS_TO_TICKS(5))) return; // short timeout: skip update if data locked
 
-    // Detect range change — reset board with gibberish and skip this cycle
-    float current_range = range_get_nm();
-    if (_last_range_nm >= 0 && current_range != _last_range_nm) {
-        _last_range_nm = current_range;
-        reset_board_gibberish();
-        lv_label_set_text_fmt(_title_label, "OVERHEAD TRAFFIC  <%s  Loading...", range_label());
-        lv_label_set_text(_range_label, range_label());
-        _list->unlock();
-        return; // show gibberish this cycle, real data next cycle
-    }
-    _last_range_nm = current_range;
+    // Track range changes — no gibberish reset, just let the normal update handle it
+    _last_range_nm = range_get_nm();
 
-    // First render after gibberish: instant overwrite, no flip animation
-    bool instant = _awaiting_data;
-    if (instant) _awaiting_data = false;
+    // First render after gibberish: animate the reveal (cascade top→bottom)
+    bool first_data = _awaiting_data;
+    if (_awaiting_data) _awaiting_data = false;
 
     // Build sortable index of aircraft with valid positions
     SortEntry entries[MAX_AIRCRAFT];
@@ -315,6 +323,16 @@ static void update_board(lv_timer_t *t) {
             uint32_t now = millis();
             uint8_t opa = compute_aircraft_opacity(ac.stale_since, now);
             if (opa == 0) continue;
+        }
+
+        // Determine animation: first data cascades, new aircraft flips, same aircraft instant
+        int rolls;
+        if (first_data) {
+            rolls = 3 + row;  // cascade: top rows settle first
+        } else if (strcmp(_rows[row].icao_hex, ac.icao_hex) != 0) {
+            rolls = 3;  // new aircraft in this slot — short flip
+        } else {
+            rolls = 0;  // same aircraft, just update values instantly
         }
 
         _rows[row].active = true;
@@ -357,17 +375,17 @@ static void update_board(lv_timer_t *t) {
                                   (color.blue * opa) / 255);
         }
 
-        set_row_text(row, texts, color, !instant);
+        set_row_text(row, texts, color, rolls);
         row++;
     }
 
     int displayed_count = row;  // save before clear loop overwrites row
 
-    // Clear remaining rows — unconditional when instant (wipes leftover gibberish)
+    // Clear remaining rows — always instant (no animation for blank rows)
     for (; row < MAX_ROWS; row++) {
-        if (instant || _rows[row].active) {
+        if (first_data || _rows[row].active) {
             const char *blanks[] = {"", "", "", "", "", "", "", ""};
-            set_row_text(row, blanks, CELL_TEXT, false);
+            set_row_text(row, blanks, CELL_TEXT, 0);
             _rows[row].active = false;
             memset(_rows[row].icao_hex, 0, sizeof(_rows[row].icao_hex));
         }
@@ -448,20 +466,16 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
         if (row < 0 || row >= MAX_ROWS) return;
         if (!_rows[row].active) return;
 
-        Serial.printf("ARR tap: row=%d icao=%s\n", row, _rows[row].icao_hex);
-
         // Look up aircraft by ICAO hex
-        if (!_list->lock(pdMS_TO_TICKS(10))) { Serial.println("ARR: lock failed"); return; }
+        if (!_list->lock(pdMS_TO_TICKS(10))) return;
         for (int i = 0; i < _list->count; i++) {
             if (strcmp(_list->aircraft[i].icao_hex, _rows[row].icao_hex) == 0) {
                 Aircraft ac_copy = _list->aircraft[i];
                 _list->unlock();
-                Serial.printf("ARR: hit %s\n", ac_copy.callsign);
                 detail_card_show(&ac_copy);
                 return;
             }
         }
-        Serial.println("ARR: no match in list");
         _list->unlock();
     }, LV_EVENT_CLICKED, nullptr);
 
@@ -540,8 +554,8 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_label_set_text(_range_label, range_label());
     }, LV_EVENT_CLICKED, nullptr);
 
-    // Flip animation timer (runs fast for smooth rolling effect)
-    lv_timer_create(flip_animation_tick, 60, nullptr);
+    // Flip animation timer — 100ms with budget cap for touch responsiveness
+    lv_timer_create(flip_animation_tick, 100, nullptr);
 
     // Data update timer (sync with fetch interval)
     lv_timer_create(update_board, 2000, nullptr);

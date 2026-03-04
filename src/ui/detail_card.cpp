@@ -21,8 +21,6 @@ static lv_obj_t *_route_full_label = nullptr;
 static lv_obj_t *_type_label = nullptr;
 static lv_obj_t *_cat_label = nullptr;
 static lv_obj_t *_aircraft_detail_label = nullptr;
-static lv_obj_t *_photo_label = nullptr;
-
 // Data grid row 1 — flight state
 static lv_obj_t *_alt_label = nullptr;
 static lv_obj_t *_spd_label = nullptr;
@@ -47,12 +45,6 @@ static lv_obj_t *_nav_alt_label = nullptr;
 static lv_obj_t *_roll_label = nullptr;
 static lv_obj_t *_qnh_label = nullptr;
 
-// Lookup URLs
-static lv_obj_t *_lookup1_label = nullptr;
-static lv_obj_t *_lookup2_label = nullptr;
-static lv_obj_t *_lookup3_label = nullptr;
-static lv_obj_t *_lookup4_label = nullptr;
-
 // Loading
 static lv_obj_t *_loading_spinner = nullptr;
 
@@ -62,7 +54,7 @@ static lv_timer_t *_update_timer = nullptr;
 static bool _visible = false;
 static Aircraft _current_ac;
 
-#define CARD_H 420
+#define CARD_H 330
 #define CARD_BG lv_color_hex(0x141428)
 #define CARD_TEXT lv_color_hex(0xccccdd)
 #define CARD_ACCENT lv_color_hex(0x4488ff)
@@ -168,16 +160,6 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         snprintf(detail + pos, sizeof(detail) - pos, "%dx %s", data->engine_count, data->engine_type);
     }
     if (detail[0]) lv_label_set_text(_aircraft_detail_label, detail);
-
-    // Photo credit
-    if (data->photo_url[0]) {
-        if (data->photo_photographer[0]) {
-            lv_label_set_text_fmt(_photo_label, "Photo: %s", data->photo_photographer);
-        } else {
-            lv_label_set_text(_photo_label, "Photo available");
-        }
-        lv_obj_set_style_text_color(_photo_label, CARD_ACCENT, 0);
-    }
 
     // Hide spinner when fully loaded
     if (data->loaded && _loading_spinner) {
@@ -308,13 +290,6 @@ void detail_card_init(lv_obj_t *parent) {
     lv_obj_set_style_text_color(_aircraft_detail_label, CARD_DIM, 0);
     lv_obj_set_pos(_aircraft_detail_label, 0, 138);
 
-    // Photo credit goes below the fold (after lookup URLs)
-    _photo_label = lv_label_create(_card);
-    lv_label_set_text(_photo_label, "");
-    lv_obj_set_style_text_font(_photo_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_photo_label, CARD_DIM, 0);
-    lv_obj_set_pos(_photo_label, 0, 376);
-
     // === DATA GRID ROW 1 — flight state ===
     int y1 = 178;
     make_data_row(_card, "ALTITUDE", COL1, y1, &_alt_label);
@@ -341,31 +316,6 @@ void detail_card_init(lv_obj_t *parent) {
     make_data_row(_card, "NAV ALT", COL4, y3, &_nav_alt_label);
     make_data_row(_card, "ROLL", COL5, y3, &_roll_label);
     make_data_row(_card, "QNH", COL6, y3, &_qnh_label);
-
-    // === LOOKUP URLs ===
-    _lookup1_label = lv_label_create(_card);
-    lv_label_set_text(_lookup1_label, "");
-    lv_obj_set_style_text_font(_lookup1_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_lookup1_label, CARD_ACCENT, 0);
-    lv_obj_set_pos(_lookup1_label, 0, 302);
-
-    _lookup2_label = lv_label_create(_card);
-    lv_label_set_text(_lookup2_label, "");
-    lv_obj_set_style_text_font(_lookup2_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_lookup2_label, CARD_ACCENT, 0);
-    lv_obj_set_pos(_lookup2_label, 0, 320);
-
-    _lookup3_label = lv_label_create(_card);
-    lv_label_set_text(_lookup3_label, "");
-    lv_obj_set_style_text_font(_lookup3_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_lookup3_label, CARD_ACCENT, 0);
-    lv_obj_set_pos(_lookup3_label, 0, 338);
-
-    _lookup4_label = lv_label_create(_card);
-    lv_label_set_text(_lookup4_label, "");
-    lv_obj_set_style_text_font(_lookup4_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_lookup4_label, CARD_ACCENT, 0);
-    lv_obj_set_pos(_lookup4_label, 0, 356);
 
     // Tap to close
     lv_obj_add_event_cb(_card, [](lv_event_t *e) {
@@ -442,8 +392,6 @@ void detail_card_show(const Aircraft *ac) {
 
     // Clear enrichment fields
     lv_label_set_text(_aircraft_detail_label, "");
-    lv_label_set_text(_photo_label, "");
-
     // === DATA GRID ROW 1 — flight state ===
     if (ac->on_ground) {
         lv_label_set_text(_alt_label, "GND");
@@ -546,16 +494,6 @@ void detail_card_show(const Aircraft *ac) {
     } else {
         lv_label_set_text(_qnh_label, "--");
     }
-
-    // === LOOKUP URLs ===
-    if (ac->callsign[0]) {
-        lv_label_set_text_fmt(_lookup1_label, "flightaware.com/live/flight/%s", ac->callsign);
-    } else {
-        lv_label_set_text(_lookup1_label, "");
-    }
-    lv_label_set_text_fmt(_lookup2_label, "globe.adsbexchange.com/?icao=%s", ac->icao_hex);
-    lv_label_set_text_fmt(_lookup3_label, "planespotters.net/hex/%s", ac->icao_hex);
-    lv_label_set_text_fmt(_lookup4_label, "hexdb.io/hex-%s", ac->icao_hex);
 
     // === Slide in ===
     lv_obj_scroll_to_y(_card, 0, LV_ANIM_OFF);

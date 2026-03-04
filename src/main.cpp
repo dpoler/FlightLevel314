@@ -1,6 +1,3 @@
-#pragma GCC push_options
-#pragma GCC optimize("O3")
-
 #include <Arduino.h>
 #include "lvgl.h"
 #include "driver/i2c_master.h"
@@ -22,6 +19,9 @@
 #include "ui/map_view.h"
 #include "ui/radar_view.h"
 #include "ui/arrivals_view.h"
+
+// Global touch state — read by view timers to defer heavy rendering during interaction
+volatile bool touch_active = false;
 
 // Hardware drivers
 static jd9165_lcd lcd(LCD_RST);
@@ -54,8 +54,10 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
         data->state = LV_INDEV_STATE_PRESSED;
         data->point.x = x;
         data->point.y = y;
+        touch_active = true;
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
+        touch_active = false;
     }
 }
 

@@ -593,6 +593,7 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
 
     // Periodic refresh — skip when touch active to prioritize gestures
     static int _last_synced_filter = FILT_NONE;
+    static float _last_range = -1;
     lv_timer_create([](lv_timer_t *t) {
         // Sync filter button visuals if filter changed from another view
         int af = filter_get_active();
@@ -602,12 +603,15 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         }
 
         // Skip rendering when touch is active
-        lv_indev_t *indev = lv_indev_active();
-        if (indev && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) return;
+        if (touch_active) return;
 
         if (views_get_active_index() == VIEW_MAP) {
-            _proj.radius_nm = range_get_nm();
-            lv_label_set_text(_range_label, range_label());
+            float r = range_get_nm();
+            if (r != _last_range) {
+                _last_range = r;
+                _proj.radius_nm = r;
+                lv_label_set_text(_range_label, range_label());
+            }
             lv_obj_invalidate(_canvas);
         }
     }, 1000, nullptr);

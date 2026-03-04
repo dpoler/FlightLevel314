@@ -22,3 +22,6 @@ lv_obj_t *views_get_tileview();
 
 // Pause auto-cycle (call when user manually selects a view)
 void views_pause_cycle();
+
+// Global touch state — set by touch_read_cb, used by view timers to defer rendering
+extern volatile bool touch_active;
