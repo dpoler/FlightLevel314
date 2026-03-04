@@ -19,6 +19,7 @@
 #include "ui/map_view.h"
 #include "ui/radar_view.h"
 #include "ui/arrivals_view.h"
+#include "data/storage.h"
 
 // Global touch state — read by view timers to defer heavy rendering during interaction
 volatile bool touch_active = false;
@@ -153,8 +154,15 @@ void setup() {
     settings_init(screen);
     Serial.println("settings OK");
 
+    // Load runtime config
+    g_config = storage_load_config();
+
     status_bar_set_gear_callback([](lv_event_t *e) {
         settings_show();
+    });
+
+    settings_set_change_callback([](const UserConfig *cfg) {
+        g_config = *cfg;
     });
 
     // Periodic status bar update

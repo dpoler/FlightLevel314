@@ -7,6 +7,7 @@
 #include "stats_view.h"
 #include "stats.h"
 #include "../pins_config.h"
+#include "../data/storage.h"
 
 static lv_obj_t *tileview;
 static lv_obj_t *tiles[4];
@@ -52,11 +53,21 @@ static void touch_pause_cb(lv_event_t *e) {
 }
 
 static void cycle_timer_cb(lv_timer_t *t) {
+    // Respect config toggle
+    if (!g_config.cycle_enabled) {
+        if (!_cycle_paused) {
+            _cycle_paused = true;
+            status_bar_set_auto_indicator(false);
+        }
+        return;
+    }
+
     uint32_t now = millis();
+    uint32_t pause_ms = (uint32_t)g_config.cycle_inactivity_s * 1000;
 
     // Check if pause has expired
     if (_cycle_paused) {
-        if (now - _last_touch_time >= CYCLE_PAUSE_MS) {
+        if (now - _last_touch_time >= pause_ms) {
             _cycle_paused = false;
             _last_cycle_time = now;
             status_bar_set_auto_indicator(true);
@@ -64,8 +75,11 @@ static void cycle_timer_cb(lv_timer_t *t) {
         return;
     }
 
-    // Advance to next view (dwell time depends on current view)
-    if (now - _last_cycle_time >= CYCLE_DWELL_MS[_active_index]) {
+    // Use per-view dwell: config interval for MAP/RADAR/ARRIVALS, 5s for STATS
+    uint32_t dwell = (_active_index == VIEW_STATS) ? 5000
+                     : (uint32_t)g_config.cycle_interval_s * 1000;
+
+    if (now - _last_cycle_time >= dwell) {
         _last_cycle_time = now;
         int next = (_active_index + 1) % 4;
         lv_tileview_set_tile_by_index(tileview, next, 0, LV_ANIM_OFF);
@@ -104,9 +118,10 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
     arrivals_view_init(tiles[VIEW_ARRIVALS], list);
     stats_view_init(tiles[VIEW_STATS], list);
 
-    // Start auto-cycle timer
+    // Start auto-cycle timer (respects g_config.cycle_enabled)
     _last_cycle_time = millis();
-    status_bar_set_auto_indicator(true);
+    status_bar_set_auto_indicator(g_config.cycle_enabled);
+    if (!g_config.cycle_enabled) _cycle_paused = true;
     lv_timer_create(cycle_timer_cb, 1000, nullptr);
 }
 

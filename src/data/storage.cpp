@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include <cstring>
 
+UserConfig g_config = {};
 static Preferences _prefs;
 
 UserConfig storage_load_config() {

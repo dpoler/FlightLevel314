@@ -56,6 +56,14 @@ struct TypeTracker {
 static TypeTracker _type_counts[MAX_TYPE_TRACK];
 static int _type_track_count = 0;
 
+#define MAX_AIRLINE_TRACK 100
+struct AirlineTracker {
+    char code[4];
+    int count;
+};
+static AirlineTracker _airline_counts[MAX_AIRLINE_TRACK];
+static int _airline_track_count = 0;
+
 static void track_type(const char *type) {
     if (!type[0]) return;
     for (int i = 0; i < _type_track_count; i++) {
@@ -68,6 +76,22 @@ static void track_type(const char *type) {
         strlcpy(_type_counts[_type_track_count].type, type, 5);
         _type_counts[_type_track_count].count = 1;
         _type_track_count++;
+    }
+}
+
+static void track_airline(const char *callsign) {
+    if (!is_airline_callsign(callsign)) return;
+    char code[4] = {callsign[0], callsign[1], callsign[2], '\0'};
+    for (int i = 0; i < _airline_track_count; i++) {
+        if (strcmp(_airline_counts[i].code, code) == 0) {
+            _airline_counts[i].count++;
+            return;
+        }
+    }
+    if (_airline_track_count < MAX_AIRLINE_TRACK) {
+        strlcpy(_airline_counts[_airline_track_count].code, code, 4);
+        _airline_counts[_airline_track_count].count = 1;
+        _airline_track_count++;
     }
 }
 
@@ -87,12 +111,29 @@ static void compute_top_types() {
     }
 }
 
+static void compute_top_airlines() {
+    for (int i = 0; i < 5 && i < _airline_track_count; i++) {
+        int max_idx = i;
+        for (int j = i + 1; j < _airline_track_count; j++) {
+            if (_airline_counts[j].count > _airline_counts[max_idx].count) max_idx = j;
+        }
+        if (max_idx != i) {
+            AirlineTracker tmp = _airline_counts[i];
+            _airline_counts[i] = _airline_counts[max_idx];
+            _airline_counts[max_idx] = tmp;
+        }
+        strlcpy(_stats.top_airlines[i].code, _airline_counts[i].code, 4);
+        _stats.top_airlines[i].count = _airline_counts[i].count;
+    }
+}
+
 void stats_init() {
     memset(&_stats, 0, sizeof(_stats));
     _stats.boot_time = millis();
     _stats.closest_dist = 9999.0f;
     _seen_count = 0;
     _type_track_count = 0;
+    _airline_track_count = 0;
 }
 
 void stats_update(AircraftList *list) {
@@ -114,6 +155,12 @@ void stats_update(AircraftList *list) {
     _stats.closest_dist = 9999.0f;
     _stats.fastest_callsign[0] = 0;
     _stats.closest_callsign[0] = 0;
+    _stats.spd_gnd = 0;
+    _stats.spd_slow = 0;
+    _stats.spd_med = 0;
+    _stats.spd_fast = 0;
+    _stats.spd_very_fast = 0;
+    _stats.spd_extreme = 0;
 
     uint32_t now = millis();
 
@@ -125,6 +172,15 @@ void stats_update(AircraftList *list) {
         _stats.current_count++;
         mark_seen(ac.icao_hex);
         track_type(ac.type_code);
+        track_airline(ac.callsign);
+
+        // Speed distribution
+        if (ac.on_ground) _stats.spd_gnd++;
+        else if (ac.speed < 200) _stats.spd_slow++;
+        else if (ac.speed < 300) _stats.spd_med++;
+        else if (ac.speed < 400) _stats.spd_fast++;
+        else if (ac.speed < 500) _stats.spd_very_fast++;
+        else _stats.spd_extreme++;
 
         if (ac.is_military) _stats.military++;
         if (ac.is_emergency) _stats.emergency++;
@@ -164,6 +220,7 @@ void stats_update(AircraftList *list) {
     }
     _stats.unique_seen = _seen_count;
     compute_top_types();
+    compute_top_airlines();
 
     list->unlock();
 }

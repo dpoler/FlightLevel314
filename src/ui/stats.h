@@ -25,12 +25,27 @@ struct SessionStats {
     int peak_count;
     uint32_t boot_time;
 
+    // Speed distribution
+    int spd_gnd;
+    int spd_slow;      // < 200kt
+    int spd_med;       // < 300kt
+    int spd_fast;      // < 400kt
+    int spd_very_fast; // < 500kt
+    int spd_extreme;   // >= 500kt
+
     // Top 5 types
     struct TypeCount {
         char type[5];
         int count;
     };
     TypeCount top_types[5];
+
+    // Top 5 airlines (3-letter ICAO prefix)
+    struct AirlineCount {
+        char code[4];
+        int count;
+    };
+    AirlineCount top_airlines[5];
 };
 
 void stats_init();

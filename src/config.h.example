@@ -1,0 +1,19 @@
+#pragma once
+
+// Network: uncomment ONE of these
+#define USE_ETHERNET      // Built-in 100Mbps Ethernet (IP101 PHY)
+// #define USE_WIFI       // ESP32-C6 hosted WiFi
+
+// WiFi credentials (only used if USE_WIFI is defined)
+#define WIFI_SSID "your_ssid"
+#define WIFI_PASS "your_password"
+
+// Home location (change to your coordinates)
+#define HOME_LAT 40.7128
+#define HOME_LON -74.0060
+
+// ADS-B settings
+#define ADSB_RADIUS_NM 100
+#define ADSB_POLL_INTERVAL_MS 5000
+#define MAX_AIRCRAFT 200
+#define TRAIL_LENGTH 60

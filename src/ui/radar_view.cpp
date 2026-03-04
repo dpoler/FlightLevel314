@@ -5,6 +5,7 @@
 #include "filters.h"
 #include "../config.h"
 #include "../pins_config.h"
+#include "../data/storage.h"
 #include "geo.h"
 #include "range.h"
 
@@ -187,6 +188,26 @@ static void draw_blips(lv_layer_t *layer) {
         uint8_t opa = (uint8_t)((sweep_opa * ghost_opa) / 255);
 
         lv_color_t color = ac.is_military ? COLOR_MILITARY : COLOR_BLIP;
+
+        // Draw trail segments (if enabled)
+        if (ac.trail_count > 1 && g_config.trails_enabled) {
+            int max_pts = g_config.trail_max_points;
+            int start = (ac.trail_count > max_pts) ? ac.trail_count - max_pts : 0;
+            lv_draw_rect_dsc_t tdot;
+            lv_draw_rect_dsc_init(&tdot);
+            tdot.bg_color = color;
+            tdot.radius = 1;
+            for (int t = start; t < ac.trail_count; t++) {
+                int tx, ty;
+                if (to_radar_screen(ac.trail[t].lat, ac.trail[t].lon, tx, ty)) {
+                    uint8_t t_opa = (uint8_t)(LV_OPA_20 + ((t - start) * LV_OPA_40 / (ac.trail_count - start)));
+                    tdot.bg_opa = (uint8_t)((t_opa * opa) / 255);
+                    lv_area_t ta = {(lv_coord_t)(tx - 1), (lv_coord_t)(ty - 1),
+                                    (lv_coord_t)(tx + 1), (lv_coord_t)(ty + 1)};
+                    lv_draw_rect(layer, &tdot, &ta);
+                }
+            }
+        }
 
         // Blip dot — larger for better visibility
         lv_draw_rect_dsc_t dot;

@@ -183,6 +183,7 @@ static void set_row_text(int row, const char *texts[], lv_color_t color, int rol
                 fc.target = target;
                 if (rolls_base > 0) {
                     fc.rolls_remaining = rolls_base + (rand() % 3);
+                    fc.current = '\0'; // invalidate so settlement always fires after animation
                 } else {
                     fc.rolls_remaining = 0;
                     fc.current = target;

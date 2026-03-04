@@ -19,10 +19,19 @@ static lv_obj_t *_ta_lon = nullptr;
 static lv_obj_t *_slider_radius = nullptr;
 static lv_obj_t *_radius_label = nullptr;
 static lv_obj_t *_sw_metric = nullptr;
+static lv_obj_t *_sw_trails = nullptr;
+static lv_obj_t *_slider_trail_len = nullptr;
+static lv_obj_t *_trail_len_label = nullptr;
+static lv_obj_t *_sw_cycle = nullptr;
+static lv_obj_t *_slider_cycle_int = nullptr;
+static lv_obj_t *_cycle_int_label = nullptr;
 
 static UserConfig _cfg;
 
-#define PANEL_W 460
+// Callback for config changes (set by main)
+static settings_changed_cb_t _on_change = nullptr;
+
+#define PANEL_W 500
 #define PANEL_H (LCD_V_RES - 40)
 #define FIELD_W 200
 #define LABEL_COLOR lv_color_hex(0x8888aa)
@@ -76,6 +85,15 @@ static lv_obj_t *create_textarea(lv_obj_t *parent, const char *placeholder,
     return ta;
 }
 
+static lv_obj_t *create_switch(lv_obj_t *parent, int x, int y, bool checked) {
+    lv_obj_t *sw = lv_switch_create(parent);
+    lv_obj_set_pos(sw, x, y);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(0x333366), 0);
+    lv_obj_set_style_bg_color(sw, ACCENT_COLOR, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    if (checked) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    return sw;
+}
+
 static void save_and_close(lv_event_t *e) {
     // Read values from text areas
     strncpy(_cfg.wifi_ssid, lv_textarea_get_text(_ta_ssid), sizeof(_cfg.wifi_ssid) - 1);
@@ -86,9 +104,16 @@ static void save_and_close(lv_event_t *e) {
     _cfg.home_lon = atof(lv_textarea_get_text(_ta_lon));
     _cfg.radius_nm = lv_slider_get_value(_slider_radius);
     _cfg.use_metric = lv_obj_has_state(_sw_metric, LV_STATE_CHECKED);
+    _cfg.trails_enabled = lv_obj_has_state(_sw_trails, LV_STATE_CHECKED);
+    _cfg.trail_max_points = lv_slider_get_value(_slider_trail_len);
+    _cfg.cycle_enabled = lv_obj_has_state(_sw_cycle, LV_STATE_CHECKED);
+    _cfg.cycle_interval_s = lv_slider_get_value(_slider_cycle_int);
 
     storage_save_config(_cfg);
     Serial.println("Config saved to NVS");
+
+    if (_on_change) _on_change(&_cfg);
+
     settings_hide();
 }
 
@@ -131,30 +156,21 @@ void settings_init(lv_obj_t *parent) {
     // Load current config
     _cfg = storage_load_config();
 
-    // --- WiFi section ---
-    create_label(_panel, "WiFi SSID", 0, 40);
-    _ta_ssid = create_textarea(_panel, "SSID", _cfg.wifi_ssid, 0, 60);
+    // === LEFT SIDE (x=0) ===
 
-    create_label(_panel, "WiFi Password", 0, 105);
-    _ta_pass = create_textarea(_panel, "Password", _cfg.wifi_pass, 0, 125, true);
+    // WiFi
+    create_label(_panel, "WiFi SSID", 0, 36);
+    _ta_ssid = create_textarea(_panel, "SSID", _cfg.wifi_ssid, 0, 54);
 
-    // --- Location section ---
-    char lat_str[16], lon_str[16];
-    snprintf(lat_str, sizeof(lat_str), "%.4f", _cfg.home_lat);
-    snprintf(lon_str, sizeof(lon_str), "%.4f", _cfg.home_lon);
+    create_label(_panel, "WiFi Password", 0, 96);
+    _ta_pass = create_textarea(_panel, "Password", _cfg.wifi_pass, 0, 114, true);
 
-    create_label(_panel, "Home Latitude", 220, 40);
-    _ta_lat = create_textarea(_panel, "40.7128", lat_str, 220, 60);
-
-    create_label(_panel, "Home Longitude", 220, 105);
-    _ta_lon = create_textarea(_panel, "-74.0060", lon_str, 220, 125);
-
-    // --- Radius slider ---
-    create_label(_panel, "Radius", 0, 180);
+    // Radius
+    create_label(_panel, "Default Radius", 0, 158);
     _slider_radius = lv_slider_create(_panel);
-    lv_obj_set_size(_slider_radius, 280, 10);
-    lv_obj_set_pos(_slider_radius, 0, 205);
-    lv_slider_set_range(_slider_radius, 5, 100);
+    lv_obj_set_size(_slider_radius, 150, 10);
+    lv_obj_set_pos(_slider_radius, 0, 178);
+    lv_slider_set_range(_slider_radius, 5, 150);
     lv_slider_set_value(_slider_radius, _cfg.radius_nm, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_slider_radius, lv_color_hex(0x333366), 0);
     lv_obj_set_style_bg_color(_slider_radius, ACCENT_COLOR, LV_PART_INDICATOR);
@@ -164,22 +180,82 @@ void settings_init(lv_obj_t *parent) {
     lv_label_set_text_fmt(_radius_label, "%d nm", _cfg.radius_nm);
     lv_obj_set_style_text_color(_radius_label, lv_color_white(), 0);
     lv_obj_set_style_text_font(_radius_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(_radius_label, 300, 200);
+    lv_obj_set_pos(_radius_label, 160, 174);
 
     lv_obj_add_event_cb(_slider_radius, [](lv_event_t *e) {
         int val = lv_slider_get_value(lv_event_get_target_obj(e));
         lv_label_set_text_fmt(_radius_label, "%d nm", val);
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    // --- Metric switch ---
-    create_label(_panel, "Use Metric", 0, 240);
-    _sw_metric = lv_switch_create(_panel);
-    lv_obj_set_pos(_sw_metric, 100, 238);
-    lv_obj_set_style_bg_color(_sw_metric, lv_color_hex(0x333366), 0);
-    lv_obj_set_style_bg_color(_sw_metric, ACCENT_COLOR, LV_PART_INDICATOR | LV_STATE_CHECKED);
-    if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
+    // Metric
+    create_label(_panel, "Metric Units", 0, 202);
+    _sw_metric = create_switch(_panel, 110, 200, _cfg.use_metric);
 
-    // --- Save button ---
+    // === RIGHT SIDE (x=240) ===
+    int rx = 240;
+
+    // Location
+    char lat_str[16], lon_str[16];
+    snprintf(lat_str, sizeof(lat_str), "%.4f", _cfg.home_lat);
+    snprintf(lon_str, sizeof(lon_str), "%.4f", _cfg.home_lon);
+
+    create_label(_panel, "Home Latitude", rx, 36);
+    _ta_lat = create_textarea(_panel, "40.7128", lat_str, rx, 54);
+
+    create_label(_panel, "Home Longitude", rx, 96);
+    _ta_lon = create_textarea(_panel, "-74.0060", lon_str, rx, 114);
+
+    // Trails
+    create_label(_panel, "Aircraft Trails", rx, 158);
+    _sw_trails = create_switch(_panel, rx + 120, 156, _cfg.trails_enabled);
+
+    create_label(_panel, "Trail Length", rx, 190);
+    _slider_trail_len = lv_slider_create(_panel);
+    lv_obj_set_size(_slider_trail_len, 150, 10);
+    lv_obj_set_pos(_slider_trail_len, rx, 210);
+    lv_slider_set_range(_slider_trail_len, 10, 60);
+    lv_slider_set_value(_slider_trail_len, _cfg.trail_max_points, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(_slider_trail_len, lv_color_hex(0x333366), 0);
+    lv_obj_set_style_bg_color(_slider_trail_len, ACCENT_COLOR, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_slider_trail_len, ACCENT_COLOR, LV_PART_KNOB);
+
+    _trail_len_label = lv_label_create(_panel);
+    lv_label_set_text_fmt(_trail_len_label, "%d pts", _cfg.trail_max_points);
+    lv_obj_set_style_text_color(_trail_len_label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(_trail_len_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(_trail_len_label, rx + 160, 206);
+
+    lv_obj_add_event_cb(_slider_trail_len, [](lv_event_t *e) {
+        int val = lv_slider_get_value(lv_event_get_target_obj(e));
+        lv_label_set_text_fmt(_trail_len_label, "%d pts", val);
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // Auto-cycle
+    create_label(_panel, "Auto-Cycle Views", rx, 240);
+    _sw_cycle = create_switch(_panel, rx + 140, 238, _cfg.cycle_enabled);
+
+    create_label(_panel, "Cycle Interval", rx, 270);
+    _slider_cycle_int = lv_slider_create(_panel);
+    lv_obj_set_size(_slider_cycle_int, 150, 10);
+    lv_obj_set_pos(_slider_cycle_int, rx, 290);
+    lv_slider_set_range(_slider_cycle_int, 15, 120);
+    lv_slider_set_value(_slider_cycle_int, _cfg.cycle_interval_s, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(_slider_cycle_int, lv_color_hex(0x333366), 0);
+    lv_obj_set_style_bg_color(_slider_cycle_int, ACCENT_COLOR, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_slider_cycle_int, ACCENT_COLOR, LV_PART_KNOB);
+
+    _cycle_int_label = lv_label_create(_panel);
+    lv_label_set_text_fmt(_cycle_int_label, "%ds", _cfg.cycle_interval_s);
+    lv_obj_set_style_text_color(_cycle_int_label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(_cycle_int_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(_cycle_int_label, rx + 160, 286);
+
+    lv_obj_add_event_cb(_slider_cycle_int, [](lv_event_t *e) {
+        int val = lv_slider_get_value(lv_event_get_target_obj(e));
+        lv_label_set_text_fmt(_cycle_int_label, "%ds", val);
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    // === Save button (centered at bottom) ===
     lv_obj_t *save_btn = lv_button_create(_panel);
     lv_obj_set_size(save_btn, 120, 40);
     lv_obj_align(save_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
@@ -194,7 +270,7 @@ void settings_init(lv_obj_t *parent) {
 
     lv_obj_add_event_cb(save_btn, save_and_close, LV_EVENT_CLICKED, nullptr);
 
-    // --- On-screen keyboard (hidden by default) ---
+    // === On-screen keyboard (hidden by default) ===
     _keyboard = lv_keyboard_create(_overlay);
     lv_obj_set_size(_keyboard, LCD_H_RES, 200);
     lv_obj_align(_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -224,6 +300,18 @@ void settings_show() {
     if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
     else lv_obj_clear_state(_sw_metric, LV_STATE_CHECKED);
 
+    if (_cfg.trails_enabled) lv_obj_add_state(_sw_trails, LV_STATE_CHECKED);
+    else lv_obj_clear_state(_sw_trails, LV_STATE_CHECKED);
+
+    lv_slider_set_value(_slider_trail_len, _cfg.trail_max_points, LV_ANIM_OFF);
+    lv_label_set_text_fmt(_trail_len_label, "%d pts", _cfg.trail_max_points);
+
+    if (_cfg.cycle_enabled) lv_obj_add_state(_sw_cycle, LV_STATE_CHECKED);
+    else lv_obj_clear_state(_sw_cycle, LV_STATE_CHECKED);
+
+    lv_slider_set_value(_slider_cycle_int, _cfg.cycle_interval_s, LV_ANIM_OFF);
+    lv_label_set_text_fmt(_cycle_int_label, "%ds", _cfg.cycle_interval_s);
+
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -236,4 +324,8 @@ void settings_hide() {
 
 bool settings_is_visible() {
     return _visible;
+}
+
+void settings_set_change_callback(settings_changed_cb_t cb) {
+    _on_change = cb;
 }

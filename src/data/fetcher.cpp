@@ -14,6 +14,7 @@ static AircraftList *_aircraft_list = nullptr;
 static uint32_t _last_update = 0;
 static TaskHandle_t _fetch_task_handle = nullptr;
 static TaskHandle_t _route_task_handle = nullptr;
+static FetcherStats _fstats = {};
 
 // Military alert dedup — circular buffer of already-alerted ICAO hexes
 #define ALERTED_MAX 64
@@ -242,8 +243,10 @@ static void fetch_task(void *param) {
     }
 #ifdef USE_ETHERNET
     Serial.printf("\nEthernet connected, IP: %s\n", ETH.localIP().toString().c_str());
+    strlcpy(_fstats.ip_addr, ETH.localIP().toString().c_str(), sizeof(_fstats.ip_addr));
 #else
     Serial.printf("\nWiFi connected, IP: %s\n", WiFi.localIP().toString().c_str());
+    strlcpy(_fstats.ip_addr, WiFi.localIP().toString().c_str(), sizeof(_fstats.ip_addr));
 #endif
 
     // Build API URL
@@ -259,19 +262,25 @@ static void fetch_task(void *param) {
                 HTTPClient http;
                 http.begin(url);
                 http.setTimeout(10000);
+                uint32_t t0 = millis();
                 int httpCode = http.GET();
 
                 if (httpCode == HTTP_CODE_OK) {
                     String payload = http.getString();
+                    _fstats.last_fetch_ms = millis() - t0;
+                    _fstats.bytes_received += payload.length();
                     JsonDocument doc;
                     DeserializationError err = deserializeJson(doc, payload);
                     if (!err) {
                         parse_aircraft_json(doc);
+                        _fstats.fetch_ok++;
                         Serial.printf("Fetched %d aircraft\n", _aircraft_list->count);
                     } else {
+                        _fstats.fetch_fail++;
                         Serial.printf("JSON parse error: %s\n", err.c_str());
                     }
                 } else {
+                    _fstats.fetch_fail++;
                     Serial.printf("HTTP error: %d\n", httpCode);
                 }
                 http.end();
@@ -341,7 +350,10 @@ static void route_enrich_task(void *param) {
                     const char *dest_iata = route["destination"]["iata_code"] | "";
                     strlcpy(origin, orig_iata, sizeof(origin));
                     strlcpy(dest, dest_iata, sizeof(dest));
+                    _fstats.enrich_ok++;
                 }
+            } else {
+                _fstats.enrich_fail++;
             }
             http.end();
             http_mutex_release();
@@ -388,4 +400,8 @@ bool fetcher_wifi_connected() {
 
 uint32_t fetcher_last_update() {
     return _last_update;
+}
+
+const FetcherStats* fetcher_get_stats() {
+    return &_fstats;
 }

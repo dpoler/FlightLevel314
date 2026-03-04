@@ -31,3 +31,6 @@ UserConfig storage_load_config();
 
 // Save config to NVS
 void storage_save_config(const UserConfig &cfg);
+
+// Global runtime config — loaded at boot, updated on settings save
+extern UserConfig g_config;
