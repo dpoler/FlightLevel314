@@ -400,33 +400,30 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_point_t point;
         lv_indev_get_point(lv_indev_active(), &point);
         int tx = point.x;
-        int ty = point.y - 30; // offset for status bar
-
-        Serial.printf("RADAR tap: (%d,%d)\n", tx, ty);
+        int ty = point.y - 30;
 
         if (detail_card_is_visible()) {
             detail_card_hide();
             return;
         }
 
-        if (!_list->lock(pdMS_TO_TICKS(10))) { Serial.println("RADAR: lock failed"); return; }
+        // Hit test (30px radius, PRESSED for instant response)
+        if (!_list->lock(pdMS_TO_TICKS(10))) return;
         for (int i = 0; i < _list->count; i++) {
             int sx, sy;
             if (to_radar_screen(_list->aircraft[i].lat, _list->aircraft[i].lon, sx, sy)) {
                 int dx = tx - sx;
                 int dy = ty - sy;
-                if (dx * dx + dy * dy < 900) { // 30px hit radius for touchscreen
+                if (dx * dx + dy * dy < 900) {
                     Aircraft ac_copy = _list->aircraft[i];
                     _list->unlock();
-                    Serial.printf("RADAR: hit %s at (%d,%d)\n", ac_copy.callsign, tx, ty);
                     detail_card_show(&ac_copy);
                     return;
                 }
             }
         }
-        Serial.println("RADAR: no hit");
         _list->unlock();
-    }, LV_EVENT_CLICKED, nullptr);
+    }, LV_EVENT_PRESSED, nullptr);
 
     // Filter toggle buttons — vertical stack on right edge (same layout as map)
     {
@@ -476,7 +473,7 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_obj_invalidate(_radar_obj);
     }, LV_EVENT_CLICKED, nullptr);
 
-    // Animate sweep — always update angle, but only redraw when visible
+    // Animate sweep — always update angle, but only redraw when visible and not touching
     _last_sweep_ms = millis();
     static int _last_synced_filter = FILT_NONE;
     lv_timer_create([](lv_timer_t *t) {
@@ -496,11 +493,15 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
             update_filter_visuals();
         }
 
-        // Only invalidate when radar view is active (saves frame budget for swipes)
+        // Skip rendering when touch is active — prioritize gesture processing
+        lv_indev_t *indev = lv_indev_active();
+        if (indev && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) return;
+
+        // Only invalidate when radar view is active
         if (views_get_active_index() == VIEW_RADAR) {
             lv_obj_invalidate(_radar_obj);
         }
-    }, 66, nullptr);  // ~15fps — saves frame budget
+    }, 100, nullptr);  // 10fps — frees CPU for touch processing
 }
 
 void radar_view_update() {

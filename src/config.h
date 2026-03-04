@@ -1,6 +1,10 @@
 #pragma once
 
-// WiFi credentials
+// Network: uncomment ONE of these
+#define USE_ETHERNET      // Built-in 100Mbps Ethernet (IP101 PHY)
+// #define USE_WIFI       // ESP32-C6 hosted WiFi
+
+// WiFi credentials (only used if USE_WIFI is defined)
 #define WIFI_SSID "ATTGpyJKmS"
 #define WIFI_PASS "cw7nqpsr?sun"
 

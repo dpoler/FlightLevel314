@@ -2,7 +2,11 @@
 #include "http_mutex.h"
 #include "../config.h"
 #include "../ui/alerts.h"
+#ifdef USE_ETHERNET
+#include <ETH.h>
+#else
 #include <WiFi.h>
+#endif
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
@@ -222,13 +226,25 @@ static void parse_aircraft_json(JsonDocument &doc) {
     _last_update = millis();
 }
 
+static bool network_connected() {
+#ifdef USE_ETHERNET
+    return ETH.linkUp() && ETH.localIP() != IPAddress(0, 0, 0, 0);
+#else
+    return WiFi.status() == WL_CONNECTED;
+#endif
+}
+
 static void fetch_task(void *param) {
-    Serial.print("Fetcher: waiting for WiFi");
-    while (WiFi.status() != WL_CONNECTED) {
+    Serial.print("Fetcher: waiting for network");
+    while (!network_connected()) {
         vTaskDelay(pdMS_TO_TICKS(500));
         Serial.print(".");
     }
+#ifdef USE_ETHERNET
+    Serial.printf("\nEthernet connected, IP: %s\n", ETH.localIP().toString().c_str());
+#else
     Serial.printf("\nWiFi connected, IP: %s\n", WiFi.localIP().toString().c_str());
+#endif
 
     // Build API URL
     char url[128];
@@ -238,7 +254,7 @@ static void fetch_task(void *param) {
 
     // Main fetch loop
     while (true) {
-        if (WiFi.status() == WL_CONNECTED) {
+        if (network_connected()) {
             if (http_mutex_acquire(pdMS_TO_TICKS(15000))) {
                 HTTPClient http;
                 http.begin(url);
@@ -262,8 +278,12 @@ static void fetch_task(void *param) {
                 http_mutex_release();
             }
         } else {
+#ifdef USE_ETHERNET
+            Serial.println("Ethernet link down, waiting...");
+#else
             Serial.println("WiFi disconnected, reconnecting...");
             WiFi.reconnect();
+#endif
         }
         vTaskDelay(pdMS_TO_TICKS(ADSB_POLL_INTERVAL_MS));
     }
@@ -271,8 +291,8 @@ static void fetch_task(void *param) {
 
 // Background task: fetch route (origin/dest) for aircraft with callsigns
 static void route_enrich_task(void *param) {
-    // Wait for WiFi
-    while (WiFi.status() != WL_CONNECTED) {
+    // Wait for network
+    while (!network_connected()) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     vTaskDelay(pdMS_TO_TICKS(5000)); // let main fetcher populate list first
@@ -296,7 +316,7 @@ static void route_enrich_task(void *param) {
             _aircraft_list->unlock();
         }
 
-        if (!found || WiFi.status() != WL_CONNECTED) {
+        if (!found || !network_connected()) {
             vTaskDelay(pdMS_TO_TICKS(3000));
             continue;
         }
@@ -349,16 +369,21 @@ void fetcher_init(AircraftList *list) {
     _aircraft_list = list;
     http_mutex_init();
 
+#ifdef USE_ETHERNET
+    ETH.begin();
+    Serial.println("Ethernet initialization started");
+#else
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     Serial.println("WiFi initialization started");
+#endif
 
     xTaskCreatePinnedToCore(fetch_task, "adsb_fetch", 32768, nullptr, 1, &_fetch_task_handle, 1);
     xTaskCreatePinnedToCore(route_enrich_task, "route_enrich", 16384, nullptr, 0, &_route_task_handle, 1);
 }
 
 bool fetcher_wifi_connected() {
-    return WiFi.status() == WL_CONNECTED;
+    return network_connected();
 }
 
 uint32_t fetcher_last_update() {

@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "status_bar.h"
 #include "views.h"
+#include "../config.h"
 #include "../pins_config.h"
 
 static lv_obj_t *wifi_icon;
@@ -29,9 +30,13 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     lv_obj_set_style_pad_all(bar, 0, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    // WiFi indicator (left side)
+    // Network indicator (left side)
     wifi_icon = lv_label_create(bar);
+#ifdef USE_ETHERNET
+    lv_label_set_text(wifi_icon, "ETH");
+#else
     lv_label_set_text(wifi_icon, LV_SYMBOL_WIFI);
+#endif
     lv_obj_set_style_text_color(wifi_icon, STATUS_TEXT_COLOR, 0);
     lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_14, 0);
     lv_obj_align(wifi_icon, LV_ALIGN_LEFT_MID, 8, 0);

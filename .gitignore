@@ -5,3 +5,4 @@ components/vendor_hal/
 *.a
 *.so
 *.dylib
+src/ui/static_map_data.h

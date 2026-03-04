@@ -92,9 +92,9 @@ void setup() {
     lv_init();
     lv_tick_set_cb([]() -> uint32_t { return (uint32_t)millis(); });
 
-    // Allocate render buffers in PSRAM — 1/10 screen for PARTIAL mode
-    // (1/4 crashes WiFi driver — DMA descriptors exhaust internal RAM)
-    uint32_t buf_size = LCD_H_RES * LCD_V_RES / 10;
+    // Allocate render buffers in PSRAM — 1/2 screen for PARTIAL mode
+    // Larger buffers = fewer render passes per frame = better touch response
+    uint32_t buf_size = LCD_H_RES * LCD_V_RES / 2;
     buf0 = (uint16_t *)heap_caps_malloc(buf_size * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     buf1 = (uint16_t *)heap_caps_malloc(buf_size * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     assert(buf0 && buf1);
@@ -117,7 +117,7 @@ void setup() {
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touch_read_cb);
     lv_indev_set_display(indev, disp);
-    lv_indev_set_scroll_limit(indev, 20); // above default 10px to handle touchscreen jitter
+    lv_indev_set_scroll_limit(indev, 10); // low for fast swipe response, touchscreen jitter handled by gesture threshold
 
     // Poll touch at 10ms (vs 30ms default) — catches fast taps between render frames
     lv_timer_set_period(lv_indev_get_read_timer(indev), 10);
