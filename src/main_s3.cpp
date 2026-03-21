@@ -1,34 +1,25 @@
 #include <Arduino.h>
 #include "lvgl.h"
-#include "driver/i2c_master.h"
-#include "esp_lcd_panel_ops.h"
-#include "esp_lcd_mipi_dsi.h"
+#include <TFT_eSPI.h>
 #include "esp_heap_caps.h"
-#include "pins_config.h"
+#include "pins_s3.h"
 #include "config.h"
-#include "hal/jd9165_lcd.h"
-#include "hal/gt911_touch.h"
 #include "data/aircraft.h"
 #include "data/fetcher.h"
-#include "ui/status_bar.h"
-#include "ui/views.h"
-#include "ui/detail_card.h"
-#include "ui/alerts.h"
-#include "ui/settings.h"
-#include "ui/tile_cache.h"
-#include "ui/map_view.h"
-#include "ui/radar_view.h"
-#include "ui/arrivals_view.h"
 #include "data/storage.h"
 #include "data/error_log.h"
 #include "data/enrichment.h"
+#include "ui_s3/status_bar.h"
+#include "ui_s3/views.h"
+#include "ui_s3/detail_card.h"
+#include "ui_s3/alerts.h"
+#include "ui_s3/settings.h"
 
 // Global touch state — read by view timers to defer heavy rendering during interaction
 volatile bool touch_active = false;
 
-// Hardware drivers
-static jd9165_lcd lcd(LCD_RST);
-static gt911_touch touch(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT);
+// TFT display driver
+static TFT_eSPI tft = TFT_eSPI();
 
 // Aircraft data
 AircraftList aircraft_list;
@@ -38,22 +29,21 @@ static lv_display_t *disp;
 static uint16_t *buf0;
 static uint16_t *buf1;
 
-// Display flush callback
+// Display flush callback for TFT_eSPI
 static void disp_flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *color_map) {
-    lcd.lcd_draw_bitmap(area->x1, area->y1, area->x2 + 1, area->y2 + 1, (uint16_t *)color_map);
+    uint32_t w = area->x2 - area->x1 + 1;
+    uint32_t h = area->y2 - area->y1 + 1;
+    tft.startWrite();
+    tft.setAddrWindow(area->x1, area->y1, w, h);
+    tft.pushColors((uint16_t *)color_map, w * h, true);
+    tft.endWrite();
+    lv_display_flush_ready(d);
 }
 
-// Vsync callback — signals LVGL that flush is complete
-static bool flush_ready_cb(esp_lcd_panel_handle_t panel,
-    esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx) {
-    lv_display_flush_ready((lv_display_t *)user_ctx);
-    return false;
-}
-
-// Touch read callback
+// Touch read callback (XPT2046 via TFT_eSPI)
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
     uint16_t x, y;
-    if (touch.getTouch(&x, &y)) {
+    if (tft.getTouch(&x, &y, 40)) {  // threshold 40 for resistive noise
         data->state = LV_INDEV_STATE_PRESSED;
         data->point.x = x;
         data->point.y = y;
@@ -66,71 +56,54 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("ADS-B Display starting...");
+    Serial.println("ADS-B Display (S3) starting...");
 
     Serial.printf("Heap free: %lu  PSRAM free: %lu\n",
         (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
         (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-    // Init I2C bus 1 (MUST be before touch.begin())
-    i2c_master_bus_handle_t i2c_handle = NULL;
-    i2c_master_bus_config_t i2c_bus_conf = {
-        .i2c_port = I2C_NUM_1,
-        .sda_io_num = (gpio_num_t)TP_I2C_SDA,
-        .scl_io_num = (gpio_num_t)TP_I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags = { .enable_internal_pullup = 1 },
-    };
-    i2c_new_master_bus(&i2c_bus_conf, &i2c_handle);
-    Serial.println("I2C bus initialized");
+    // Init TFT display
+    tft.init();
+    tft.setRotation(1);  // landscape: 480x320
+    tft.fillScreen(TFT_BLACK);
+    Serial.println("TFT initialized");
 
-    // Init display hardware
-    lcd.begin();
-    Serial.println("LCD initialized");
-
-    // Init touch hardware
-    touch.begin();
-    Serial.println("Touch initialized");
+    // Touch calibration — adjust after hardware testing
+    // Format: {x_min, x_max, y_min, y_max} for landscape rotation=1
+    uint16_t cal[5] = {300, 3600, 300, 3600, 1};
+    tft.setTouch(cal);
+    Serial.println("Touch initialized (default calibration)");
 
     // Init LVGL
     lv_init();
     lv_tick_set_cb([]() -> uint32_t { return (uint32_t)millis(); });
 
-    // Allocate render buffers in PSRAM — 1/2 screen for PARTIAL mode
-    // Larger buffers = fewer render passes per frame = better touch response
-    uint32_t buf_size = LCD_H_RES * LCD_V_RES / 2;
+    // Render buffers in PSRAM — 480x32 lines (2 x ~30KB) for PARTIAL mode
+    uint32_t buf_size = LCD_H_RES * 32;
     buf0 = (uint16_t *)heap_caps_malloc(buf_size * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     buf1 = (uint16_t *)heap_caps_malloc(buf_size * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     assert(buf0 && buf1);
 
-    // Create LVGL display — PARTIAL mode only redraws dirty regions
+    // Create LVGL display
     disp = lv_display_create(LCD_H_RES, LCD_V_RES);
     lv_display_set_flush_cb(disp, disp_flush_cb);
     lv_display_set_buffers(disp, buf0, buf1, buf_size * sizeof(uint16_t),
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
-
-    // Register vsync callback for proper flush synchronization
-    bsp_lcd_handles_t lcd_handles;
-    lcd.get_handle(&lcd_handles);
-    esp_lcd_dpi_panel_event_callbacks_t cbs = {};
-    cbs.on_color_trans_done = flush_ready_cb;
-    esp_lcd_dpi_panel_register_event_callbacks(lcd_handles.panel, &cbs, disp);
 
     // Create LVGL touch input device
     lv_indev_t *indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, touch_read_cb);
     lv_indev_set_display(indev, disp);
-    lv_indev_set_scroll_limit(indev, 10); // low for fast swipe response, touchscreen jitter handled by gesture threshold
+    lv_indev_set_scroll_limit(indev, 20);  // higher for resistive touch jitter
 
-    // Poll touch at 10ms (vs 30ms default) — catches fast taps between render frames
+    // Poll touch at 10ms
     lv_timer_set_period(lv_indev_get_read_timer(indev), 10);
 
     // Init aircraft data
     aircraft_list.init();
 
-    // Create UI — LVGL must be fully set up before background tasks
+    // Create UI
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x0a0a1a), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
@@ -138,23 +111,18 @@ void setup() {
 
     Serial.println("Creating status bar...");
     status_bar_create(screen);
-    Serial.println("Status bar OK");
 
     Serial.println("views_init...");
     views_init(screen, &aircraft_list);
-    Serial.println("views OK");
 
     Serial.println("detail_card_init...");
     detail_card_init(screen);
-    Serial.println("detail_card OK");
 
     Serial.println("alerts_init...");
     alerts_init(screen);
-    Serial.println("alerts OK");
 
     Serial.println("settings_init...");
     settings_init(screen);
-    Serial.println("settings OK");
 
     // Load runtime config
     g_config = storage_load_config();
@@ -180,13 +148,12 @@ void setup() {
     error_log_init();
     enrichment_init();
     fetcher_init(&aircraft_list);
-    // tile_cache_init(); // disabled: lv_draw_image broken on ESP32-P4 PPA
 }
 
 void loop() {
     lv_timer_handler();
 
-    // Heap monitor — log every 10s for crash diagnosis
+    // Heap monitor — log every 10s
     static uint32_t last_heap_log = 0;
     uint32_t now = millis();
     if (now - last_heap_log >= 10000) {
@@ -197,6 +164,5 @@ void loop() {
             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     }
 
-    // Yield briefly to FreeRTOS — 1ms instead of 5ms for better touch responsiveness
     vTaskDelay(pdMS_TO_TICKS(1));
 }

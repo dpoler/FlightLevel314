@@ -4,7 +4,7 @@
 #include "map_view.h"
 #include "../data/aircraft.h"
 #include "../data/storage.h"
-#include "../pins_config.h"
+#include "../pins_s3.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <cstring>
@@ -18,14 +18,13 @@ static lv_obj_t *_toast_detail = nullptr;
 static lv_obj_t *_toast_icon = nullptr;
 static lv_timer_t *_dismiss_timer = nullptr;
 
-// ICAO hex of the currently displayed toast (for tap-to-detail lookup)
 static char _current_hex[7] = {};
 
-#define TOAST_W 500
-#define TOAST_H 50
-#define TOAST_Y 35  // just below status bar
+#define TOAST_W 400
+#define TOAST_H 40
+#define TOAST_Y 28  // just below status bar
 
-// --- Thread-safe alert queue ---
+// Thread-safe alert queue
 struct PendingAlert {
     AlertType type;
     char title[16];
@@ -77,7 +76,6 @@ static void dismiss_toast(lv_timer_t *t) {
     }
 }
 
-// Drain queue from LVGL timer context
 static void process_queue(lv_timer_t *t) {
     if (xSemaphoreTake(_queue_mutex, 0) != pdTRUE) return;
 
@@ -85,7 +83,6 @@ static void process_queue(lv_timer_t *t) {
         PendingAlert &pa = _queue[_queue_tail];
         _queue_tail = (_queue_tail + 1) % ALERT_QUEUE_SIZE;
 
-        // Release mutex while showing (alerts_show may take time)
         xSemaphoreGive(_queue_mutex);
         alerts_show(pa.type, pa.title, pa.detail, pa.icao_hex);
         if (xSemaphoreTake(_queue_mutex, 0) != pdTRUE) return;
@@ -99,30 +96,30 @@ void alerts_init(lv_obj_t *parent) {
 
     _toast = lv_obj_create(parent);
     lv_obj_set_size(_toast, TOAST_W, TOAST_H);
-    lv_obj_set_pos(_toast, (LCD_H_RES - TOAST_W) / 2, -TOAST_H); // hidden above
+    lv_obj_set_pos(_toast, (LCD_H_RES - TOAST_W) / 2, -TOAST_H);
     lv_obj_set_style_bg_color(_toast, lv_color_hex(0x1a1a2e), 0);
     lv_obj_set_style_bg_opa(_toast, LV_OPA_90, 0);
-    lv_obj_set_style_radius(_toast, 8, 0);
+    lv_obj_set_style_radius(_toast, 6, 0);
     lv_obj_set_style_border_width(_toast, 2, 0);
     lv_obj_set_style_border_color(_toast, lv_color_white(), 0);
-    lv_obj_set_style_pad_all(_toast, 8, 0);
+    lv_obj_set_style_pad_all(_toast, 6, 0);
     lv_obj_clear_flag(_toast, LV_OBJ_FLAG_SCROLLABLE);
 
     _toast_icon = lv_label_create(_toast);
-    lv_obj_set_style_text_font(_toast_icon, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(_toast_icon, &lv_font_montserrat_16, 0);
     lv_obj_align(_toast_icon, LV_ALIGN_LEFT_MID, 0, 0);
 
     _toast_title = lv_label_create(_toast);
-    lv_obj_set_style_text_font(_toast_title, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(_toast_title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_toast_title, lv_color_white(), 0);
-    lv_obj_align(_toast_title, LV_ALIGN_LEFT_MID, 32, -8);
+    lv_obj_align(_toast_title, LV_ALIGN_LEFT_MID, 24, -6);
 
     _toast_detail = lv_label_create(_toast);
     lv_obj_set_style_text_font(_toast_detail, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_toast_detail, lv_color_hex(0xaaaaaa), 0);
-    lv_obj_align(_toast_detail, LV_ALIGN_LEFT_MID, 32, 10);
+    lv_obj_align(_toast_detail, LV_ALIGN_LEFT_MID, 24, 8);
 
-    // Tap: switch to map, center on aircraft, track it, show detail card, dismiss
+    // Tap: switch to map, center, track, show detail, dismiss
     lv_obj_add_event_cb(_toast, [](lv_event_t *e) {
         if (_current_hex[0] && aircraft_list.lock(pdMS_TO_TICKS(10))) {
             for (int i = 0; i < aircraft_list.count; i++) {
@@ -143,7 +140,6 @@ void alerts_init(lv_obj_t *parent) {
         dismiss_toast(nullptr);
     }, LV_EVENT_CLICKED, nullptr);
 
-    // Periodic queue drain (every 500ms)
     lv_timer_create(process_queue, 500, nullptr);
 }
 
@@ -151,19 +147,16 @@ void alerts_show(AlertType type, const char *title, const char *detail,
                  const char *icao_hex, uint32_t timeout_ms) {
     lv_color_t color = alert_color(type);
 
-    // Store hex for tap-to-detail
     if (icao_hex && icao_hex[0]) {
         strlcpy(_current_hex, icao_hex, sizeof(_current_hex));
     } else {
         _current_hex[0] = '\0';
     }
 
-    // Military/emergency alerts: 10s timeout, optionally auto-focus on map
     if (type == ALERT_MILITARY || type == ALERT_EMERGENCY) {
-        timeout_ms = 10000;
+        timeout_ms = 60000;
 
         if (g_config.alert_autofocus) {
-            // Switch to map view, center on aircraft, and track it
             if (_current_hex[0] && aircraft_list.lock(pdMS_TO_TICKS(10))) {
                 for (int i = 0; i < aircraft_list.count; i++) {
                     if (strcmp(aircraft_list.aircraft[i].icao_hex, _current_hex) == 0) {
@@ -198,14 +191,9 @@ void alerts_show(AlertType type, const char *title, const char *detail,
     });
     lv_anim_start(&a);
 
-    // Auto-dismiss timer
     if (_dismiss_timer) lv_timer_delete(_dismiss_timer);
     _dismiss_timer = lv_timer_create(dismiss_toast, timeout_ms, nullptr);
     lv_timer_set_repeat_count(_dismiss_timer, 1);
-}
-
-void alerts_dismiss() {
-    dismiss_toast(nullptr);
 }
 
 void alerts_queue(AlertType type, const char *title, const char *detail,
@@ -214,7 +202,7 @@ void alerts_queue(AlertType type, const char *title, const char *detail,
     if (xSemaphoreTake(_queue_mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
 
     int next = (_queue_head + 1) % ALERT_QUEUE_SIZE;
-    if (next != _queue_tail) { // not full
+    if (next != _queue_tail) {
         PendingAlert &pa = _queue[_queue_head];
         pa.type = type;
         strncpy(pa.title, title, sizeof(pa.title) - 1);

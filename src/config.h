@@ -5,8 +5,8 @@
 #define WIFI_PASS "cw7nqpsr?sun"
 
 // Home location (change to your coordinates)
-#define HOME_LAT 30.6905
-#define HOME_LON -88.1632
+#define HOME_LAT 30.938440
+#define HOME_LON -88.636406
 
 // ADS-B settings
 #define ADSB_RADIUS_NM 100

@@ -18,7 +18,11 @@ struct AircraftEnrichment {
     bool loading;
 };
 
+// Initialize enrichment system (installs LVGL timer for deferred callbacks)
+void enrichment_init();
+
 // Fetch enrichment data in background. Calls callback progressively as data arrives.
+// Callback is always called from LVGL context (safe to update UI).
 void enrichment_fetch(const char *icao_hex, const char *registration,
                       const char *callsign,
                       void (*callback)(AircraftEnrichment *data));

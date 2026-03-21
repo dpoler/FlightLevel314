@@ -1,8 +1,12 @@
 #pragma once
 
-// Display
+// Display (overridable via build flags for multi-board support)
+#ifndef LCD_H_RES
 #define LCD_H_RES 1024
+#endif
+#ifndef LCD_V_RES
 #define LCD_V_RES 600
+#endif
 #define LCD_RST 5       // GPIO5 (confirmed from vendor source)
 #define LCD_LED 23      // GPIO23 backlight PWM (handled by jd9165_lcd)
 

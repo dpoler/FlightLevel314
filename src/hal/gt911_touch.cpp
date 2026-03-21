@@ -7,8 +7,12 @@
 #include "esp_lcd_touch_gt911.h"
 #include "gt911_touch.h"
 
+#ifndef CONFIG_LCD_HRES
 #define CONFIG_LCD_HRES 1024
+#endif
+#ifndef CONFIG_LCD_VRES
 #define CONFIG_LCD_VRES 600
+#endif
 
 static const char *TAG = "example";
 
@@ -28,13 +32,25 @@ gt911_touch::gt911_touch(int8_t sda_pin, int8_t scl_pin, int8_t rst_pin, int8_t 
 
 void gt911_touch::begin()
 {
+    if (!begin_safe()) {
+        ESP_LOGE(TAG, "GT911 init failed — aborting");
+        abort();
+    }
+}
+
+bool gt911_touch::begin_safe()
+{
     i2c_master_bus_handle_t i2c_handle = NULL;
     i2c_master_get_bus_handle(1,&i2c_handle);
 
     esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
     tp_io_config.scl_speed_hz = 400000;
     ESP_LOGI(TAG, "Initialize touch IO (I2C)");
-    esp_lcd_new_panel_io_i2c(i2c_handle, &tp_io_config, &tp_io_handle);
+    esp_err_t ret = esp_lcd_new_panel_io_i2c(i2c_handle, &tp_io_config, &tp_io_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create panel IO: %s", esp_err_to_name(ret));
+        return false;
+    }
 
     esp_lcd_touch_config_t tp_cfg = {
         .x_max = CONFIG_LCD_HRES,
@@ -53,11 +69,19 @@ void gt911_touch::begin()
     };
 
     ESP_LOGI(TAG, "Initialize touch controller gt911");
-    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, &tp));
+    ret = esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, &tp);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "GT911 init failed: %s", esp_err_to_name(ret));
+        return false;
+    }
+
+    _ready = true;
+    return true;
 }
 
 bool gt911_touch::getTouch(uint16_t *x, uint16_t *y)
 {
+    if (!_ready) return false;
     esp_lcd_touch_read_data(tp);
     bool touchpad_pressed = esp_lcd_touch_get_coordinates(tp, x, y, touch_strength, &touch_cnt, 1);
 

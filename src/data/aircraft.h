@@ -3,6 +3,8 @@
 #include <cstring>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "esp_heap_caps.h"
+#include "../config.h"
 
 struct TrailPoint {
     float lat;
@@ -62,13 +64,16 @@ static inline uint8_t compute_aircraft_opacity(uint32_t stale_since, uint32_t no
 // Thread-safe aircraft list
 class AircraftList {
 public:
-    Aircraft aircraft[200];
+    Aircraft *aircraft = nullptr;
     int count = 0;
     SemaphoreHandle_t mutex;
 
     void init() {
         mutex = xSemaphoreCreateMutex();
         count = 0;
+        // Allocate in PSRAM — too large for internal DRAM (~226KB for 200 aircraft)
+        aircraft = (Aircraft *)heap_caps_malloc(MAX_AIRCRAFT * sizeof(Aircraft), MALLOC_CAP_SPIRAM);
+        if (aircraft) memset(aircraft, 0, MAX_AIRCRAFT * sizeof(Aircraft));
     }
 
     bool lock(TickType_t timeout = pdMS_TO_TICKS(100)) {

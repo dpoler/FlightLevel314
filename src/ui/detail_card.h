@@ -13,3 +13,6 @@ void detail_card_init(lv_obj_t *parent);
 
 // Returns true if card is currently visible
 bool detail_card_is_visible();
+
+// Scroll the detail card content (for encoder navigation)
+void detail_card_scroll(int delta);

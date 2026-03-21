@@ -539,3 +539,8 @@ void detail_card_hide() {
 bool detail_card_is_visible() {
     return _visible;
 }
+
+void detail_card_scroll(int delta) {
+    if (!_visible || !_card) return;
+    lv_obj_scroll_by(_card, 0, -delta * 40, LV_ANIM_ON);
+}

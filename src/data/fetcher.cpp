@@ -2,9 +2,12 @@
 #include "error_log.h"
 #include "http_mutex.h"
 #include "../config.h"
+#include "../pins_config.h"
 #include "../data/storage.h"
 #include "../ui/alerts.h"
+#if defined(USE_ETHERNET)
 #include <ETH.h>
+#endif
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -23,6 +26,41 @@ struct PsramAllocator : ArduinoJson::Allocator {
     }
 };
 static PsramAllocator _psram_alloc;
+
+// Hard-reset the ESP32-C6 WiFi coprocessor via its reset pin.
+// ESP.restart() only resets the P4 — the C6 retains its bad state.
+static void reset_wifi_c6() {
+    Serial.println("Resetting C6 WiFi module...");
+    pinMode(WIFI_C6_RST, OUTPUT);
+    digitalWrite(WIFI_C6_RST, LOW);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    digitalWrite(WIFI_C6_RST, HIGH);
+    vTaskDelay(pdMS_TO_TICKS(500)); // let C6 boot
+    Serial.println("C6 reset complete");
+}
+
+// Attempt WiFi connection with timeout. Returns true if connected.
+static bool wifi_connect_with_timeout(uint32_t timeout_ms) {
+    WiFi.disconnect(true);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(g_config.wifi_ssid, g_config.wifi_pass);
+
+    uint32_t start = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+        if (millis() - start > timeout_ms) {
+            Serial.println("\nWiFi connect timeout");
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+        Serial.print(".");
+    }
+    return true;
+}
+
+#define WIFI_CONNECT_TIMEOUT_MS 30000
+#define WIFI_MAX_RETRIES 3  // retries before C6 hard reset
+#define FETCH_FAIL_RESET_THRESHOLD 10  // consecutive fails before reconnect
 
 static volatile NetType _active_net = NET_NONE;
 
@@ -227,13 +265,12 @@ static void parse_aircraft_json(JsonDocument &doc) {
     for (int i = 0; i < _aircraft_list->count; i++) {
         Aircraft &a = _aircraft_list->aircraft[i];
         if (a.stale_since != 0) continue;
-        if (a.is_emergency) {
-            // Emergency alerts always fire (no dedup)
+        if (a.is_emergency && g_config.alert_emergency) {
             char msg[48];
             snprintf(msg, sizeof(msg), "Squawk %04d - %s", a.squawk,
                      a.squawk == 7500 ? "HIJACK" : a.squawk == 7600 ? "COMMS FAIL" : "EMERGENCY");
             alerts_queue(ALERT_EMERGENCY, a.callsign[0] ? a.callsign : a.icao_hex, msg, a.icao_hex);
-        } else if (a.is_military && !already_alerted(a.icao_hex)) {
+        } else if (a.is_military && g_config.alert_military && !already_alerted(a.icao_hex)) {
             mark_alerted(a.icao_hex);
             alerts_queue(ALERT_MILITARY, a.callsign[0] ? a.callsign : a.icao_hex, a.type_code, a.icao_hex);
         }
@@ -244,12 +281,15 @@ static void parse_aircraft_json(JsonDocument &doc) {
 }
 
 static bool network_connected() {
+#if defined(USE_ETHERNET)
     if (g_config.use_ethernet) {
         if (ETH.linkUp() && ETH.localIP() != IPAddress(0, 0, 0, 0)) {
             _active_net = NET_ETHERNET;
             return true;
         }
-    } else {
+    } else
+#endif
+    {
         if (WiFi.status() == WL_CONNECTED) {
             _active_net = NET_WIFI;
             return true;
@@ -260,20 +300,42 @@ static bool network_connected() {
 }
 
 static void update_ip_addr() {
+#if defined(USE_ETHERNET)
     if (_active_net == NET_ETHERNET)
         strlcpy(_fstats.ip_addr, ETH.localIP().toString().c_str(), sizeof(_fstats.ip_addr));
-    else if (_active_net == NET_WIFI)
+    else
+#endif
+    if (_active_net == NET_WIFI)
         strlcpy(_fstats.ip_addr, WiFi.localIP().toString().c_str(), sizeof(_fstats.ip_addr));
     else
         strlcpy(_fstats.ip_addr, "N/A", sizeof(_fstats.ip_addr));
 }
 
 static void fetch_task(void *param) {
-    // Wait for network to come up
-    Serial.printf("Fetcher: waiting for %s", g_config.use_ethernet ? "Ethernet" : "WiFi");
-    while (!network_connected()) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-        Serial.print(".");
+    // Wait for network to come up (with timeout + C6 reset recovery for WiFi)
+#if defined(USE_ETHERNET)
+    if (g_config.use_ethernet) {
+        Serial.print("Fetcher: waiting for Ethernet");
+        while (!network_connected()) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            Serial.print(".");
+        }
+    } else
+#endif
+    {
+        int retries = 0;
+        while (!network_connected()) {
+            if (retries > 0) {
+                if (retries % WIFI_MAX_RETRIES == 0) {
+                    Serial.printf("\nWiFi failed %d times, hard-resetting C6\n", retries);
+                    error_log_add("WiFi stuck, C6 reset #%d", retries / WIFI_MAX_RETRIES);
+                    reset_wifi_c6();
+                }
+            }
+            Serial.printf("Fetcher: WiFi attempt %d\n", retries + 1);
+            if (wifi_connect_with_timeout(WIFI_CONNECT_TIMEOUT_MS)) break;
+            retries++;
+        }
     }
     update_ip_addr();
     const char *net_name = (_active_net == NET_ETHERNET) ? "Ethernet" : "WiFi";
@@ -286,6 +348,7 @@ static void fetch_task(void *param) {
     Serial.printf("ADS-B API URL: %s\n", url);
 
     // Main fetch loop
+    int consecutive_fails = 0;
     while (true) {
         if (network_connected()) {
             if (http_mutex_acquire(pdMS_TO_TICKS(15000))) {
@@ -329,36 +392,54 @@ static void fetch_task(void *param) {
                         if (!err) {
                             parse_aircraft_json(doc);
                             _fstats.fetch_ok++;
+                            consecutive_fails = 0;
                             Serial.printf("Fetched %d ac, heap=%lu\n",
                                 _aircraft_list->count,
                                 (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
                         } else {
                             _fstats.fetch_fail++;
+                            consecutive_fails++;
                             error_log_add("JSON: %s (%uB)", err.c_str(), total);
                             Serial.printf("JSON error: %s (%u bytes)\n", err.c_str(), total);
                         }
                     } else {
                         if (buf) heap_caps_free(buf);
                         _fstats.fetch_fail++;
+                        consecutive_fails++;
                         error_log_add("PSRAM alloc fail / empty resp");
                         Serial.println("PSRAM alloc failed or empty response");
                     }
                 } else {
                     _fstats.fetch_fail++;
-                    error_log_add("HTTP %d", httpCode);
+                    consecutive_fails++;
+                    // Don't log routine connection failures (-1) — transient SSL/network
+                    if (httpCode != -1) {
+                        error_log_add("HTTP %d", httpCode);
+                    }
                     Serial.printf("HTTP error: %d\n", httpCode);
                 }
                 http.end();
                 http_mutex_release();
             }
         } else {
+            consecutive_fails++;
             error_log_add("Network down");
             Serial.println("Network down, waiting...");
             update_ip_addr();
-            if (!g_config.use_ethernet && WiFi.status() != WL_CONNECTED) {
-                WiFi.reconnect();
-            }
         }
+
+        // Watchdog: too many consecutive failures → reset WiFi
+        if (!g_config.use_ethernet && consecutive_fails >= FETCH_FAIL_RESET_THRESHOLD) {
+            Serial.printf("Watchdog: %d consecutive fails, resetting WiFi\n", consecutive_fails);
+            error_log_add("Watchdog: %d fails, C6 reset", consecutive_fails);
+            reset_wifi_c6();
+            if (wifi_connect_with_timeout(WIFI_CONNECT_TIMEOUT_MS)) {
+                update_ip_addr();
+                Serial.printf("WiFi reconnected: %s\n", _fstats.ip_addr);
+            }
+            consecutive_fails = 0;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(ADSB_POLL_INTERVAL_MS));
     }
 }
@@ -478,14 +559,18 @@ void fetcher_init(AircraftList *list) {
     _aircraft_list = list;
     http_mutex_init();
 
-    // Only init ONE network stack per boot to avoid ESP32-P4 SDIO conflicts
+    // Only init ONE network stack per boot
+#if defined(USE_ETHERNET)
     if (g_config.use_ethernet) {
         ETH.begin();
         Serial.println("Ethernet initialization started");
-    } else {
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(g_config.wifi_ssid, g_config.wifi_pass);
-        Serial.println("WiFi initialization started");
+    } else
+#endif
+    {
+        // Reset C6 module on every boot to ensure clean WiFi state
+        // (ESP.restart() only resets the P4, leaving C6 in a potentially bad state)
+        reset_wifi_c6();
+        Serial.println("WiFi initialization started (C6 reset)");
     }
 
     xTaskCreatePinnedToCore(fetch_task, "adsb_fetch", 32768, nullptr, 1, &_fetch_task_handle, 1);

@@ -1,8 +1,25 @@
 #include "enrichment.h"
 #include "http_mutex.h"
+#include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 #include <cstring>
+#include "lvgl.h"
+
+// PSRAM allocator for ArduinoJson — keeps internal RAM free
+struct EnrichPsramAlloc : ArduinoJson::Allocator {
+    void* allocate(size_t size) override {
+        return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+    }
+    void deallocate(void* p) override {
+        heap_caps_free(p);
+    }
+    void* reallocate(void* p, size_t size) override {
+        return heap_caps_realloc(p, size, MALLOC_CAP_SPIRAM);
+    }
+};
+static EnrichPsramAlloc _enrich_alloc;
 
 #define MAX_CACHE 20
 
@@ -11,8 +28,11 @@ static char _cache_keys[MAX_CACHE][7];
 static int _cache_count = 0;
 
 static void (*_pending_callback)(AircraftEnrichment *) = nullptr;
-static AircraftEnrichment *_pending_result = nullptr;
 static volatile bool _task_running = false;
+
+// Deferred callback — set by task, delivered by LVGL timer
+static volatile AircraftEnrichment *_deferred_entry = nullptr;
+static volatile bool _deferred_ready = false;
 
 struct EnrichParams {
     char icao_hex[7];
@@ -29,15 +49,49 @@ AircraftEnrichment *enrichment_get_cached(const char *icao_hex) {
 }
 
 static AircraftEnrichment *get_or_create_cache_entry(const char *icao_hex) {
-    // Check existing
     for (int i = 0; i < _cache_count; i++) {
         if (strcmp(_cache_keys[i], icao_hex) == 0) return &_cache[i];
     }
-    // Create new (evict oldest if full)
     int idx = _cache_count < MAX_CACHE ? _cache_count++ : 0;
     memset(&_cache[idx], 0, sizeof(AircraftEnrichment));
     strlcpy(_cache_keys[idx], icao_hex, 7);
     return &_cache[idx];
+}
+
+// Signal LVGL context to call the callback (thread-safe)
+static void notify_callback(AircraftEnrichment *entry) {
+    _deferred_entry = entry;
+    _deferred_ready = true;
+}
+
+// Read HTTP response into PSRAM buffer, parse with PSRAM allocator
+static bool fetch_and_parse(HTTPClient &http, JsonDocument &doc) {
+    int len = http.getSize();
+    size_t buf_size = (len > 0 && len < 16384) ? (size_t)len + 1 : 8192;
+    char *buf = (char *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
+    if (!buf) { http.end(); return false; }
+
+    size_t total = 0;
+    WiFiClient *stream = http.getStreamPtr();
+    uint32_t deadline = millis() + 8000;
+    size_t target = (len > 0) ? (size_t)len : buf_size - 1;
+    while (total < target && millis() < deadline) {
+        int avail = stream->available();
+        if (avail > 0) {
+            int to_read = min((size_t)avail, target - total);
+            total += stream->readBytes(buf + total, to_read);
+        } else if (!stream->connected()) {
+            break;
+        } else {
+            vTaskDelay(1);
+        }
+    }
+    buf[total] = '\0';
+    http.end();
+
+    bool ok = !deserializeJson(doc, buf, total);
+    heap_caps_free(buf);
+    return ok;
 }
 
 static void fetch_task(void *param) {
@@ -53,36 +107,32 @@ static void fetch_task(void *param) {
         HTTPClient http;
         http.begin(url);
         http.setTimeout(5000);
-        int code = http.GET();
-        if (code == HTTP_CODE_OK) {
-            JsonDocument doc;
-            if (!deserializeJson(doc, http.getString())) {
+        if (http.GET() == HTTP_CODE_OK) {
+            JsonDocument doc(&_enrich_alloc);
+            if (fetch_and_parse(http, doc)) {
                 JsonObject route = doc["response"]["flightroute"];
-                const char *orig_name = route["origin"]["name"] | "";
-                const char *dest_name = route["destination"]["name"] | "";
-                strlcpy(entry->origin_airport, orig_name, sizeof(entry->origin_airport));
-                strlcpy(entry->destination_airport, dest_name, sizeof(entry->destination_airport));
+                strlcpy(entry->origin_airport, route["origin"]["name"] | "", sizeof(entry->origin_airport));
+                strlcpy(entry->destination_airport, route["destination"]["name"] | "", sizeof(entry->destination_airport));
                 const char *airline = route["airline"]["name"] | "";
                 if (airline[0]) strlcpy(entry->airline, airline, sizeof(entry->airline));
             }
+        } else {
+            http.end();
         }
-        http.end();
         http_mutex_release();
-        if (_pending_callback) _pending_callback(entry);
+        notify_callback(entry);
     }
 
     // Stage 2: Aircraft details from adsbdb
     if (http_mutex_acquire(pdMS_TO_TICKS(8000))) {
         char url[128];
-        snprintf(url, sizeof(url),
-                 "https://api.adsbdb.com/v0/aircraft/%s", params->icao_hex);
+        snprintf(url, sizeof(url), "https://api.adsbdb.com/v0/aircraft/%s", params->icao_hex);
         HTTPClient http;
         http.begin(url);
         http.setTimeout(5000);
-        int code = http.GET();
-        if (code == HTTP_CODE_OK) {
-            JsonDocument doc;
-            if (!deserializeJson(doc, http.getString())) {
+        if (http.GET() == HTTP_CODE_OK) {
+            JsonDocument doc(&_enrich_alloc);
+            if (fetch_and_parse(http, doc)) {
                 JsonObject ac = doc["response"]["aircraft"];
                 strlcpy(entry->manufacturer, ac["manufacturer"] | "", sizeof(entry->manufacturer));
                 strlcpy(entry->model, ac["type"] | "", sizeof(entry->model));
@@ -93,13 +143,14 @@ static void fetch_task(void *param) {
                 strlcpy(entry->engine_type, ac["engine_type"] | "", sizeof(entry->engine_type));
                 entry->year_built = ac["year_built"] | 0;
             }
+        } else {
+            http.end();
         }
-        http.end();
         http_mutex_release();
-        if (_pending_callback) _pending_callback(entry);
+        notify_callback(entry);
     }
 
-    // Stage 3: Photo from planespotters.net (brief delay for rate limit)
+    // Stage 3: Photo from planespotters.net
     vTaskDelay(pdMS_TO_TICKS(200));
     if (http_mutex_acquire(pdMS_TO_TICKS(8000))) {
         char url[128];
@@ -108,30 +159,24 @@ static void fetch_task(void *param) {
         HTTPClient http;
         http.begin(url);
         http.setTimeout(5000);
-        int code = http.GET();
-        if (code == HTTP_CODE_OK) {
-            JsonDocument doc;
-            if (!deserializeJson(doc, http.getString())) {
+        if (http.GET() == HTTP_CODE_OK) {
+            JsonDocument doc(&_enrich_alloc);
+            if (fetch_and_parse(http, doc)) {
                 JsonArray photos = doc["photos"].as<JsonArray>();
                 if (photos.size() > 0) {
-                    const char *thumb = photos[0]["thumbnail_large"]["src"] | "";
-                    strlcpy(entry->photo_url, thumb, sizeof(entry->photo_url));
-                    const char *photog = photos[0]["photographer"] | "";
-                    strlcpy(entry->photo_photographer, photog, sizeof(entry->photo_photographer));
+                    strlcpy(entry->photo_url, photos[0]["thumbnail_large"]["src"] | "", sizeof(entry->photo_url));
+                    strlcpy(entry->photo_photographer, photos[0]["photographer"] | "", sizeof(entry->photo_photographer));
                 }
             }
+        } else {
+            http.end();
         }
-        http.end();
         http_mutex_release();
     }
 
     entry->loaded = true;
     entry->loading = false;
-
-    if (_pending_callback) {
-        _pending_callback(entry);
-        _pending_callback = nullptr;
-    }
+    notify_callback(entry);
 
     free(params);
     _task_running = false;
@@ -148,15 +193,27 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
         return;
     }
 
-    // Only one enrichment task at a time — concurrent HTTP exhausts WiFi TX buffers
+    // Only one enrichment task at a time
     if (_task_running) {
         Serial.println("enrich: skipped (task already running)");
         return;
     }
 
     _pending_callback = callback;
+    _deferred_ready = false;
+
     EnrichParams *params = (EnrichParams *)malloc(sizeof(EnrichParams));
     strlcpy(params->icao_hex, icao_hex, sizeof(params->icao_hex));
     strlcpy(params->callsign, callsign ? callsign : "", sizeof(params->callsign));
     xTaskCreatePinnedToCore(fetch_task, "enrich", 10240, params, 0, nullptr, 1);
+}
+
+// Call from LVGL context (main.cpp setup) to install the deferred callback timer
+void enrichment_init() {
+    lv_timer_create([](lv_timer_t *t) {
+        if (_deferred_ready && _pending_callback && _deferred_entry) {
+            _deferred_ready = false;
+            _pending_callback((AircraftEnrichment *)_deferred_entry);
+        }
+    }, 200, nullptr);
 }

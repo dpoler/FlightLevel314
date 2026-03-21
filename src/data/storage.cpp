@@ -20,9 +20,11 @@ UserConfig storage_load_config() {
     cfg.use_metric = false;
     cfg.use_ethernet = false; // WiFi by default
     cfg.watchlist_count = 0;
+    cfg.alert_military = true;
+    cfg.alert_emergency = true;
     cfg.alert_autofocus = true; // auto-switch to map on mil/emg alerts
-    cfg.cycle_enabled = false;
-    cfg.cycle_interval_s = 30;
+    cfg.cycle_enabled = true;
+    cfg.cycle_interval_s = 15;
     cfg.cycle_inactivity_s = 60;
     cfg.trails_enabled = true;
     cfg.trail_max_points = 30;
@@ -43,6 +45,8 @@ UserConfig storage_load_config() {
     cfg.radius_nm = _prefs.getInt("radius", cfg.radius_nm);
     cfg.use_metric = _prefs.getBool("metric", cfg.use_metric);
     cfg.use_ethernet = _prefs.getBool("use_eth", cfg.use_ethernet);
+    cfg.alert_military = _prefs.getBool("alrt_mil", cfg.alert_military);
+    cfg.alert_emergency = _prefs.getBool("alrt_emg", cfg.alert_emergency);
     cfg.alert_autofocus = _prefs.getBool("alrt_af", cfg.alert_autofocus);
     cfg.cycle_enabled = _prefs.getBool("cyc_on", cfg.cycle_enabled);
     cfg.cycle_interval_s = _prefs.getInt("cyc_int", cfg.cycle_interval_s);
@@ -69,6 +73,8 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putInt("radius", cfg.radius_nm);
     _prefs.putBool("metric", cfg.use_metric);
     _prefs.putBool("use_eth", cfg.use_ethernet);
+    _prefs.putBool("alrt_mil", cfg.alert_military);
+    _prefs.putBool("alrt_emg", cfg.alert_emergency);
     _prefs.putBool("alrt_af", cfg.alert_autofocus);
     _prefs.putBool("cyc_on", cfg.cycle_enabled);
     _prefs.putInt("cyc_int", cfg.cycle_interval_s);
