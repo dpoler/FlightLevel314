@@ -9,6 +9,13 @@
                             // filtered out during parsing (locations.cpp)
 #define LOC_ICAO_LEN  8
 
+// Safety ceiling for cached nearby LARGE airports per location (see the
+// nearby-runways declarations below). Large-only rarely approaches this even
+// in dense metro areas (KJFK at 50nm has ~20 airports total, but only a
+// handful are classified `large_airport` -- JFK/LGA/EWR-class) -- this just
+// bounds the pathological case.
+#define NEARBY_MAX 20
+
 struct LocRunway {
     float le_lat, le_lon;
     float he_lat, he_lon;
@@ -22,6 +29,10 @@ struct Location {
     int elevation_ft;
     LocRunway runways[MAX_RUNWAYS];
     int runway_count;
+    bool nearby_enabled; // "show nearby large airports' runways" toggle
+    int nearby_count;    // cached count -- cheap to read for any row's badge
+                          // without loading the actual runway data (see
+                          // locations_nearby_count())
 };
 
 // Home is not stored here — it's the existing g_config.home_lat/home_lon,
@@ -73,3 +84,32 @@ bool locations_get_active_coords(float *lat, float *lon, int *elevation_ft);
 // this each time they need the list, rather than caching the result — the
 // active location can change out from under them at any time via the picker.
 AircraftList* locations_active_list(AircraftList *home_list);
+
+// "Nearby large airports" cache: draws full runway geometry (not just a
+// glyph) for large airports near a saved location or Home, on top of that
+// location's own runways. idx follows locations_active_index()'s convention:
+// -1 = Home, [0, locations_count()) = saved. Large airports only (from the
+// static DB's `large` flag) -- medium airports stay glyph-only. A dense
+// 50nm radius (e.g. KJFK) can have ~20 airports total, but rarely more than
+// a handful of LARGE ones, which is both the cheaper set to fetch and the
+// one worth a full runway diagram at a glance.
+//
+// Fetched once, at the moment the toggle is first turned on -- same
+// fetch-and-cache-at-a-discrete-action reasoning as locations_add_from_icao()
+// itself, not lazily as airports scroll into view, so it never needs to
+// re-fetch across zoom levels. Only the *active* location's cache is ever
+// resident in DRAM at once (loaded from NVS on demand) -- embedding it
+// inline in all MAX_LOCATIONS slots at all times would multiply DRAM use by
+// 15x for data that's only ever drawn for whichever one location is active.
+bool locations_nearby_enabled(int idx);
+int locations_nearby_count(int idx);                  // cheap: persisted header only, safe for any row (e.g. the picker's "+N nearby" badge)
+void locations_nearby_set_enabled(int idx, bool on);   // turning on triggers a fetch if nothing's cached yet; turning off just stops drawing it (cached data stays on disk)
+
+// Currently active location's cached nearby-airport list (lazily (re)loaded
+// from NVS whenever the active location changes). Empty if the toggle is off
+// or nothing's been fetched yet.
+const Location* locations_nearby_get_active(int *count);
+
+// Poll counterpart to locations_add_poll() -- call from the same
+// location_poll_task loop. Drains one queued nearby-airport fetch per call.
+void locations_nearby_poll();

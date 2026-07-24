@@ -631,6 +631,17 @@ static void draw_saved_airports(lv_layer_t *layer) {
             draw_airport_glyph(layer, sx, sy, loc->icao);
         }
     }
+
+    // Nearby large airports (locations.h's nearby-runways cache) -- full
+    // runway geometry on top of the active location's own, same as if each
+    // were individually saved. Only the active location's cache is ever
+    // resident (locations_nearby_get_active() loads it lazily), so this is a
+    // cheap no-op when the toggle is off or nothing's been fetched yet.
+    int nearby_n;
+    const Location *nearby = locations_nearby_get_active(&nearby_n);
+    for (int i = 0; i < nearby_n; i++) {
+        if (nearby[i].runway_count > 0) draw_runways_for(layer, &nearby[i], placed, radius_nm);
+    }
 }
 
 #if HAS_AIRPORTS_DB
@@ -640,13 +651,18 @@ static bool is_saved_icao(const char *icao) {
         const Location *loc = locations_get(i);
         if (loc && strcmp(loc->icao, icao) == 0) return true;
     }
+    int nn;
+    const Location *nearby = locations_nearby_get_active(&nn);
+    for (int i = 0; i < nn; i++) {
+        if (strcmp(nearby[i].icao, icao) == 0) return true;
+    }
     return false;
 }
 
 // Passive "there's an airport here" markers from the static compiled-in DB
 // (large/medium airports worldwide — see tools/generate_airports_db.py).
-// Anything already drawn with runways by draw_saved_airports() is skipped
-// here to avoid a double marker.
+// Anything already drawn with runways by draw_saved_airports() (including
+// the nearby-large-airport cache) is skipped here to avoid a double marker.
 static void draw_static_airport_glyphs(lv_layer_t *layer) {
     // Medium airports used to be suppressed above 25nm to avoid cluttering
     // wide views, but that meant real nearby fields (e.g. KBJC/KBKF around

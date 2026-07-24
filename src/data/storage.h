@@ -82,6 +82,12 @@ struct UserConfig {
     int last_view_idx;              // VIEW_MAP/VIEW_RADAR/VIEW_ARRIVALS/VIEW_STATS (views.h)
     int last_range_idx;             // index into range.cpp's levels, 0 = widest
     char last_location_icao[8];     // matches LOC_ICAO_LEN (locations.h); "" = Home
+
+    // Home's own "show nearby large airports' runways" toggle -- Home has no
+    // Location slot of its own (see locations.h), so it can't carry
+    // Location::nearby_enabled/nearby_count the way saved airports do.
+    bool home_nearby_enabled;
+    int home_nearby_count;
 };
 
 // Load config from NVS. Returns defaults if not found.

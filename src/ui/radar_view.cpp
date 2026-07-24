@@ -560,6 +560,15 @@ static void draw_radar_saved_airports(lv_layer_t *layer) {
             draw_radar_airport_glyph(layer, sx, sy, loc->icao);
         }
     }
+
+    // Nearby large airports (locations.h's nearby-runways cache) -- see
+    // map_view.cpp's draw_saved_airports() for the full reasoning; only the
+    // active location's cache is ever resident, loaded lazily.
+    int nearby_n;
+    const Location *nearby = locations_nearby_get_active(&nearby_n);
+    for (int i = 0; i < nearby_n; i++) {
+        if (nearby[i].runway_count > 0) draw_radar_runways_for(layer, &nearby[i], placed, radius_nm);
+    }
 }
 
 #if HAS_AIRPORTS_DB
@@ -569,11 +578,17 @@ static bool radar_is_saved_icao(const char *icao) {
         const Location *loc = locations_get(i);
         if (loc && strcmp(loc->icao, icao) == 0) return true;
     }
+    int nn;
+    const Location *nearby = locations_nearby_get_active(&nn);
+    for (int i = 0; i < nn; i++) {
+        if (strcmp(nearby[i].icao, icao) == 0) return true;
+    }
     return false;
 }
 
 // Passive "there's an airport here" markers from the static compiled-in DB
-// -- skips anything already drawn with runways/glyph above.
+// -- skips anything already drawn with runways/glyph above (including the
+// nearby-large-airport cache).
 static void draw_radar_static_airport_glyphs(lv_layer_t *layer) {
     for (int i = 0; i < AIRPORTS_DB_COUNT; i++) {
         const StaticAirport &ap = airports_db[i];

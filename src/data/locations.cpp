@@ -3,6 +3,7 @@
 #include "http_mutex.h"
 #include "fetcher.h"
 #include "../ui/range.h"
+#include "../ui/geo.h"
 #include "lvgl.h"
 #include <Arduino.h>
 #include <Preferences.h>
@@ -13,6 +14,18 @@
 #include <esp_heap_caps.h>
 #include <cstring>
 #include <cctype>
+
+// Static airport glyph DB (icao/lat/lon/large-flag only, no runway geometry
+// -- see tools/generate_airports_db.py) is gitignored like static_map_data.h;
+// same __has_include pattern map_view.cpp/radar_view.cpp use, needed here
+// too since the nearby-large-airport scan (locations_nearby_set_enabled())
+// reads it directly rather than going through a view file.
+#if __has_include("../ui/airports_db.h")
+#include "../ui/airports_db.h"
+#define HAS_AIRPORTS_DB 1
+#else
+#define HAS_AIRPORTS_DB 0
+#endif
 
 // NetworkClientSecure's default TLS handshake timeout is 120s and is NOT
 // bounded by HTTPClient::setTimeout() (that only covers the read phase after
@@ -44,6 +57,44 @@ static Location _locations[MAX_LOCATIONS];
 static int _count = 0;
 static int _active_index = -1; // -1 = Home
 
+// Nearby-large-airport cache -- only the *active* location's data is ever
+// resident in DRAM (loaded lazily, see locations_nearby_get_active()).
+// Everything else lives in NVS under a per-owner key until it's needed.
+static Location _nearby[NEARBY_MAX];
+static int _nearby_loaded_count = 0;
+static int _nearby_loaded_for = -2; // sentinel: -2 = nothing loaded yet, -1 = Home, >=0 = saved idx
+
+// Fetch queue for the currently-in-progress nearby-airport cache pass (one
+// owner at a time, same "no dedicated task, ride location_poll_task's
+// existing stack" reasoning as the add-by-ICAO queue below).
+//
+// The owner is tracked by ICAO (or "is home"), NOT by _locations[] index --
+// a fetch pass can take several seconds to drain, during which
+// locations_reorder()/locations_remove() can freely change what a given
+// index points at (both are explicitly documented as shifting the array).
+// Resolving by ICAO at commit time (nearby_resolve_owner_idx()) avoids
+// silently writing a completed fetch into the wrong airport's cache slot.
+static char _nearby_queue_icao[NEARBY_MAX][LOC_ICAO_LEN];
+static int _nearby_queue_len = 0;
+static int _nearby_queue_pos = 0;
+static bool _nearby_queue_active = false;
+static bool _nearby_queue_owner_is_home = false;
+static char _nearby_queue_owner_icao[LOC_ICAO_LEN] = {};
+static Location _nearby_fetch_buf[NEARBY_MAX]; // accumulates results until the queue drains, then one NVS write
+static int _nearby_fetch_buf_count = 0;
+
+// If a toggle-on happens while a different owner's fetch pass is already in
+// flight, it's queued here rather than clobbering the in-progress one (which
+// would silently strand the first owner's toggle as "enabled" with nothing
+// ever fetched for it, since a scan is only ever triggered on the off->on
+// transition). Small fixed cap -- toggling more than a few locations on in
+// one sitting before the first pass finishes is not a realistic case worth
+// unbounded queuing for.
+#define NEARBY_PENDING_OWNERS_MAX 4
+static char _nearby_pending_icao[NEARBY_PENDING_OWNERS_MAX][LOC_ICAO_LEN];
+static bool _nearby_pending_is_home[NEARBY_PENDING_OWNERS_MAX];
+static int _nearby_pending_count = 0;
+
 static void location_sync_timer_cb(lv_timer_t *t);
 
 // "Add by ICAO" request/response — processed by locations_add_poll(), called
@@ -64,11 +115,20 @@ static char _add_result_err[48] = {};
 // kind of large blocking flash write that visibly stalls this board's LCD
 // panel (see project_p4_heap_constraints memory -- the cyan-flash bug).
 // Packing tightly keeps the write proportional to real data.
+// Also reused as-is for each entry in a nearby-airport cache blob (see
+// nearby_commit()/locations_nearby_get_active()) -- same per-airport fields,
+// just written under a different key and not counted against MAX_LOCATIONS.
+// Growing this header (nearby_enabled/nearby_count added) changes the
+// on-disk format -- same accepted precedent as the MAX_RUNWAYS bump: saved
+// airports reset to empty once on the first boot after upgrading.
 struct LocationHeader {
     char icao[LOC_ICAO_LEN];
     float lat, lon;
     int elevation_ft;
     int runway_count;
+    int nearby_enabled; // stored as int, not bool, to keep the struct's
+                          // layout unambiguous across a raw memcpy into NVS
+    int nearby_count;
 };
 
 static void save_all() {
@@ -90,6 +150,8 @@ static void save_all() {
                 hdr.lon = loc.lon;
                 hdr.elevation_ft = loc.elevation_ft;
                 hdr.runway_count = loc.runway_count;
+                hdr.nearby_enabled = loc.nearby_enabled ? 1 : 0;
+                hdr.nearby_count = loc.nearby_count;
                 memcpy(buf + pos, &hdr, sizeof(hdr));
                 pos += sizeof(hdr);
                 size_t rwy_bytes = (size_t)loc.runway_count * sizeof(LocRunway);
@@ -134,6 +196,8 @@ void locations_init() {
                 loc.lon = hdr.lon;
                 loc.elevation_ft = hdr.elevation_ft;
                 loc.runway_count = hdr.runway_count;
+                loc.nearby_enabled = hdr.nearby_enabled != 0;
+                loc.nearby_count = hdr.nearby_count;
                 memcpy(loc.runways, buf + pos, rwy_bytes);
                 pos += rwy_bytes;
             }
@@ -282,24 +346,20 @@ static void location_sync_timer_cb(lv_timer_t *t) {
 // Not verified against a live response in this environment (no network
 // access while writing this) — if fields come back zeroed/missing on real
 // hardware, check the actual response shape and adjust the keys below.
-bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
+//
+// Shared by locations_add_from_icao() (adds a user-saved location) and the
+// nearby-large-airport cache fetch (locations_nearby_poll()) -- same
+// network/parsing logic, only what the caller does with the result differs.
+// Does NOT check g_config.airportdb_token, MAX_LOCATIONS, or de-dupe against
+// existing saves -- those are caller-specific and stay in
+// locations_add_from_icao(); the nearby-cache path has none of them (it
+// doesn't count against MAX_LOCATIONS and duplicates across different
+// owners' nearby lists are fine).
+static bool fetch_airport_data(const char *icao_upper, Location &out, char *err, size_t err_size) {
     auto fail = [&](const char *msg) {
         if (err && err_size) strlcpy(err, msg, err_size);
         return false;
     };
-
-    if (!icao || !icao[0]) return fail("no ICAO given");
-    if (_count >= MAX_LOCATIONS) return fail("location list full");
-    if (!g_config.airportdb_token[0]) return fail("no airportdb.io token set");
-
-    char icao_upper[LOC_ICAO_LEN] = {};
-    strlcpy(icao_upper, icao, sizeof(icao_upper));
-    for (char *p = icao_upper; *p; p++) *p = toupper((unsigned char)*p);
-
-    // Check for an existing entry first — avoid duplicate network calls.
-    for (int i = 0; i < _count; i++) {
-        if (strcmp(_locations[i].icao, icao_upper) == 0) return fail("already saved");
-    }
 
     if (!http_mutex_acquire(pdMS_TO_TICKS(15000))) return fail("network busy, try again");
 
@@ -349,15 +409,15 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
                     float lat = doc["latitude_deg"].as<float>();
                     float lon = doc["longitude_deg"].as<float>();
                     if (lat != 0.0f || lon != 0.0f) {
-                        Location loc = {};
-                        strlcpy(loc.icao, icao_upper, sizeof(loc.icao));
-                        loc.lat = lat;
-                        loc.lon = lon;
-                        loc.elevation_ft = doc["elevation_ft"].as<int>();
+                        out = Location{};
+                        strlcpy(out.icao, icao_upper, sizeof(out.icao));
+                        out.lat = lat;
+                        out.lon = lon;
+                        out.elevation_ft = doc["elevation_ft"].as<int>();
 
                         JsonArray rwys = doc["runways"].as<JsonArray>();
                         for (JsonObject r : rwys) {
-                            if (loc.runway_count >= MAX_RUNWAYS) break;
+                            if (out.runway_count >= MAX_RUNWAYS) break;
                             // Skip decommissioned runways -- OurAirports (which
                             // airportdb.io wraps) tracks this per-runway (e.g.
                             // KORD's old diagonals 14L/32R and 18/36 are marked
@@ -383,7 +443,7 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
                             if ((le_lat == 0.0f && le_lon == 0.0f) ||
                                 (he_lat == 0.0f && he_lon == 0.0f)) continue;
 
-                            LocRunway &rw = loc.runways[loc.runway_count++];
+                            LocRunway &rw = out.runways[out.runway_count++];
                             rw.le_lat = le_lat;
                             rw.le_lon = le_lon;
                             rw.he_lat = he_lat;
@@ -392,8 +452,6 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
                             strlcpy(rw.he_id, r["he_ident"] | "", sizeof(rw.he_id));
                         }
 
-                        _locations[_count++] = loc;
-                        save_all();
                         ok = true;
                     } else {
                         fail("airport not found");
@@ -421,6 +479,33 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
     http.end();
     http_mutex_release();
     return ok;
+}
+
+bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
+    auto fail = [&](const char *msg) {
+        if (err && err_size) strlcpy(err, msg, err_size);
+        return false;
+    };
+
+    if (!icao || !icao[0]) return fail("no ICAO given");
+    if (_count >= MAX_LOCATIONS) return fail("location list full");
+    if (!g_config.airportdb_token[0]) return fail("no airportdb.io token set");
+
+    char icao_upper[LOC_ICAO_LEN] = {};
+    strlcpy(icao_upper, icao, sizeof(icao_upper));
+    for (char *p = icao_upper; *p; p++) *p = toupper((unsigned char)*p);
+
+    // Check for an existing entry first — avoid duplicate network calls.
+    for (int i = 0; i < _count; i++) {
+        if (strcmp(_locations[i].icao, icao_upper) == 0) return fail("already saved");
+    }
+
+    Location loc;
+    if (!fetch_airport_data(icao_upper, loc, err, err_size)) return false;
+
+    _locations[_count++] = loc;
+    save_all();
+    return true;
 }
 
 void locations_request_add(const char *icao) {
@@ -466,4 +551,293 @@ bool locations_add_result(bool *ok, char *err, size_t err_size) {
     }
     xSemaphoreGive(_add_mutex);
     return ready;
+}
+
+// ---- Nearby-large-airport cache ----------------------------------------
+//
+// No new synchronization here beyond what _locations[]/_count already have
+// (none) -- locations_nearby_poll() runs on location_poll_task same as
+// locations_add_poll(), and the picker/draw-side reads happen from the
+// UI/render thread with the same accepted eventual-consistency as every
+// other read of _locations[] in this file.
+
+static bool nearby_owner_coords(int idx, float *lat, float *lon, const char **icao_or_null) {
+    if (idx == -1) {
+        *lat = g_config.home_lat;
+        *lon = g_config.home_lon;
+        if (icao_or_null) *icao_or_null = nullptr;
+        return true;
+    }
+    const Location *loc = locations_get(idx);
+    if (!loc) return false;
+    *lat = loc->lat;
+    *lon = loc->lon;
+    if (icao_or_null) *icao_or_null = loc->icao;
+    return true;
+}
+
+// "nb_home" for Home, "nb_<ICAO>" for a saved location -- both comfortably
+// under Preferences' 15-char key limit (LOC_ICAO_LEN caps ICAO at 7 chars).
+static void nearby_nvs_key(int idx, char *out, size_t out_size) {
+    if (idx == -1) {
+        strlcpy(out, "nb_home", out_size);
+        return;
+    }
+    const Location *loc = locations_get(idx);
+    snprintf(out, out_size, "nb_%s", loc ? loc->icao : "");
+}
+
+bool locations_nearby_enabled(int idx) {
+    if (idx == -1) return g_config.home_nearby_enabled;
+    const Location *loc = locations_get(idx);
+    return loc ? loc->nearby_enabled : false;
+}
+
+int locations_nearby_count(int idx) {
+    if (idx == -1) return g_config.home_nearby_count;
+    const Location *loc = locations_get(idx);
+    return loc ? loc->nearby_count : 0;
+}
+
+// Writes the fully-drained fetch batch for `owner_idx` to NVS in one shot
+// (not incrementally per-fetch -- avoids repeated read-modify-write churn on
+// a blob that's growing across a burst of several sequential fetches), and
+// updates that owner's persisted nearby_count header field. If the owner is
+// the currently active location, also refreshes the resident draw-time
+// cache (_nearby[]) immediately rather than waiting for the next active-
+// index change to trigger a reload.
+static void nearby_commit(int owner_idx, const Location *entries, int n) {
+    char key[16];
+    nearby_nvs_key(owner_idx, key, sizeof(key));
+
+    _prefs.begin("adsb_locs", false);
+    if (n > 0) {
+        size_t buf_size = sizeof(int32_t);
+        for (int i = 0; i < n; i++)
+            buf_size += sizeof(LocationHeader) + (size_t)entries[i].runway_count * sizeof(LocRunway);
+
+        uint8_t *buf = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
+        if (buf) {
+            size_t pos = 0;
+            int32_t cnt = n;
+            memcpy(buf, &cnt, sizeof(cnt));
+            pos += sizeof(cnt);
+            for (int i = 0; i < n; i++) {
+                const Location &e = entries[i];
+                LocationHeader hdr;
+                strlcpy(hdr.icao, e.icao, sizeof(hdr.icao));
+                hdr.lat = e.lat;
+                hdr.lon = e.lon;
+                hdr.elevation_ft = e.elevation_ft;
+                hdr.runway_count = e.runway_count;
+                hdr.nearby_enabled = 0; // unused for nearby-cache entries themselves
+                hdr.nearby_count = 0;
+                memcpy(buf + pos, &hdr, sizeof(hdr));
+                pos += sizeof(hdr);
+                size_t rwy_bytes = (size_t)e.runway_count * sizeof(LocRunway);
+                memcpy(buf + pos, e.runways, rwy_bytes);
+                pos += rwy_bytes;
+            }
+            _prefs.putBytes(key, buf, buf_size);
+            heap_caps_free(buf);
+        }
+    } else {
+        _prefs.remove(key);
+    }
+    _prefs.end();
+
+    if (owner_idx == -1) {
+        g_config.home_nearby_count = n;
+        storage_save_config(g_config);
+    } else if (owner_idx >= 0 && owner_idx < _count) {
+        _locations[owner_idx].nearby_count = n;
+        save_all();
+    }
+
+    if (owner_idx == _active_index) {
+        int copy_n = (n < NEARBY_MAX) ? n : NEARBY_MAX;
+        memcpy(_nearby, entries, copy_n * sizeof(Location));
+        _nearby_loaded_count = copy_n;
+        _nearby_loaded_for = owner_idx;
+    }
+}
+
+// Resolves the in-flight queue's owner (tracked by ICAO/is-home, see above)
+// back to a current _locations[] index at commit time. Returns -1 for Home
+// (always resolvable), or -2 if a saved owner was removed while its fetch
+// pass was still in flight (nothing to commit it into anymore).
+static int nearby_resolve_owner_idx() {
+    if (_nearby_queue_owner_is_home) return -1;
+    for (int i = 0; i < _count; i++)
+        if (strcmp(_locations[i].icao, _nearby_queue_owner_icao) == 0) return i;
+    return -2;
+}
+
+// Builds and starts the static-DB scan queue for one owner (idx: -1 = Home).
+// Assumes no other pass is currently active -- callers check
+// _nearby_queue_active first (locations_nearby_set_enabled queues instead of
+// calling this directly when one is already running).
+static void nearby_start_scan(int idx) {
+#if HAS_AIRPORTS_DB
+    float lat, lon;
+    const char *own_icao = nullptr;
+    if (!nearby_owner_coords(idx, &lat, &lon, &own_icao)) return;
+
+    // Widest configured radius preset -- same "fetch once, cover every zoom
+    // level" reasoning as the primary location save itself, so this never
+    // needs to re-fetch as the user zooms in/out afterward.
+    float radius = (float)g_config.radius_presets[3];
+
+    _nearby_queue_len = 0;
+    for (int i = 0; i < AIRPORTS_DB_COUNT && _nearby_queue_len < NEARBY_MAX; i++) {
+        const StaticAirport &ap = airports_db[i];
+        if (!ap.large) continue; // large airports only -- see locations.h
+        if (own_icao && strcmp(ap.icao, own_icao) == 0) continue; // skip the owner itself
+        if (MapProjection::distance_nm(lat, lon, ap.lat, ap.lon) > radius) continue;
+        strlcpy(_nearby_queue_icao[_nearby_queue_len], ap.icao, LOC_ICAO_LEN);
+        _nearby_queue_len++;
+    }
+    _nearby_queue_pos = 0;
+    _nearby_queue_owner_is_home = (idx == -1);
+    _nearby_queue_owner_icao[0] = '\0';
+    if (own_icao) strlcpy(_nearby_queue_owner_icao, own_icao, sizeof(_nearby_queue_owner_icao));
+    _nearby_fetch_buf_count = 0;
+    _nearby_queue_active = true;
+
+    if (_nearby_queue_len == 0) {
+        // Nothing nearby -- persist the (empty) result immediately so this
+        // isn't re-scanned every time the toggle is flipped.
+        _nearby_queue_active = false;
+        nearby_commit(idx, nullptr, 0);
+    }
+#endif
+}
+
+static void nearby_queue_pending(int idx) {
+    if (_nearby_pending_count >= NEARBY_PENDING_OWNERS_MAX) return; // best-effort cap, silently dropped
+    int slot = _nearby_pending_count++;
+    _nearby_pending_is_home[slot] = (idx == -1);
+    _nearby_pending_icao[slot][0] = '\0';
+    if (idx != -1) strlcpy(_nearby_pending_icao[slot], _locations[idx].icao, LOC_ICAO_LEN);
+}
+
+void locations_nearby_set_enabled(int idx, bool on) {
+    if (idx == -1) {
+        if (g_config.home_nearby_enabled == on) return;
+        g_config.home_nearby_enabled = on;
+        storage_save_config(g_config);
+    } else {
+        if (idx < 0 || idx >= _count) return;
+        if (_locations[idx].nearby_enabled == on) return;
+        _locations[idx].nearby_enabled = on;
+        save_all();
+    }
+
+    // Turning off just stops drawing it -- cached data stays on disk so
+    // turning back on later doesn't need to re-fetch.
+    if (!on) return;
+    if (locations_nearby_count(idx) > 0) return; // already cached, nothing to do
+
+    if (_nearby_queue_active) {
+        nearby_queue_pending(idx); // another owner's pass is already running -- wait our turn
+    } else {
+        nearby_start_scan(idx);
+    }
+}
+
+void locations_nearby_poll() {
+    if (!_nearby_queue_active || _nearby_queue_pos >= _nearby_queue_len) return;
+
+    const char *icao = _nearby_queue_icao[_nearby_queue_pos++];
+    if (_nearby_fetch_buf_count < NEARBY_MAX) {
+        Location entry;
+        char err[48];
+        // Best-effort: one bad/rate-limited fetch shouldn't abort caching
+        // the rest of the queue -- this is a background visual enhancement,
+        // not a user-facing add flow with its own error surface to report to
+        // (unlike locations_add_from_icao(), whose failure the picker shows
+        // directly).
+        if (fetch_airport_data(icao, entry, err, sizeof(err))) {
+            _nearby_fetch_buf[_nearby_fetch_buf_count++] = entry;
+        }
+    }
+
+    if (_nearby_queue_pos >= _nearby_queue_len) {
+        _nearby_queue_active = false;
+        int resolved = nearby_resolve_owner_idx();
+        // resolved == -2: the owner was removed mid-fetch -- drop the
+        // results, there's nothing left to commit them into.
+        if (resolved != -2) nearby_commit(resolved, _nearby_fetch_buf, _nearby_fetch_buf_count);
+
+        if (_nearby_pending_count > 0) {
+            bool next_is_home = _nearby_pending_is_home[0];
+            char next_icao[LOC_ICAO_LEN];
+            strlcpy(next_icao, _nearby_pending_icao[0], sizeof(next_icao));
+            for (int i = 1; i < _nearby_pending_count; i++) {
+                _nearby_pending_is_home[i - 1] = _nearby_pending_is_home[i];
+                strlcpy(_nearby_pending_icao[i - 1], _nearby_pending_icao[i], sizeof(_nearby_pending_icao[i - 1]));
+            }
+            _nearby_pending_count--;
+
+            int next_idx = -2;
+            if (next_is_home) {
+                next_idx = -1;
+            } else {
+                for (int i = 0; i < _count; i++)
+                    if (strcmp(_locations[i].icao, next_icao) == 0) { next_idx = i; break; }
+            }
+            if (next_idx != -2) nearby_start_scan(next_idx); // else: that owner was removed while pending -- just drop it
+        }
+    }
+}
+
+const Location* locations_nearby_get_active(int *count) {
+    if (_nearby_loaded_for != _active_index) {
+        _nearby_loaded_count = 0;
+        if (locations_nearby_enabled(_active_index)) {
+            char key[16];
+            nearby_nvs_key(_active_index, key, sizeof(key));
+            _prefs.begin("adsb_locs", true);
+            size_t blob_len = _prefs.getBytesLength(key);
+            if (blob_len >= sizeof(int32_t)) {
+                uint8_t *buf = (uint8_t *)heap_caps_malloc(blob_len, MALLOC_CAP_SPIRAM);
+                if (buf) {
+                    size_t got = _prefs.getBytes(key, buf, blob_len);
+                    size_t pos = 0;
+                    int32_t cnt = 0;
+                    if (pos + sizeof(cnt) <= got) {
+                        memcpy(&cnt, buf, sizeof(cnt));
+                        pos += sizeof(cnt);
+                    }
+                    int parsed = 0;
+                    for (; parsed < cnt && parsed < NEARBY_MAX; parsed++) {
+                        if (pos + sizeof(LocationHeader) > got) break; // truncated -- bail
+                        LocationHeader hdr;
+                        memcpy(&hdr, buf + pos, sizeof(hdr));
+                        pos += sizeof(hdr);
+                        if (hdr.runway_count < 0 || hdr.runway_count > MAX_RUNWAYS) break; // corrupt
+                        size_t rwy_bytes = (size_t)hdr.runway_count * sizeof(LocRunway);
+                        if (pos + rwy_bytes > got) break; // truncated
+
+                        Location &e = _nearby[parsed];
+                        strlcpy(e.icao, hdr.icao, sizeof(e.icao));
+                        e.lat = hdr.lat;
+                        e.lon = hdr.lon;
+                        e.elevation_ft = hdr.elevation_ft;
+                        e.runway_count = hdr.runway_count;
+                        e.nearby_enabled = false;
+                        e.nearby_count = 0;
+                        memcpy(e.runways, buf + pos, rwy_bytes);
+                        pos += rwy_bytes;
+                    }
+                    _nearby_loaded_count = parsed;
+                    heap_caps_free(buf);
+                }
+            }
+            _prefs.end();
+        }
+        _nearby_loaded_for = _active_index;
+    }
+    if (count) *count = _nearby_loaded_count;
+    return _nearby;
 }

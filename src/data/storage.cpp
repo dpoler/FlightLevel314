@@ -50,6 +50,8 @@ UserConfig storage_load_config() {
     cfg.last_view_idx = 0;   // VIEW_MAP
     cfg.last_range_idx = 0;  // widest preset
     cfg.last_location_icao[0] = '\0'; // Home
+    cfg.home_nearby_enabled = false;
+    cfg.home_nearby_count = 0;
 
     _prefs.begin("adsb", true); // read-only
 
@@ -104,6 +106,8 @@ UserConfig storage_load_config() {
     cfg.last_range_idx = _prefs.getInt("last_rng", cfg.last_range_idx);
     if (_prefs.isKey("last_loc"))
         strlcpy(cfg.last_location_icao, _prefs.getString("last_loc", cfg.last_location_icao).c_str(), sizeof(cfg.last_location_icao));
+    cfg.home_nearby_enabled = _prefs.getBool("hm_nb_on", cfg.home_nearby_enabled);
+    cfg.home_nearby_count = _prefs.getInt("hm_nb_cnt", cfg.home_nearby_count);
 
     _prefs.end();
     Serial.println("Storage: config loaded from NVS");
@@ -159,6 +163,8 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putInt("last_view", cfg.last_view_idx);
     _prefs.putInt("last_rng", cfg.last_range_idx);
     _prefs.putString("last_loc", cfg.last_location_icao);
+    _prefs.putBool("hm_nb_on", cfg.home_nearby_enabled);
+    _prefs.putInt("hm_nb_cnt", cfg.home_nearby_count);
 
     _prefs.end();
     Serial.println("Storage: config saved to NVS");
