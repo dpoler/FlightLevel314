@@ -41,15 +41,29 @@ static void reset_wifi_c6() {
     digitalWrite(WIFI_C6_RST, LOW);
     vTaskDelay(pdMS_TO_TICKS(100));
     digitalWrite(WIFI_C6_RST, HIGH);
-    // Poll until ESP-Hosted SDIO link is up rather than using a fixed delay
+
+    // This used to poll WiFi.status() until it left WL_NO_SHIELD (255), on
+    // the theory that's a reliable "SDIO link not up yet" signal. A real
+    // boot log proved that wrong: a genuinely fresh, never-touched
+    // WiFi.status() on this port reads 254, not 255 -- so the poll's exit
+    // condition was never true even on the very first check, and this has
+    // silently been a flat ~1.2s delay on every call, never an adaptive
+    // wait, since the feature was written. That went unnoticed because the
+    // pre-fast-fail retry loop wasted a full 30s per connect attempt
+    // regardless, which incidentally gave the hardware plenty of real
+    // settle time on top of this. Once retries got fast (see
+    // wifi_connect_with_timeout()'s WL_CONNECT_FAILED fast-fail), a real
+    // boot hit 3 failed attempts in ~3s, triggered this reset, and the very
+    // next WiFi.begin() right after crashed the SDIO transport outright
+    // ("Unrecoverable host sdio state" -> hard reboot). There's no
+    // verified-reliable readiness signal to poll instead (hostedIsInitialized()
+    // exists but its behavior at this exact call site -- before WiFi.mode()
+    // has ever run -- is unverified, and guessing wrong here risks the same
+    // class of bug again), so erring generous on a flat delay is the safer
+    // call. status is still logged for whatever diagnostic value it has.
     uint32_t t0 = millis();
-    wl_status_t s;
-    do {
-        vTaskDelay(pdMS_TO_TICKS(200));
-        s = WiFi.status();
-    } while (s == WL_NO_SHIELD && millis() - t0 < 10000);
-    vTaskDelay(pdMS_TO_TICKS(1000)); // let radio settle after SDIO link is up
-    Serial.printf("C6 reset complete (%lums, status=%d)\n", millis() - t0, (int)s);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    Serial.printf("C6 reset complete (%lums, status=%d)\n", millis() - t0, (int)WiFi.status());
 }
 
 // Attempt WiFi connection with timeout. Returns true if connected.
@@ -586,6 +600,19 @@ static void fetch_task(void *param) {
                 Serial.printf("\nWiFi failed %d times, hard-resetting C6\n", retries);
                 error_log_add("WiFi stuck, C6 reset #%d", retries / WIFI_MAX_RETRIES);
                 reset_wifi_c6();
+            } else if (retries > 0) {
+                // wifi_connect_with_timeout()'s fast-fail on WL_CONNECT_FAILED
+                // means a failed attempt can now return in ~0-3s instead of
+                // the old flat 30s -- good for boot time, but a real boot
+                // showed back-to-back attempts firing with zero gap between
+                // them (two consecutive 1ms failures, each just re-reading
+                // the same still-latched status rather than actually
+                // retrying), which turned out to be part of what led to an
+                // SDIO transport crash shortly after (see reset_wifi_c6()'s
+                // comment for the full chain). A short pause costs almost
+                // nothing against the old 30s/attempt baseline but gives the
+                // link a moment to actually settle between attempts.
+                vTaskDelay(pdMS_TO_TICKS(1000));
             }
             Serial.printf("Fetcher: WiFi attempt %d\n", retries + 1);
             if (wifi_connect_with_timeout(WIFI_CONNECT_TIMEOUT_MS)) break;
