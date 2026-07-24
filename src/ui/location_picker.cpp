@@ -131,6 +131,40 @@ static void remove_row_click_cb(lv_event_t *e) {
     build_list_view(); // rebuild panel in place
 }
 
+// "Nearby large airports" toggle -- eye icon in the row's icon cluster (see
+// locations.h for the caching design). Rebuilds the whole list on tap rather
+// than patching just the one icon/badge in place, matching the existing
+// remove/reorder rows' own "just rebuild" approach in this small a popover.
+static void nearby_toggle_click_cb(lv_event_t *e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    locations_nearby_set_enabled(idx, !locations_nearby_enabled(idx));
+    build_list_view();
+}
+
+static void add_nearby_toggle(lv_obj_t *row, int idx) {
+    lv_obj_t *eye = lv_label_create(row);
+    lv_label_set_text(eye, LV_SYMBOL_EYE_OPEN);
+    lv_obj_set_style_text_color(eye, locations_nearby_enabled(idx) ? COLOR_ACCENT : COLOR_DIM, 0);
+    lv_obj_align(eye, LV_ALIGN_RIGHT_MID, -64, 0);
+    lv_obj_add_flag(eye, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(eye, 10);
+    lv_obj_add_event_cb(eye, nearby_toggle_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
+
+    // Only shown once a fetch has actually landed something -- confirms the
+    // cache worked without needing to switch to Map/Radar and look.
+    int count = locations_nearby_count(idx);
+    if (locations_nearby_enabled(idx) && count > 0) {
+        lv_obj_t *badge = lv_label_create(row);
+        char txt[20];
+        snprintf(txt, sizeof(txt), "+%d nearby", count);
+        lv_label_set_text(badge, txt);
+        lv_obj_set_style_text_font(badge, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(badge, COLOR_ACCENT, 0);
+        lv_obj_align(badge, LV_ALIGN_LEFT_MID, 66, 0);
+        lv_obj_clear_flag(badge, LV_OBJ_FLAG_CLICKABLE);
+    }
+}
+
 // Drag-to-reorder -- up/down arrow buttons were tried first but looked
 // misaligned in practice (reported). The handle is a dedicated child object
 // (not the row itself) specifically so a tap-to-select on the row body and
@@ -274,6 +308,11 @@ static void build_list_view() {
         lv_obj_set_style_text_color(lbl, COLOR_TEXT, 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 10, 0);
         lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
+
+        // Home has no remove/reorder icons, so its toggle sits alone at the
+        // same x-position the saved rows use below -- keeps it visually
+        // consistent rather than moving it closer to the edge.
+        add_nearby_toggle(row, -1);
     }
 
     // Saved airports
@@ -307,6 +346,8 @@ static void build_list_view() {
         lv_obj_add_flag(rm, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_ext_click_area(rm, 10);
         lv_obj_add_event_cb(rm, remove_row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+
+        add_nearby_toggle(row, i);
 
         // Drag handle -- press and drag vertically to reorder (see
         // drag_handle_event_cb for how the live widget move + eventual

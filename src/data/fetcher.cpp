@@ -771,6 +771,7 @@ static void location_poll_task(void *param) {
     while (true) {
         location_fetch_poll();
         locations_add_poll();
+        locations_nearby_poll(); // nearby-large-airport runway cache -- one queued fetch per tick, same cadence as locations_add_poll()
         enrichment_poll(); // detail-card aircraft/photo lookups -- see enrichment.cpp
         vTaskDelay(pdMS_TO_TICKS(1500));
     }
