@@ -557,7 +557,7 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     // Top airlines -- AIRCRAFT SEEN is 2 rows deep (ROW_H * 2) plus its own
     // header pitch (ROW_H), then the usual gap before the next header.
     int al_y = ss_y + ROW_H * 3 + SECTION_GAP;
-    create_section_header(_container, "TOP AIRLINES", cx, al_y);
+    create_section_header(_container, "AIRLINES SEEN", cx, al_y);
     for (int i = 0; i < 5; i++) {
         _airline_labels[i] = lv_label_create(_container);
         lv_label_set_text(_airline_labels[i], "");
@@ -569,7 +569,7 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
 
     // Top aircraft types -- same reasoning as above (2 rows of airlines)
     int ty_y = al_y + ROW_H * 3 + SECTION_GAP;
-    create_section_header(_container, "TOP TYPES", cx, ty_y);
+    create_section_header(_container, "TYPES SEEN", cx, ty_y);
     for (int i = 0; i < 5; i++) {
         _type_labels[i] = lv_label_create(_container);
         lv_label_set_text(_type_labels[i], "");
