@@ -1,34 +1,46 @@
 # ADS-B Radar Display
 
-Real-time aircraft tracker on an ESP32-P4 with a 1024x600 touchscreen. Pulls live ADS-B data from [adsb.lol](https://api.adsb.lol) and displays aircraft on four swipeable views.
+Real-time aircraft tracker on an ESP32-P4 with a 1024x600 touchscreen. Pulls live ADS-B data from [adsb.lol](https://api.adsb.lol) and displays aircraft across four views, centered on Home or any of up to 15 saved airports/locations.
 
-![Views](https://img.shields.io/badge/views-Map%20%7C%20Radar%20%7C%20Arrivals%20%7C%20Stats-blue)
+![Views](https://img.shields.io/badge/views-Map%20%7C%20Radar%20%7C%20List%20%7C%20Stats-blue)
 ![Platform](https://img.shields.io/badge/platform-ESP32--P4-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
 ## Screenshots
 
+*(placeholders — swap in current screenshots)*
+
 | | |
 |---|---|
 | ![Main map screen](docs/images/map.JPG) | ![Aircraft detail](docs/images/detail.JPG) |
-| Main map screen | Aircraft detail |
-| ![Radar simulation](docs/images/radar.JPG) | ![Arrival board style view](docs/images/arrivals.JPG) |
-| Radar simulation | Arrival board style view |
+| Map | Aircraft detail card |
+| ![Radar simulation](docs/images/radar.JPG) | ![List board](docs/images/arrivals.JPG) |
+| Radar | List (split-flap board) |
 | ![Stats](docs/images/stats.JPG) | ![Settings](docs/images/settings.PNG) |
 | Stats | Settings |
+| *(add)* | *(add)* |
+| Location picker | VIEW menu |
+
+## Locations: Home + saved airports
+
+There's no single fixed center point. **Home** is one lat/lon/elevation set in Settings, and you can additionally save up to 15 airports by ICAO code (fetched from [airportdb.io](https://airportdb.io), including runway geometry). A picker chip in the status bar switches which one is active — every view (Map/Radar/List/Stats) redraws around whichever location is currently selected, with its own independent trail/tag/filter/range state remembered per view.
+
+Each saved location (Home included) also has an optional **nearby-runways toggle** (eye icon in the picker row): when on, it fetches and caches full runway geometry for nearby *large* airports too, not just the active one — e.g. viewing KJFK can also show KLGA/KEWR's runways, not just glyphs. Medium/small airports and anything outside the toggle's radius still show as a plain "+ ICAO" glyph, sourced from a compiled-in static database of large/medium airports worldwide (`tools/generate_airports_db.py`).
 
 ## Views
 
-- **Map** — Top-down map with aircraft icons (airliner/jet/GA/heli), altitude-colored trails, and static pre-rendered OSM backgrounds at 6 zoom levels
-- **Radar** — Rotating sweep with phosphor-style blips, paint-detail zone showing callsign/route/altitude as the sweep passes each aircraft
-- **Arrivals** — Split-flap departure board with animated character flips, showing callsign, route, type, altitude, speed, distance, and status
-- **Stats** — System health dashboard (heap, PSRAM, temperature, FPS, RTOS tasks, LVGL objects, flash), network stats (IP, fetch/enrich counts, latency, RSSI), and session tracking (unique aircraft, peak count, altitude/speed distributions, top airlines)
+- **Map** — Top-down projection with rotated aircraft icons (airliner/jet/GA/heli, color-coded by category), altitude-colored trails, runway diagrams for the active + nearby-toggled locations, and optional static pre-rendered OpenStreetMap backgrounds.
+- **Radar** — Rotating sweep with phosphor-style fading blips, same runway/legend treatment as Map in a classic radar-scope look.
+- **List** — Split-flap departure-board style table: callsign/registration, altitude, speed, vertical rate, status (GROUND/CRUISE/CLIMB/DESCEND), distance.
+- **Stats** — System health (heap, PSRAM, FPS, RTOS tasks), network stats (IP, fetch/enrich ok/err counts, RSSI), and session tracking for the current location (unique aircraft, peak count, altitude/speed distributions, closest/fastest/highest records, top airlines/types) — ground traffic excluded from all of it.
 
-All views support:
-- Tap any aircraft to open a scrollable detail card with enriched data (operator, registration, type, route, photo credits)
-- Filter toggles: COM / MIL / EMG / HELI / FAST / SLOW / ODD
-- Adjustable range: 150 / 100 / 50 / 20 / 5 / 1 nm
-- Auto-cycle between views with configurable interval and touch-pause
+All four views share:
+- **Tap any aircraft** to open a scrollable detail card (operator, registration, type, altitude/speed/climb, squawk, photo credit).
+- **Filters** (right-edge button column on Map/Radar/List): category filters COM / GA / HELI / MIL / EMG (any active one matches — OR), plus state filters VERT (ascending/descending), HIGH / LOW (altitude band, mutually exclusive) that further narrow whatever categories are active (AND), and a separate GND quick-toggle (mutually exclusive with VERT). Each view remembers its own filter selection independently.
+- **VIEW menu** (Map/Radar only): trails on/off + amount, three independent tag fields (Flight ID, Alt/Speed, Type), and a secondary-locations visibility toggle — all per-view.
+- **Adjustable range** — 4 user-configurable radius presets (Settings), cycled via a status-bar chip.
+- **Auto-cycle** between views with a configurable interval, pausing on touch.
+- **Alerts** — a toast for military aircraft and emergency squawks (7500/7600/7700); tap it to jump to that aircraft. Doesn't auto-switch views.
 
 ## Hardware
 
@@ -36,167 +48,67 @@ All views support:
 - 1024x600 MIPI-DSI display (JD9165 controller)
 - GT911 capacitive touchscreen
 - Built-in 100Mbps Ethernet (IP101 PHY)
-- ESP32-C6 WiFi module (SDIO hosted)
+- ESP32-C6 WiFi co-processor, connected over SDIO via [ESP-Hosted](https://github.com/espressif/esp-hosted-mcu) — **see [Known Issues](#known-issues--limitations) before relying on WiFi**, there's real hardware/firmware fragility here worth understanding up front.
 
-> This project was built for the JC1060P470C board. See [Adapting to Other Boards](#adapting-to-other-boards) for how to port it to different ESP32 hardware.
+All display/touch/hardware drivers ship in this repo (`src/hal/`) — no vendor SDK download needed.
+
+> This project was built for the JC1060P470C board. See [Adapting to Other Boards](#adapting-to-other-boards) for porting to different hardware.
 
 ---
 
-## Getting Started (Step-by-Step)
-
-This guide assumes you have a JC1060P470C board (or similar ESP32-P4 board) and have never flashed firmware before.
+## Getting Started
 
 ### Step 1: Install Software
 
-You need two things: **VS Code** (a code editor) and **PlatformIO** (a build tool for embedded devices).
+You need **VS Code** and the **PlatformIO** extension.
 
 <details>
 <summary><strong>Windows</strong></summary>
 
-1. **Install VS Code**
-   - Download from [code.visualstudio.com](https://code.visualstudio.com/)
-   - Run the installer, accept defaults
-
-2. **Install PlatformIO Extension**
-   - Open VS Code
-   - Click the Extensions icon in the left sidebar (or press `Ctrl+Shift+X`)
-   - Search for **"PlatformIO IDE"**
-   - Click **Install** — this takes a few minutes as it downloads compilers and tools
-   - When prompted, restart VS Code
-
-3. **Install USB Driver (if needed)**
-   - Most Windows 10/11 systems auto-detect ESP32-P4 boards
-   - If your board isn't recognized, install the [CP210x driver](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers) or [CH340 driver](http://www.wch-ic.com/downloads/CH341SER_ZIP.html) depending on your board's USB chip
-   - The JC1060P470C uses USB CDC — no extra driver needed on Windows 10+
-
-4. **Install Git**
-   - Download from [git-scm.com](https://git-scm.com/download/win)
-   - Run the installer, accept defaults
+1. Install [VS Code](https://code.visualstudio.com/), accept defaults.
+2. In VS Code, open Extensions (`Ctrl+Shift+X`), search **"PlatformIO IDE"**, install, restart when prompted.
+3. USB: the JC1060P470C uses USB CDC — no extra driver needed on Windows 10+. If your board isn't recognized, try the [CP210x](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers) or [CH340](http://www.wch-ic.com/downloads/CH341SER_ZIP.html) driver.
+4. Install [Git](https://git-scm.com/download/win), accept defaults.
 
 </details>
 
 <details>
 <summary><strong>macOS</strong></summary>
 
-1. **Install VS Code**
-   - Download from [code.visualstudio.com](https://code.visualstudio.com/)
-   - Drag to Applications folder
-
-2. **Install PlatformIO Extension**
-   - Open VS Code
-   - Click the Extensions icon in the left sidebar (or press `Cmd+Shift+X`)
-   - Search for **"PlatformIO IDE"**
-   - Click **Install** — this takes a few minutes
-   - Restart VS Code when prompted
-
-3. **Install Git** (if not already installed)
-   - Open Terminal and run: `git --version`
-   - If not installed, macOS will prompt you to install Xcode Command Line Tools — click **Install**
-
-4. **USB Driver**
-   - macOS includes CDC drivers — no extra install needed for the JC1060P470C
-   - For boards using CP210x or CH340 chips, install the appropriate driver from the manufacturer
+1. Install [VS Code](https://code.visualstudio.com/), drag to Applications.
+2. In VS Code, open Extensions (`Cmd+Shift+X`), search **"PlatformIO IDE"**, install, restart when prompted.
+3. Git: run `git --version` in Terminal — macOS will offer to install Xcode Command Line Tools if it's missing.
+4. USB: macOS includes CDC drivers already — no extra install needed for the JC1060P470C.
 
 </details>
 
 <details>
 <summary><strong>Linux</strong></summary>
 
-1. **Install VS Code**
-   - Ubuntu/Debian: download the `.deb` from [code.visualstudio.com](https://code.visualstudio.com/) and run `sudo dpkg -i code_*.deb`
-   - Arch: `sudo pacman -S code`
-   - Or use `snap install --classic code`
-
-2. **Install PlatformIO Extension**
-   - Open VS Code
-   - Click the Extensions icon (or press `Ctrl+Shift+X`)
-   - Search for **"PlatformIO IDE"**
-   - Click **Install**, restart VS Code when prompted
-
-3. **Set up USB permissions**
-   - Linux requires a udev rule to access serial devices without root:
-     ```bash
-     sudo usermod -a -G dialout $USER
-     ```
-   - **Log out and log back in** for the group change to take effect
-   - Verify with: `groups` (should show `dialout`)
-
-4. **Install Git** (if not already installed)
+1. Install VS Code (Ubuntu/Debian: download the `.deb` and `sudo dpkg -i code_*.deb`; Arch: `sudo pacman -S code`; or `snap install --classic code`).
+2. In VS Code, open Extensions (`Ctrl+Shift+X`), search **"PlatformIO IDE"**, install, restart when prompted.
+3. USB permissions:
    ```bash
-   # Ubuntu/Debian
-   sudo apt install git
-
-   # Fedora
-   sudo dnf install git
-
-   # Arch
-   sudo pacman -S git
+   sudo usermod -a -G dialout $USER
    ```
+   Log out and back in, then verify with `groups`.
+4. Install Git if needed (`sudo apt install git` / `sudo dnf install git` / `sudo pacman -S git`).
 
 </details>
 
-### Step 2: Download the Project
-
-Open a terminal (or Git Bash on Windows) and clone the repository:
+### Step 2: Get the Project
 
 ```bash
-git clone https://github.com/iamneilroberts/adsb.git
+git clone https://github.com/dpoler/adsb.git
 cd adsb
-```
-
-Then open the project in VS Code:
-
-```bash
 code .
 ```
 
-PlatformIO will detect the project automatically and download the required libraries and toolchains. This can take several minutes on the first run — watch the bottom status bar for progress.
+PlatformIO will detect the project and download libraries/toolchains automatically — watch the bottom status bar on first open, this can take several minutes.
 
-### Step 3: Add Vendor HAL Files
+### Step 3: Build
 
-The display and touch drivers require board-specific HAL (Hardware Abstraction Layer) files from the board manufacturer. These are not included in this repository.
-
-1. Download the vendor demo/SDK for your board (for JC1060P470C: [vendor repo](https://github.com/wegi1/ESP32P4-JC1060P470C-I_W_Y))
-2. Copy the vendor HAL components into `components/vendor_hal/` in this project
-3. The exact files needed depend on your board — look for MIPI-DSI panel initialization and touch controller code
-
-### Step 4: Configure
-
-1. **Copy the config template:**
-
-   ```bash
-   cp src/config.h.example src/config.h
-   ```
-
-   On Windows (Command Prompt):
-   ```cmd
-   copy src\config.h.example src\config.h
-   ```
-
-2. **Edit `src/config.h`** in VS Code with your settings:
-
-   ```c
-   // Network: uncomment ONE of these
-   #define USE_ETHERNET      // Use this if your board has Ethernet
-   // #define USE_WIFI       // Use this for WiFi
-
-   // WiFi credentials (only needed if using WiFi)
-   #define WIFI_SSID "your_wifi_name"
-   #define WIFI_PASS "your_wifi_password"
-
-   // Your location — this is the center point for the radar display
-   // Find your coordinates at https://www.latlong.net/
-   #define HOME_LAT 40.7128    // your latitude
-   #define HOME_LON -74.0060   // your longitude
-   ```
-
-### Step 5: Build
-
-In VS Code with PlatformIO:
-
-1. Click the **PlatformIO icon** in the left sidebar (alien head icon)
-2. Under **PROJECT TASKS > jc1060**, click **Build**
-3. Wait for the build to complete — you should see `SUCCESS` in the terminal
+In VS Code with PlatformIO: click the PlatformIO icon (alien head) in the sidebar → **PROJECT TASKS > jc1060 > Build**.
 
 Or from the command line:
 
@@ -204,188 +116,192 @@ Or from the command line:
 pio run -e jc1060
 ```
 
-If the build fails, check that:
-- Vendor HAL files are in `components/vendor_hal/`
-- `src/config.h` exists (not just the `.example` file)
-- PlatformIO has finished downloading all dependencies
+`jc1060` is the actively-maintained board target and the default env. (`waveshare` is a second P4-based display variant sharing the same `src/ui/` code; `cyd` is an unrelated bare TFT_eSPI sketch predating this project's LVGL architecture — neither is the focus of this README.)
 
-### Step 6: Connect and Flash
+### Step 4: Flash
 
-1. **Connect the board** to your computer via USB-C cable
-2. **Find the serial port:**
+1. Connect the board via USB-C.
+2. Find the serial port:
 
-   | OS | How to find it |
-   |----|---------------|
-   | Windows | Open Device Manager → Ports (COM & LPT) → look for "USB Serial" or "COM3", "COM4", etc. |
-   | macOS | Run `ls /dev/cu.usb*` in Terminal |
-   | Linux | Run `ls /dev/ttyACM* /dev/ttyUSB*` in Terminal |
+   | OS | How |
+   |----|-----|
+   | Windows | Device Manager → Ports (COM & LPT) |
+   | macOS | `ls /dev/cu.usb*` |
+   | Linux | `ls /dev/ttyACM* /dev/ttyUSB*` |
 
-3. **Flash the firmware:**
-
-   Using PlatformIO in VS Code: click **Upload** under PROJECT TASKS > jc1060.
-
-   Or from the command line (replace the port with yours):
+3. Flash — PlatformIO's **Upload** task, or:
 
    ```bash
-   # Linux (typical)
-   pio run -e jc1060 -t upload --upload-port /dev/ttyACM0
-
-   # macOS (typical)
-   pio run -e jc1060 -t upload --upload-port /dev/cu.usbmodem1101
-
-   # Windows (typical)
-   pio run -e jc1060 -t upload --upload-port COM3
+   pio run -e jc1060 -t upload --upload-port /dev/ttyACM0   # adjust port
    ```
 
-4. **The board will reboot automatically** after flashing. You should see the display light up within a few seconds.
+4. The board reboots automatically and the display comes up within a few seconds — **with no configuration at all**. WiFi/Ethernet, Home location, and every other setting are configured live from the on-screen Settings panel (gear icon, top-right of the status bar), not a build-time config file. There's nothing to edit and reflash for basic setup.
 
-### Step 7: Connect to Network
+### Step 5: Configure on the device
 
-- **Ethernet:** Plug in an Ethernet cable. The board gets an IP via DHCP automatically.
-- **WiFi:** The credentials from `config.h` are used at boot. You can change them later from the on-screen settings panel (gear icon).
+Tap the gear icon:
 
-The display will start showing aircraft within 5-10 seconds of getting a network connection.
+- **Network** — WiFi SSID/password (or toggle to Ethernet, DHCP, no config needed), applies after a reboot.
+- **Home** — latitude/longitude/elevation. [latlong.net](https://www.latlong.net/) is an easy way to find coordinates.
+- **Radius presets** — your 4 zoom levels (default 5/10/20/50nm).
+- **Alerts** — military / emergency squawk toasts on or off.
+- Everything saves to NVS and survives reboots/reflashes.
 
-### Step 8: Static Map Backgrounds (Optional)
+**airportdb.io token** (only needed if you want to save airports with runway geometry, not just Home): get a free token at [airportdb.io](https://airportdb.io), then set it over USB serial rather than the on-screen keyboard — it's ~97 characters, impractical to type on a touchscreen:
 
-The map view can show a real map background rendered from OpenStreetMap tiles. Without this step, the map view works fine but shows aircraft on a plain dark background.
+```
+TOKEN=your_airportdb_io_token_here
+```
 
-Requires Python 3:
+Send that line (115200 baud) via `pio device monitor` or any serial terminal, then hit Enter.
+
+### Step 6 (optional): Static map backgrounds
+
+Without this, Map view works fine on a plain dark background. To render real OpenStreetMap tiles behind it:
 
 ```bash
 pip install requests Pillow
 python tools/generate_static_map.py --lat YOUR_LAT --lon YOUR_LON
 ```
 
-Then rebuild and reflash (Steps 5-6).
+Rebuild and reflash afterward.
+
+### Step 7 (optional): Static airport glyph database
+
+Powers the "+ ICAO" glyphs for large/medium airports worldwide that you haven't explicitly saved (`draw_static_airport_glyphs()`). Without it, only your saved locations show airport markers.
+
+```bash
+python tools/generate_airports_db.py
+```
+
+Rebuild and reflash afterward.
 
 ### Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| Board not detected on USB | Try a different USB cable (some are charge-only). Try a different USB port. On Linux, check `dmesg` after plugging in. |
-| Build fails with missing headers | Vendor HAL files are missing — see Step 3. |
-| Display stays black after flash | Check that `partitions.csv` is present (binary too large for default partition). Try pressing the reset button on the board. |
-| No aircraft appear | Check network connection. Verify your coordinates in `config.h` are correct. Open the Stats view to check network status. |
-| Serial monitor shows garbled text | Set baud rate to 115200. On the JC1060P470C, USB CDC serial can be unreliable — this doesn't affect the display. |
-| Upload fails with "connection timeout" | Hold the BOOT button on the board while clicking Upload, release after upload starts. Not all boards require this. |
+| Board not detected on USB | Try a different cable (some are charge-only) or port. On Linux, check `dmesg` after plugging in. |
+| Display stays black after flash | Confirm `partitions.csv` is being used (the firmware image is too large for a default partition table). Try the board's reset button. |
+| No aircraft appear | Check Settings — is WiFi/Ethernet actually connected? Open Stats to check network status/error counts. |
+| WiFi seems stuck/slow on boot, or the device reboots on its own | See [Known Issues](#known-issues--limitations) below — this board has real, documented WiFi/co-processor fragility that isn't an app bug. |
+| Upload fails with "connection timeout" | Hold the board's BOOT button while clicking Upload, release once upload starts. |
 
 ---
 
-## Settings
+## Settings (on-device)
 
-Tap the gear icon in the status bar to open the settings panel. All settings persist to NVS (non-volatile storage) and survive reboots:
+Gear icon in the status bar. Persists to NVS, survives reboots:
 
-- **WiFi SSID/Password** — for WiFi mode
-- **Home Location** — latitude/longitude (radar center point)
-- **Default Radius** — 5-150nm
-- **Metric Units** — toggle km/knots display
-- **Aircraft Trails** — toggle trail rendering on map and radar
-- **Trail Length** — 10-60 points
-- **Auto-Cycle** — automatically rotate through views
-- **Cycle Interval** — 15-120 seconds per view
+- WiFi SSID/password, or Ethernet toggle
+- Home latitude/longitude/elevation
+- 4 radius presets (5-500nm each)
+- Metric units toggle
+- Military / emergency alert toggles
+- Auto-cycle on/off + interval
+- airportdb.io token (via serial, see above)
+
+Per-view settings (trails, tags, filters, secondary-locations visibility) live in each view's own **VIEW** menu and filter column instead, not here — see [Views](#views).
 
 ## Data Sources
 
-| Source | Purpose |
-|--------|---------|
-| [api.adsb.lol/v2/point](https://api.adsb.lol) | Live aircraft positions (bulk, no API key) |
-| [api.adsbdb.com](https://www.adsbdb.com) | Aircraft registration, type, operator enrichment |
-| [Planespotters.net](https://www.planespotters.net) | Aircraft photo credits |
+| Source | Purpose | Auth |
+|--------|---------|------|
+| [api.adsb.lol](https://api.adsb.lol) | Live aircraft positions | None |
+| [airportdb.io](https://airportdb.io) | Runway geometry + elevation for saved locations | Free token |
+| [api.adsbdb.com](https://www.adsbdb.com) | Registration, operator, aircraft type enrichment | None |
+| [planespotters.net](https://www.planespotters.net) | Photo credit text (no image rendering — see Known Issues) | None |
+
+Origin/destination (flight route) is deliberately **not** shown anywhere in this app — both adsb.lol and adsbdb.com source that data from the same crowd-sourced, callsign-keyed VRS standing-data tables with no versioning, and it's frequently stale/wrong for reassigned flight numbers. Rather than display unreliable route guesses, this app just doesn't show one.
 
 ## Architecture
 
 ```
 src/
   main.cpp              — Hardware init, LVGL setup, boot sequence
-  config.h              — User configuration (gitignored)
-  pins_config.h         — GPIO pin definitions
-  hal/                  — Display (JD9165) and touch (GT911) drivers
+  pins_config.h          — GPIO pin definitions, display resolution
+  hal/                   — Display (JD9165) and touch (GT911) drivers (included, no vendor SDK needed)
   data/
-    aircraft.h          — Aircraft struct, AircraftList with FreeRTOS mutex
-    fetcher.cpp         — Bulk API fetch, network init (WiFi/Ethernet)
-    enrichment.cpp      — Per-aircraft 3-stage enrichment (route, details, photo)
-    http_mutex.h        — Global HTTP request serialization
-    storage.h           — NVS persistent settings
+    aircraft.h           — Aircraft struct, AircraftList with FreeRTOS mutex
+    fetcher.cpp           — Bulk ADS-B fetch, WiFi/Ethernet init + reconnect, C6 co-processor reset/recovery
+    locations.h/.cpp      — Home + saved-airport locations, nearby-runways cache, airportdb.io fetch
+    enrichment.cpp         — Per-aircraft adsbdb.com + planespotters.net enrichment (piggybacked on an existing task, see Known Issues)
+    serial_config.cpp      — USB-serial TOKEN= command for the airportdb.io token
+    http_mutex.h            — Global HTTP request serialization
+    storage.h/.cpp          — NVS persistent settings (UserConfig)
   ui/
-    views.cpp           — Tileview manager, auto-cycle timer
-    map_view.cpp        — Map with static background, rotated aircraft icons, trails
-    radar_view.cpp      — Radar sweep with phosphor blips and trail dots
-    arrivals_view.cpp   — Split-flap board with character-flip animation
-    stats_view.cpp      — System health + network + session stats
-    detail_card.cpp     — Scrollable aircraft detail overlay
-    settings.cpp        — Settings panel with NVS persistence
-    filters.cpp         — Shared filter state (COM/MIL/EMG/HELI/FAST/SLOW/ODD)
-    range.cpp           — Shared zoom range state
-    alerts.cpp          — Alert overlay for emergencies/military
-    status_bar.cpp      — Top bar: nav dots, connection indicator, gear icon
+    views.cpp                — Tileview manager, auto-cycle timer, resume-on-boot
+    map_view.cpp               — Map: projection, aircraft icons, trails, runways, legends
+    radar_view.cpp              — Radar sweep, phosphor blips, runways, legends
+    arrivals_view.cpp            — List: split-flap board
+    stats_view.cpp                — System/network/session stats dashboard
+    detail_card.cpp                — Aircraft detail overlay
+    location_picker.cpp             — Home/saved-airport picker popover
+    view_menu.cpp                    — Trails/tags/secondary-locations popover
+    filters.cpp                       — Shared filter state (COM/GA/HELI/MIL/EMG/VERT/HIGH/LOW)
+    display_prefs.cpp                  — Per-view trail/tag runtime accessors
+    alerts.cpp                          — Military/emergency alert toast queue
+    settings.cpp                         — On-device settings panel
+    status_bar.cpp                        — Top bar: nav tabs, picker/range/VIEW chips, gear icon
+    geo.h                                  — Shared lat/lon <-> screen projection math
 tools/
-  generate_static_map.py — OSM tile fetcher for map backgrounds
+  generate_static_map.py    — OSM tile fetcher for map backgrounds (optional)
+  generate_airports_db.py    — Static large/medium airport glyph DB generator (optional)
 ```
 
-## Memory Usage
+## Known Issues & Limitations
 
-- **Flash:** ~75% of 4MB app partition (custom `partitions.csv`)
-- **Internal RAM:** ~12% (58KB of 512KB)
-- **PSRAM:** Two 307KB render buffers + heap for HTTP responses
-- **LVGL objects:** ~1,540 across all views
-- **FreeRTOS tasks:** 3 on core 1 (adsb_fetch 32KB, route_enrich 16KB, enrich 10KB transient)
+### WiFi / ESP32-C6 co-processor — read this before filing a WiFi bug
 
-## Known Limitations
+This board's WiFi runs through an ESP32-C6 co-processor talking to the ESP32-P4 host over SDIO via [ESP-Hosted](https://github.com/espressif/esp-hosted-mcu). This link has real, hard-won fragility that isn't specific to this app's code:
 
-- **No aircraft photos rendered** — PSRAM-sourced images corrupt on ESP32-P4 due to cache coherency. Photo credit text is displayed in detail cards instead.
-- **USB CDC serial** can be unreliable on some boards. Use UART0 if serial output is needed for debugging.
-- **Tile cache disabled** — `lv_draw_image` has rendering issues on ESP32-P4 PPA. Static pre-rendered maps are used instead.
+- **Host and co-processor firmware versions must match**, or WiFi degrades (slow first-connect-after-boot) or breaks outright. The pioarduino platform version pinned in `platformio.ini` determines what ESP-Hosted protocol version the P4 host expects; the C6's own firmware is separate and must be kept in step manually via [`dpoler/c6_updater`](https://github.com/dpoler/c6_updater), a standalone tool that reflashes the C6 over the existing SDIO link (no extra wiring). Boot log always prints both versions (`ESP-Hosted versions: host vX.X.X, C6 co-processor vX.X.X`) — a mismatch shows up immediately there.
+- **`55.03.37` / ESP-Hosted `2.11.6` is the only pairing confirmed stable on this board.** A newer, equally-matched pairing (`55.03.39` / `2.12.8`) was tried and reliably crashed with `assert failed: sdio_rx_get_buffer` within ~10 seconds of every single boot — worse than the older pairing, not better, despite being fully version-matched. **Don't bump the platform version (or run `c6_updater` targeting a newer C6 firmware) without a tested plan to revert** — matching versions alone does not guarantee stability, and "newer" has already been proven worse once on this exact board.
+- **Even at the confirmed-good pairing, an intermittent `assert failed: sdio_rx_get_buffer` crash can still occur.** This is a confirmed **open upstream bug** in `espressif/esp-hosted-mcu` (issues [#144](https://github.com/espressif/esp-hosted-mcu/issues/144)/[#167](https://github.com/espressif/esp-hosted-mcu/issues/167)), root-caused by an Espressif engineer as DMA-capable memory fragmentation (plenty of total free heap, but no single contiguous block big enough for the SDIO driver's allocation) — not a bug in this app, and not currently fixable from application code or this project's build setup. Expect occasional unprompted reboots. If it becomes frequent, check the boot log's host/C6 version line first — a mismatch is the one contributing factor actually within reach to fix.
+- **WiFi connect-after-boot behavior**: the app fast-fails a connect attempt the moment the driver reports a terminal failure (`WL_CONNECT_FAILED`/`WL_NO_SSID_AVAIL`) instead of waiting out a fixed timeout, and paces retries with a short delay rather than hammering `WiFi.begin()` back-to-back. If WiFi seems to take unusually long after a fresh boot or a `c6_updater` run, check the serial log's `[WiFi] status -> N at Nms` lines — they show exactly what the driver reported and when.
+
+### Other known limitations
+
+- **No aircraft photos rendered** — PSRAM-sourced images corrupt on this board's ESP32-P4 due to a cache-coherency issue. Photo *credit* text (from planespotters.net) is shown in the detail card instead of an image.
+- **Tile cache disabled** — `lv_draw_image` has rendering issues on this board's PPA. Static pre-rendered map backgrounds are used instead (see Step 6 above).
+- **Small airports aren't in the static glyph database** — only `large_airport`/`medium_airport` (OurAirports classification, ~5,300 worldwide) are compiled in; adding ~42,700 more small airports was evaluated and deliberately declined (size/scan-cost vs. completeness). Save it explicitly by ICAO if you need one that's missing.
+- **Screensaver is currently dormant** — built, then disabled pending a redesign (the original burn-in rationale doesn't apply to this board's LCD panel; brightness/dim/blank still have standalone value but need a different design, e.g. time-of-day scheduling, which isn't implemented).
+- **USB CDC serial** can be unreliable on some units. Doesn't affect the display.
 
 ---
 
 ## Adapting to Other Boards
 
-This project was built for the JC1060P470C (ESP32-P4), but the architecture is portable to other ESP32 boards with displays. The easiest way to adapt it is to use **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** — an AI coding assistant that can read the entire codebase and make targeted changes for your specific hardware.
+The architecture is portable to other ESP32 boards with displays. The easiest way to adapt it is with **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** — an AI coding assistant that can read the whole codebase and make targeted changes for your hardware.
 
 ### What You'll Need to Change
 
 | Component | File(s) | What to change |
 |-----------|---------|---------------|
-| **Pin definitions** | `src/pins_config.h` | GPIO numbers for display, touch, SD card |
-| **Display driver** | `src/hal/jd9165_lcd.cpp/.h` | Replace with your display controller driver (e.g., ST7789, ILI9341, SSD1306) |
-| **Touch driver** | `src/hal/gt911_touch.cpp/.h` | Replace with your touch controller driver (e.g., FT5x06, CST816S, XPT2046) |
-| **Display resolution** | `src/pins_config.h` | Change `LCD_H_RES` and `LCD_V_RES` |
-| **Display interface** | `src/main.cpp` | MIPI-DSI setup → SPI/I2C/RGB parallel depending on your display |
-| **Network** | `src/data/fetcher.cpp`, `src/config.h` | Ethernet PHY config, or WiFi-only if no Ethernet |
-| **UI layout** | `src/ui/*.cpp` | Adjust layouts if your screen is a different resolution |
-| **PlatformIO config** | `platformio.ini` | Board type, framework, partition table |
-| **Partition table** | `partitions.csv` | Adjust app partition size for your flash capacity |
+| Pin definitions | `src/pins_config.h` | GPIO numbers for display, touch |
+| Display driver | `src/hal/jd9165_lcd.cpp/.h`, `esp_lcd_jd9165.c/.h` | Replace with your display controller (e.g. ST7789, ILI9341, SSD1306) |
+| Touch driver | `src/hal/gt911_touch.cpp/.h`, `esp_lcd_touch_gt911.c/.h` | Replace with your touch controller (e.g. FT5x06, CST816S, XPT2046) |
+| Display resolution | `src/pins_config.h` | `LCD_H_RES` / `LCD_V_RES` |
+| Display interface | `src/main.cpp` | MIPI-DSI → SPI/I2C/RGB parallel depending on your panel |
+| Network | `src/data/fetcher.cpp` | Ethernet PHY config, or WiFi-only if no Ethernet/no hosted co-processor |
+| UI layout | `src/ui/*.cpp` | Adjust for a different resolution |
+| PlatformIO config | `platformio.ini` | Board type, framework, partition table |
+| Partition table | `partitions.csv` | Adjust app partition size for your flash capacity |
 
 ### Using Claude Code to Port
 
-1. **Install Claude Code** following [the docs](https://docs.anthropic.com/en/docs/claude-code)
-
-2. **Open this project** in your terminal:
-   ```bash
-   cd adsb
-   claude
-   ```
-
-3. **Describe your hardware** and ask Claude Code to adapt the project. Example prompts:
-
+1. Install Claude Code per [the docs](https://docs.anthropic.com/en/docs/claude-code).
+2. `cd adsb && claude`
+3. Describe your hardware, e.g.:
    > "I have a LilyGo T-Display-S3 with a 170x320 ST7789 SPI display and no touch. Adapt this project for my board."
-
-   > "I'm using an ESP32-S3 with an ILI9341 320x240 display and XPT2046 resistive touch over SPI. Update the drivers and resize the UI."
-
-   > "I have a Waveshare ESP32-S3 4.3inch board with an 800x480 RGB display and GT911 touch. Port this project to it."
-
-   Claude Code will read the existing drivers, understand the architecture, and generate the necessary changes — new HAL drivers, updated pin configs, resized UI layouts, and modified build settings.
-
-4. **Review the changes**, build, and flash.
+4. Review the changes, build, flash.
 
 ### Porting Tips
 
-- **Start with the display driver.** If you can get a colored rectangle on screen, the rest follows.
-- **LVGL 9.2 supports many display interfaces** (SPI, I2C, parallel RGB, MIPI-DSI). The LVGL integration in `main.cpp` stays mostly the same — only the flush callback and buffer allocation change.
-- **Smaller displays** (320x240, 480x320) will need significant UI layout changes. The arrivals board and stats dashboard are designed for 1024x600 and won't fit without rework.
-- **ESP32-S3 boards** are the most common alternative. They work well but have less RAM than the P4, so you may need to reduce render buffer sizes and limit `MAX_AIRCRAFT`.
-- **No-touch boards** can remove the touch driver and input device setup. The auto-cycle feature will rotate through views automatically.
+- **Start with the display driver.** A colored rectangle on screen means the rest follows.
+- **Smaller displays** (320x240, 480x320) need real UI layout rework — the List board and Stats dashboard are laid out for 1024x600 and won't fit as-is.
+- **ESP32-S3 boards** are the most common alternative but have less RAM than the P4 — reduce render buffer sizes and `MAX_AIRCRAFT` if needed.
+- **No-touch boards** can drop the touch driver/input device; auto-cycle rotates through views on its own.
+- **If your board doesn't use an ESP-Hosted SDIO co-processor for WiFi** (i.e. it has native WiFi, unlike this board's P4+C6 split), the entire [Known Issues](#known-issues--limitations) WiFi section doesn't apply to you — that fragility is specific to this exact hardware split, not this app's WiFi handling in general.
 
 ## License
 
