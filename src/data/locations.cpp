@@ -841,3 +841,10 @@ const Location* locations_nearby_get_active(int *count) {
     if (count) *count = _nearby_loaded_count;
     return _nearby;
 }
+
+void locations_factory_reset() {
+    _prefs.begin("adsb_locs", false);
+    _prefs.clear(); // takes every nb_<ICAO>/nb_home nearby-cache blob with it too, same namespace
+    _prefs.end();
+    Serial.println("Locations: adsb_locs namespace erased (factory reset)");
+}

@@ -169,3 +169,10 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.end();
     Serial.println("Storage: config saved to NVS");
 }
+
+void storage_factory_reset() {
+    _prefs.begin("adsb", false);
+    _prefs.clear();
+    _prefs.end();
+    Serial.println("Storage: config namespace erased (factory reset)");
+}

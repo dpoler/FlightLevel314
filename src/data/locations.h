@@ -113,3 +113,11 @@ const Location* locations_nearby_get_active(int *count);
 // Poll counterpart to locations_add_poll() -- call from the same
 // location_poll_task loop. Drains one queued nearby-airport fetch per call.
 void locations_nearby_poll();
+
+// Erases the entire "adsb_locs" NVS namespace -- every saved location and
+// every nearby-runways cache blob (nb_<ICAO>/nb_home keys live in this same
+// namespace, so a full clear takes those with it too, no separate cleanup
+// needed). Does not touch in-memory state -- caller is expected to reboot
+// immediately (serial_config.cpp's FACTORY_RESET does), at which point
+// locations_init() picks up the now-empty namespace on next boot.
+void locations_factory_reset();
