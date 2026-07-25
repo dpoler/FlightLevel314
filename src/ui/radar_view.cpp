@@ -645,7 +645,10 @@ static void draw_radar_static_airport_glyphs(lv_layer_t *layer) {
 
 // Marks the current center reference point -- the active location's own
 // position -- skipped when that location already has its runway diagram
-// drawn, same as map_view.cpp's draw_active_location_marker().
+// drawn, same as map_view.cpp's draw_active_location_marker(). Same
+// color/opacity as draw_radar_airport_glyph() uses for every other
+// location's marker (previously full-opacity here, brighter than the rest
+// despite sharing the same color -- reported).
 static void draw_radar_active_location_marker(lv_layer_t *layer) {
     int active = locations_active_index();
     if (active == -1) return; // nothing selected -- see the empty-state overlay instead
@@ -659,6 +662,7 @@ static void draw_radar_active_location_marker(lv_layer_t *layer) {
     lv_draw_line_dsc_init(&line_dsc);
     line_dsc.color = COLOR_RADAR_AIRPORT;
     line_dsc.width = 1;
+    line_dsc.opa = LV_OPA_70;
 
     line_dsc.p1 = {(lv_value_precise_t)(hx - 8), (lv_value_precise_t)hy};
     line_dsc.p2 = {(lv_value_precise_t)(hx + 8), (lv_value_precise_t)hy};

@@ -417,10 +417,20 @@ static void draw_range_rings(lv_layer_t *layer) {
     }
 }
 
+// Shared with draw_airport_glyph() further down, and with
+// draw_active_location_marker() just below -- moved up here so both can use
+// it (the marker used to hardcode its own brighter, full-opacity blue,
+// reported as standing out more than every other location's marker even
+// though it is meant to use "the same definition as other locations").
+#define COLOR_AIRPORT_GLYPH lv_color_hex(0x557799)
+
 // Marks the current center reference point -- the active location's own
 // position. Skipped when the active location already has its runway diagram
 // drawn -- the runways themselves mark the airport, and the cross is just
-// clutter on top of them.
+// clutter on top of them. Same color/opacity as draw_airport_glyph() uses
+// for every other location's marker -- deliberately not visually distinct,
+// since the active location is already identified by the status-bar picker
+// chip, not by standing out on the map.
 static void draw_active_location_marker(lv_layer_t *layer) {
     int active = locations_active_index();
     if (active == -1) return; // nothing selected -- see the empty-state overlay instead
@@ -432,8 +442,9 @@ static void draw_active_location_marker(lv_layer_t *layer) {
 
     lv_draw_line_dsc_t line_dsc;
     lv_draw_line_dsc_init(&line_dsc);
-    line_dsc.color = lv_color_hex(0x4488ff);
+    line_dsc.color = COLOR_AIRPORT_GLYPH;
     line_dsc.width = 1;
+    line_dsc.opa = LV_OPA_70;
 
     line_dsc.p1 = {(lv_value_precise_t)(hx - 8), (lv_value_precise_t)hy};
     line_dsc.p2 = {(lv_value_precise_t)(hx + 8), (lv_value_precise_t)hy};
@@ -443,9 +454,6 @@ static void draw_active_location_marker(lv_layer_t *layer) {
     line_dsc.p2 = {(lv_value_precise_t)hx, (lv_value_precise_t)(hy + 8)};
     lv_draw_line(layer, &line_dsc);
 }
-
-// Shared with draw_airport_glyph() further down.
-#define COLOR_AIRPORT_GLYPH lv_color_hex(0x557799)
 
 // Tracks label bounding boxes already drawn this frame (across every saved
 // airport being drawn), so a new label can check whether its default spot

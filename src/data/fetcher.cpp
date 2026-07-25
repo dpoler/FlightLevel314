@@ -679,6 +679,20 @@ static void location_poll_task(void *param) {
 }
 
 void fetcher_request_immediate_fetch() {
+    // A location switch means every aircraft currently in the list is for
+    // an entirely different place -- without this, they stuck around for
+    // the usual GHOST_TIMEOUT_MS (30s) fade instead of disappearing
+    // immediately, which visibly ghosted the old location's traffic across
+    // the new location's Map/Radar for a while, and (the concrete report)
+    // kept getting counted into the new location's UNIQUE/PEAK/CLOSEST
+    // stats until they finally aged out -- reading as "stats don't reset
+    // on switch" even though stats.cpp's own counters were reset correctly.
+    // A location switch is a hard cut, not a fade, so the list is cleared
+    // outright rather than left to expire on its own schedule.
+    if (_aircraft_list && _aircraft_list->lock(pdMS_TO_TICKS(50))) {
+        _aircraft_list->count = 0;
+        _aircraft_list->unlock();
+    }
     if (_fetch_now_sem) xSemaphoreGive(_fetch_now_sem);
 }
 
