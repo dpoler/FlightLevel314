@@ -179,7 +179,7 @@ void setup() {
     location_picker_init(screen);
 
     Serial.println("detail_card_init...");
-    detail_card_init(screen);
+    detail_card_init(screen, &aircraft_list);
     Serial.println("detail_card OK");
 
     Serial.println("alerts_init...");
