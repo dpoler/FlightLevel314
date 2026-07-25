@@ -116,7 +116,7 @@ Or from the command line:
 pio run -e jc1060
 ```
 
-`jc1060` is the actively-maintained board target and the default env. (`waveshare` is a second target sharing the same `src/ui/` code, for the [Waveshare ESP32-S3-Touch-LCD-7B](https://www.waveshare.com/esp32-s3-lcd-7b.htm) — an ESP32-**S3** board, not P4, with its own RGB-parallel display driver in `src/waveshare/` instead of MIPI-DSI. It's not the focus of this README.)
+`jc1060` is the only board target in this repo — see [Adapting to Other Boards](#adapting-to-other-boards) if you're bringing up different hardware.
 
 ### Step 4: Flash
 
