@@ -19,7 +19,7 @@
 #define ACCENT_COLOR lv_color_hex(0x4488ff)
 #define SYS_COLOR lv_color_hex(0x44cc88)
 #define WARN_COLOR lv_color_hex(0xccaa00)
-// Column-identity accent for the "THIS LOCATION" (session) column -- lets
+// Column-identity accent for the "LOCATION" (session) column -- lets
 // UNIQUE/PEAK and the column header itself read as visually distinct from
 // the "RIGHT NOW" (live) column's ACCENT_COLOR, reinforcing the reset-on-
 // switch grouping without needing a caption to explain it every time.
@@ -27,9 +27,6 @@
 
 static AircraftList *_list = nullptr;      // the one aircraft list -- fetch_task always fetches for whichever location is currently active
 static lv_obj_t *_container = nullptr;
-
-// Current count
-static lv_obj_t *_count_label = nullptr;
 
 // Category rows
 struct BarRow {
@@ -212,9 +209,6 @@ static void refresh_stats(lv_timer_t *t) {
     const SessionStats *s = stats_get();
     const FetcherStats *fs = fetcher_get_stats();
 
-    // Current count
-    lv_label_set_text_fmt(_count_label, "%d", s->current_count);
-
     // Category bars
     int cat_counts[] = {s->jets, s->ga, s->heli, s->military, s->emergency};
     int cat_total = s->current_count > 0 ? s->current_count : 1;
@@ -369,8 +363,10 @@ static void refresh_stats(lv_timer_t *t) {
     }
 
     // === ERROR LOG ===
+    // "ERRORS" itself is now a static section header (create_section_header
+    // in stats_view_init()) -- this label is just the "(N)" count next to it.
     uint32_t err_total = error_log_total_count();
-    lv_label_set_text_fmt(_err_count_lbl, "ERRORS (%lu)", (unsigned long)err_total);
+    lv_label_set_text_fmt(_err_count_lbl, "(%lu)", (unsigned long)err_total);
 
     ErrorSnapshot snap = error_log_snapshot();
     if (snap.count == 0) {
@@ -416,48 +412,48 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_clear_flag(_container, LV_OBJ_FLAG_SCROLL_CHAIN);
     views_attach_swipe(_container);
 
+    // All three columns share one vertical rhythm: column header at y=8,
+    // first subsection header at y=26, first subsection's rows starting at
+    // y=44, SECTION_GAP(14) between subsections thereafter -- deliberately
+    // identical structure in every column (one top-level header, several
+    // evenly-spaced subsections under it) instead of the previous layout,
+    // where the left column mixed a large unexplained number with
+    // unlabeled bars while the other two columns used a header-plus-
+    // subsections shape. No column-level caption text (e.g. "every ~2s")
+    // either -- the header text itself ("RIGHT NOW" / "LOCATION (since
+    // last switch)" / "DEVICE") is the whole explanation, no large hero
+    // number, no prose block anywhere on this screen.
+
     // ============================================================
     // LEFT COLUMN (x=15): "RIGHT NOW" -- everything here is recalculated
     // from scratch on every refresh_stats() tick (~2s) from whichever
     // aircraft are currently visible. Nothing in this column accumulates
     // over time or remembers anything from a previous tick -- that's the
-    // "THIS LOCATION" column (center) below, kept deliberately separate so
-    // the live-vs-accumulated distinction is a structural fact of the
-    // screen instead of something that has to be explained in prose.
+    // "LOCATION" column (center) below, kept deliberately separate.
     // ============================================================
     int lx = 15;
 
-    // Current count (large)
-    _count_label = lv_label_create(_container);
-    lv_label_set_text(_count_label, "0");
-    lv_obj_set_style_text_font(_count_label, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(_count_label, lv_color_white(), 0);
-    lv_obj_set_pos(_count_label, lx, 8);
-    lv_obj_clear_flag(_count_label, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *subtitle = lv_label_create(_container);
-    lv_label_set_text(subtitle, "RIGHT NOW - every ~2s"); // plain ASCII -- compiled LVGL fonts may not carry non-ASCII glyphs
-    lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(subtitle, ACCENT_COLOR, 0); // ties this column's identity to ACCENT_COLOR, contrasting with THIS LOCATION's SESSION_COLOR
-    lv_obj_set_pos(subtitle, lx, 40);
-    lv_obj_clear_flag(subtitle, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *now_header = lv_label_create(_container);
+    lv_label_set_text(now_header, "RIGHT NOW");
+    lv_obj_set_style_text_font(now_header, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(now_header, ACCENT_COLOR, 0);
+    lv_obj_set_pos(now_header, lx, 8);
+    lv_obj_clear_flag(now_header, LV_OBJ_FLAG_CLICKABLE);
 
     // Category breakdown
-    int cat_y = 40 + ROW_H; // same header-to-first-row pitch as every other section
+    int type_y = 8 + ROW_H;
+    create_section_header(_container, "TYPE", lx, type_y);
     for (int i = 0; i < 5; i++) {
         // EMRG's wide "M" runs into the count digit at the default 42px
         // offset even though HELI/JETS (same 4 chars) don't -- give it a
         // few extra px.
         int name_off = (i == 4) ? 48 : 42;
         create_bar_row(_container, &_cat_rows[i], CAT_NAMES[i], CAT_COLORS[i],
-                       lx, cat_y + i * ROW_H, &lv_font_montserrat_14, name_off);
+                       lx, type_y + ROW_H + i * ROW_H, &lv_font_montserrat_14, name_off);
     }
 
-    // Altitude distribution -- moved into this column (was its own "center
-    // column" before) since it is exactly the same kind of live, from-
-    // scratch-every-tick data as the count/category bars just above it, not
-    // a separate concept.
-    int alt_y = cat_y + 5 * ROW_H + SECTION_GAP;
+    // Altitude distribution
+    int alt_y = type_y + 6 * ROW_H + SECTION_GAP;
     create_section_header(_container, "ALTITUDE", lx, alt_y);
     for (int i = 0; i < 5; i++) {
         create_bar_row(_container, &_alt_rows[i], ALT_NAMES[i],
@@ -465,7 +461,7 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
                        lx, alt_y + ROW_H_WIDE + i * ROW_H_WIDE, &lv_font_montserrat_16, 52, 88);
     }
 
-    // Speed distribution -- same reasoning as ALTITUDE above
+    // Speed distribution
     int spd_y = alt_y + 6 * ROW_H_WIDE + SECTION_GAP;
     create_section_header(_container, "SPEED", lx, spd_y);
     for (int i = 0; i < 5; i++) {
@@ -474,8 +470,8 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     }
 
     // ============================================================
-    // CENTER COLUMN (x=340): "THIS LOCATION" -- everything here is
-    // accumulated since the active location was last switched (see
+    // CENTER COLUMN (x=340): "LOCATION (since last switch)" -- everything
+    // here is accumulated since the active location was last switched (see
     // stats.cpp: reset happens once, the moment locations_active_index()
     // changes -- leaving location A and arriving at location B are the same
     // event, not two separate resets). RECORDS in particular changed
@@ -483,14 +479,14 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     // HIGHEST/LOWEST/CLOSEST used to be recalculated from scratch every
     // tick just like the RIGHT NOW column, which read as "session records"
     // but was actually "whatever's true this instant" -- misleading, and
-    // the reason this whole reorg happened. They are now genuine running
+    // part of why this screen was reorganized. They are now genuine running
     // extremes: the most extreme value seen since this location became
     // active, same as PEAK already was.
     // ============================================================
     int cx = 340;
 
     lv_obj_t *loc_header = lv_label_create(_container);
-    lv_label_set_text(loc_header, "THIS LOCATION - resets on switch");
+    lv_label_set_text(loc_header, "LOCATION (since last switch)");
     lv_obj_set_style_text_font(loc_header, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(loc_header, SESSION_COLOR, 0);
     lv_obj_set_pos(loc_header, cx, 8);
@@ -535,19 +531,19 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     _closest_val = make_rec_row("CLOSEST", rr + rh * 4);
     lv_obj_set_style_text_color(_closest_val, lv_color_hex(0x44ddaa), 0);
 
-    // AC SEEN -- UPTIME deliberately still lives in SYSTEM (right column),
-    // not here, despite looking like a natural fit -- it does not reset
-    // when you switch locations (genuinely device-global), so grouping it
-    // with UNIQUE/PEAK would misrepresent it as location-scoped.
+    // AIRCRAFT SEEN -- UPTIME deliberately still lives in DEVICE (right
+    // column), not here, despite looking like a natural fit -- it does not
+    // reset when you switch locations (genuinely device-global), so
+    // grouping it with UNIQUE/PEAK would misrepresent it as location-scoped.
     int ss_y = rr + rh * 5 + SECTION_GAP;
-    create_section_header(_container, "AC SEEN", cx, ss_y);
+    create_section_header(_container, "AIRCRAFT SEEN", cx, ss_y);
     // Stacked vertically (one inline "HEADER  value" row per stat), matching
     // RECORDS above, rather than side by side. SESSION_COLOR (not
-    // ACCENT_COLOR) -- these are THIS LOCATION data, not RIGHT NOW data.
+    // ACCENT_COLOR) -- these are LOCATION data, not RIGHT NOW data.
     _unique_val = create_inline_row(_container, "UNIQUE", cx, ss_y + ROW_H, SESSION_COLOR, 80);
     _peak_val = create_inline_row(_container, "PEAK", cx, ss_y + ROW_H * 2, SESSION_COLOR, 80);
 
-    // Top airlines -- AC SEEN is 2 rows deep (ROW_H * 2) plus its own
+    // Top airlines -- AIRCRAFT SEEN is 2 rows deep (ROW_H * 2) plus its own
     // header pitch (ROW_H), then the usual gap before the next header.
     int al_y = ss_y + ROW_H * 3 + SECTION_GAP;
     create_section_header(_container, "TOP AIRLINES", cx, al_y);
@@ -573,17 +569,23 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     }
 
     // ============================================================
-    // RIGHT COLUMN (x=700): Network, System, Errors -- SYSTEM moved in next
-    // to NETWORK since both are genuinely device-global (unlike the
-    // aircraft-tracking stuff in the left/center columns), rather than
-    // splitting two related sections across two different columns.
+    // RIGHT COLUMN (x=700): "DEVICE" -- genuinely global, none of it resets
+    // on a location switch. SYS_COLOR (green) doubles as this column's
+    // header color, same color already used for every NETWORK/SYSTEM value
+    // below it.
     // ============================================================
     int rx = 700;
 
+    lv_obj_t *device_header = lv_label_create(_container);
+    lv_label_set_text(device_header, "DEVICE");
+    lv_obj_set_style_text_font(device_header, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(device_header, SYS_COLOR, 0);
+    lv_obj_set_pos(device_header, rx, 8);
+    lv_obj_clear_flag(device_header, LV_OBJ_FLAG_CLICKABLE);
+
     // Plenty of width in this column for "HEADER  value" on one line --
     // no need to stack the value under the header like SYSTEM below does.
-    // Aligned with TRACKING/ALTITUDE (see alt_y above), not the container top.
-    int net_y = 40;
+    int net_y = 8 + ROW_H;
     create_section_header(_container, "NETWORK", rx, net_y);
     _ip_val = create_inline_row(_container, "IP", rx, net_y + ROW_H, SYS_COLOR, 90);
     _rssi_val = create_inline_row(_container, "LINK", rx, net_y + ROW_H * 2, SYS_COLOR, 90);
@@ -608,11 +610,12 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
 
     // Error log section -- 32 is the 2-line stat-pair block height (TEMP row)
     int ey = sr2 + 32 + SECTION_GAP;
+    create_section_header(_container, "ERRORS", rx, ey);
     _err_count_lbl = lv_label_create(_container);
-    lv_label_set_text(_err_count_lbl, "ERRORS (0)");
+    lv_label_set_text(_err_count_lbl, "(0)");
     lv_obj_set_style_text_font(_err_count_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_count_lbl, DIM_COLOR, 0);
-    lv_obj_set_pos(_err_count_lbl, rx, ey);
+    lv_obj_set_pos(_err_count_lbl, rx + 70, ey);
     lv_obj_clear_flag(_err_count_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     // CLR button
@@ -642,7 +645,7 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_label_set_text(_err_list_lbl, "(none)");
     lv_obj_set_style_text_font(_err_list_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_list_lbl, lv_color_hex(0xff6666), 0);
-    lv_obj_set_pos(_err_list_lbl, rx, ey + 20);
+    lv_obj_set_pos(_err_list_lbl, rx, ey + ROW_H);
     lv_obj_set_width(_err_list_lbl, 310);
     lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
 
