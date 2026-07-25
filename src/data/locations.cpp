@@ -658,7 +658,13 @@ static void nearby_commit(int owner_idx, const Location *entries, int n) {
             _prefs.putBytes(key, buf, buf_size);
             heap_caps_free(buf);
         }
-    } else {
+    } else if (_prefs.isKey(key)) {
+        // isKey() first -- the common "nothing nearby" case (e.g. KDEN, no
+        // other large airport within the widest radius preset) hits this
+        // branch on the very first scan, before any blob was ever written
+        // for this key. remove()'s underlying nvs_erase_key() logs a scary
+        // "NOT_FOUND" [E] line for that case even though it is harmless
+        // (reported) -- nothing to erase isn't a real error here.
         _prefs.remove(key);
     }
     _prefs.end();
