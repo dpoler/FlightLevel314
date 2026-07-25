@@ -105,6 +105,7 @@ static uint16_t _fps = 0;
 #define ROW_H 18      // line pitch for 14pt rows (text or bars)
 #define ROW_H_WIDE 20 // line pitch for 16pt rows (center column distributions)
 #define SECTION_GAP 14 // gap from a section's last row to the next header
+#define COL_HEADER_GAP 40 // gap from a column's own header down to its first subsection header -- deliberately more breathing room than SECTION_GAP, since the column header is now larger (20pt) and needs to read as a clear step above the subsection headers below it, not just another row
 
 static lv_obj_t *create_bar(lv_obj_t *parent, int x, int y, lv_color_t color) {
     lv_obj_t *bar = lv_obj_create(parent);
@@ -435,13 +436,13 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
 
     lv_obj_t *now_header = lv_label_create(_container);
     lv_label_set_text(now_header, "RIGHT NOW");
-    lv_obj_set_style_text_font(now_header, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(now_header, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(now_header, ACCENT_COLOR, 0);
     lv_obj_set_pos(now_header, lx, 8);
     lv_obj_clear_flag(now_header, LV_OBJ_FLAG_CLICKABLE);
 
     // Category breakdown
-    int type_y = 8 + ROW_H;
+    int type_y = 8 + COL_HEADER_GAP;
     create_section_header(_container, "TYPE", lx, type_y);
     for (int i = 0; i < 5; i++) {
         // EMRG's wide "M" runs into the count digit at the default 42px
@@ -486,14 +487,24 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     int cx = 340;
 
     lv_obj_t *loc_header = lv_label_create(_container);
-    lv_label_set_text(loc_header, "LOCATION (since last switch)");
-    lv_obj_set_style_text_font(loc_header, &lv_font_montserrat_14, 0);
+    lv_label_set_text(loc_header, "LOCATION");
+    lv_obj_set_style_text_font(loc_header, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(loc_header, SESSION_COLOR, 0);
     lv_obj_set_pos(loc_header, cx, 8);
     lv_obj_clear_flag(loc_header, LV_OBJ_FLAG_CLICKABLE);
 
+    // "(since last switch)" split onto its own smaller line rather than
+    // appended to the big 20pt header -- at that size the full phrase runs
+    // long enough to risk crowding into the DEVICE column's own header.
+    lv_obj_t *loc_caption = lv_label_create(_container);
+    lv_label_set_text(loc_caption, "since last switch");
+    lv_obj_set_style_text_font(loc_caption, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(loc_caption, DIM_COLOR, 0);
+    lv_obj_set_pos(loc_caption, cx, 32);
+    lv_obj_clear_flag(loc_caption, LV_OBJ_FLAG_CLICKABLE);
+
     // Records — compact rows with inline header + value
-    int rc_y = 8 + ROW_H;
+    int rc_y = 8 + COL_HEADER_GAP + ROW_H; // +ROW_H to clear the caption line above
     create_section_header(_container, "RECORDS", cx, rc_y);
 
     lv_color_t rec_hdr = DIM_COLOR;
@@ -578,14 +589,14 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
 
     lv_obj_t *device_header = lv_label_create(_container);
     lv_label_set_text(device_header, "DEVICE");
-    lv_obj_set_style_text_font(device_header, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(device_header, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(device_header, SYS_COLOR, 0);
     lv_obj_set_pos(device_header, rx, 8);
     lv_obj_clear_flag(device_header, LV_OBJ_FLAG_CLICKABLE);
 
     // Plenty of width in this column for "HEADER  value" on one line --
     // no need to stack the value under the header like SYSTEM below does.
-    int net_y = 8 + ROW_H;
+    int net_y = 8 + COL_HEADER_GAP;
     create_section_header(_container, "NETWORK", rx, net_y);
     _ip_val = create_inline_row(_container, "IP", rx, net_y + ROW_H, SYS_COLOR, 90);
     _rssi_val = create_inline_row(_container, "LINK", rx, net_y + ROW_H * 2, SYS_COLOR, 90);
