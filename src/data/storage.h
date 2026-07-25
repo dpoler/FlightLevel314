@@ -96,5 +96,12 @@ UserConfig storage_load_config();
 // Save config to NVS
 void storage_save_config(const UserConfig &cfg);
 
+// Erases the entire "adsb" NVS namespace (every UserConfig field -- WiFi,
+// Home, radius presets, filters, everything). Does not touch g_config in
+// memory or reload it -- caller is expected to reboot immediately
+// (serial_config.cpp's FACTORY_RESET does), at which point storage_load_config()
+// picks up compiled defaults from the now-empty namespace.
+void storage_factory_reset();
+
 // Global runtime config — loaded at boot, updated on settings save
 extern UserConfig g_config;
