@@ -590,16 +590,20 @@ static void draw_radar_saved_airports(lv_layer_t *layer) {
         int sx, sy;
         if (!to_radar_screen(loc->lat, loc->lon, sx, sy)) continue;
 
-        if (loc->runway_count > 0 && i == active) {
-            draw_radar_runways_for(layer, loc, placed, radius_nm);
-        } else if (in_nearby_cache(loc->icao)) {
-            continue; // drawn with full runways by the nearby-cache pass below instead
-        } else {
-            // loc->name, not loc->icao -- see map_view.cpp's equivalent fix
-            // for why (icao is empty for a waypoint, previously leaving the
-            // glyph with a blank label).
-            draw_radar_airport_glyph(layer, sx, sy, loc->name);
+        if (i == active) {
+            // See map_view.cpp's equivalent fix for the full reasoning --
+            // the active location is already identified via the status-bar
+            // picker chip, and an active waypoint already got its own
+            // unlabeled marker from draw_radar_active_location_marker()
+            // above, so there's nothing left to draw for it here.
+            if (loc->runway_count > 0) draw_radar_runways_for(layer, loc, placed, radius_nm);
+            continue;
         }
+        if (in_nearby_cache(loc->icao)) {
+            continue; // drawn with full runways by the nearby-cache pass below instead
+        }
+        // loc->name, not loc->icao -- icao is empty for a waypoint.
+        draw_radar_airport_glyph(layer, sx, sy, loc->name);
     }
 
     for (int i = 0; i < nearby_n; i++) {
