@@ -21,7 +21,7 @@
 #define WARN_COLOR lv_color_hex(0xccaa00)
 // Column-identity accent for the "LOCATION" (session) column -- lets
 // UNIQUE/PEAK and the column header itself read as visually distinct from
-// the "RIGHT NOW" (live) column's ACCENT_COLOR, reinforcing the reset-on-
+// the "CURRENT TRAFFIC" (live) column's ACCENT_COLOR, reinforcing the reset-on-
 // switch grouping without needing a caption to explain it every time.
 #define SESSION_COLOR lv_color_hex(0xaa88ff)
 
@@ -421,12 +421,12 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     // where the left column mixed a large unexplained number with
     // unlabeled bars while the other two columns used a header-plus-
     // subsections shape. No column-level caption text (e.g. "every ~2s")
-    // either -- the header text itself ("RIGHT NOW" / "LOCATION (since
-    // last switch)" / "DEVICE") is the whole explanation, no large hero
-    // number, no prose block anywhere on this screen.
+    // either -- the header text itself ("CURRENT TRAFFIC" / "LOCATION" +
+    // "since last switch" / "DEVICE") is the whole explanation, no large
+    // hero number, no prose block anywhere on this screen.
 
     // ============================================================
-    // LEFT COLUMN (x=15): "RIGHT NOW" -- everything here is recalculated
+    // LEFT COLUMN (x=15): "CURRENT TRAFFIC" -- everything here is recalculated
     // from scratch on every refresh_stats() tick (~2s) from whichever
     // aircraft are currently visible. Nothing in this column accumulates
     // over time or remembers anything from a previous tick -- that's the
@@ -435,7 +435,7 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     int lx = 15;
 
     lv_obj_t *now_header = lv_label_create(_container);
-    lv_label_set_text(now_header, "RIGHT NOW");
+    lv_label_set_text(now_header, "CURRENT TRAFFIC");
     lv_obj_set_style_text_font(now_header, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(now_header, ACCENT_COLOR, 0);
     lv_obj_set_pos(now_header, lx, 8);
@@ -478,7 +478,7 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     // event, not two separate resets). RECORDS in particular changed
     // meaning from earlier versions of this screen: FASTEST/SLOWEST/
     // HIGHEST/LOWEST/CLOSEST used to be recalculated from scratch every
-    // tick just like the RIGHT NOW column, which read as "session records"
+    // tick just like the CURRENT TRAFFIC column, which read as "session records"
     // but was actually "whatever's true this instant" -- misleading, and
     // part of why this screen was reorganized. They are now genuine running
     // extremes: the most extreme value seen since this location became
@@ -550,7 +550,7 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     create_section_header(_container, "AIRCRAFT SEEN", cx, ss_y);
     // Stacked vertically (one inline "HEADER  value" row per stat), matching
     // RECORDS above, rather than side by side. SESSION_COLOR (not
-    // ACCENT_COLOR) -- these are LOCATION data, not RIGHT NOW data.
+    // ACCENT_COLOR) -- these are LOCATION data, not CURRENT TRAFFIC data.
     _unique_val = create_inline_row(_container, "UNIQUE", cx, ss_y + ROW_H, SESSION_COLOR, 80);
     _peak_val = create_inline_row(_container, "PEAK", cx, ss_y + ROW_H * 2, SESSION_COLOR, 80);
 
