@@ -4,12 +4,6 @@ struct UserConfig {
     char wifi_ssid[33];
     char wifi_pass[65];
     char airportdb_token[160]; // free token from airportdb.io — observed ~97 chars, sized with margin
-    float home_lat;
-    float home_lon;
-    int home_elevation_ft;   // user-entered field elevation at Home, ft MSL --
-                              // used for AGL calculations (e.g. the ascending/
-                              // descending filter). Saved Locations get this
-                              // from airportdb.io instead (Location::elevation_ft).
     int radius_nm;           // API query radius = max(radius_presets), set on save
     int radius_presets[4];  // user-configurable zoom levels, sorted ascending
     bool use_metric;
@@ -72,7 +66,7 @@ struct UserConfig {
     bool view_show_tag_id[2];          // flight number, falling back to registration then ICAO hex
     bool view_show_tag_data[2];        // altitude + speed + climb/descend arrow
     bool view_show_tag_type[2];        // aircraft type / operator
-    bool view_show_secondary_locations[2]; // other saved/static airports + HOME-elsewhere marker
+    bool view_show_secondary_locations[2]; // other saved/static airports
 
     // Resume-on-boot state -- all written from discrete, human-paced actions
     // (nav tap, range chip tap, location picker selection, filter button
@@ -81,13 +75,10 @@ struct UserConfig {
     // trail-slider cyan-flash fix for why that distinction matters).
     int last_view_idx;              // VIEW_MAP/VIEW_RADAR/VIEW_ARRIVALS/VIEW_STATS (views.h)
     int last_range_idx;             // index into range.cpp's levels, 0 = widest
-    char last_location_icao[8];     // matches LOC_ICAO_LEN (locations.h); "" = Home
-
-    // Home's own "show nearby large airports' runways" toggle -- Home has no
-    // Location slot of its own (see locations.h), so it can't carry
-    // Location::nearby_enabled/nearby_count the way saved airports do.
-    bool home_nearby_enabled;
-    int home_nearby_count;
+    char last_location_name[17];    // matches LOC_NAME_LEN (locations.h); "" = none selected.
+                                     // Matched against Location::name, not icao -- works
+                                     // uniformly for airports (name==icao) and waypoints
+                                     // (name is whatever the user typed, no icao at all).
 };
 
 // Load config from NVS. Returns defaults if not found.

@@ -22,9 +22,8 @@
 #define HAS_AIRPORTS_DB 0
 #endif
 
-static AircraftList *_list = nullptr;      // currently effective list
-static AircraftList *_home_list = nullptr; // the list passed in at init
-static int _last_active_loc = -2;          // sentinel — -1 is a valid "Home"
+static AircraftList *_list = nullptr;      // the one aircraft list -- fetch_task always fetches for whichever location is currently active
+static int _last_active_loc = -2;          // sentinel so the first tick always syncs (-1 is a valid "nothing selected")
 static lv_obj_t *_radar_obj = nullptr;
 
 static float _sweep_angle = 0.0f; // current sweep angle in degrees
@@ -510,8 +509,10 @@ static void draw_radar_runways_for(lv_layer_t *layer, const Location *loc, Radar
 
 #define RADAR_GLYPH_R 5
 
-// Small "+ ICAO" marker for an airport we don't have runway geometry for.
-static void draw_radar_airport_glyph(lv_layer_t *layer, int sx, int sy, const char *icao) {
+// Small "+ label" marker for a saved location we don't have runway geometry
+// for -- see map_view.cpp's draw_airport_glyph() for the full reasoning
+// (label is an ICAO for airports, a waypoint's own name otherwise).
+static void draw_radar_airport_glyph(lv_layer_t *layer, int sx, int sy, const char *label) {
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
     line.color = COLOR_RADAR_AIRPORT;
@@ -530,7 +531,7 @@ static void draw_radar_airport_glyph(lv_layer_t *layer, int sx, int sy, const ch
     lbl.color = COLOR_RADAR_AIRPORT;
     lbl.font = &lv_font_montserrat_14;
     lbl.opa = LV_OPA_80;
-    lbl.text = icao;
+    lbl.text = label;
     lv_area_t area = {(lv_coord_t)(sx + RADAR_GLYPH_R + 2), (lv_coord_t)(sy - 8),
                        (lv_coord_t)(sx + RADAR_GLYPH_R + 60), (lv_coord_t)(sy + 8)};
     lv_draw_label(layer, &lbl, &area);
@@ -594,7 +595,10 @@ static void draw_radar_saved_airports(lv_layer_t *layer) {
         } else if (in_nearby_cache(loc->icao)) {
             continue; // drawn with full runways by the nearby-cache pass below instead
         } else {
-            draw_radar_airport_glyph(layer, sx, sy, loc->icao);
+            // loc->name, not loc->icao -- see map_view.cpp's equivalent fix
+            // for why (icao is empty for a waypoint, previously leaving the
+            // glyph with a blank label).
+            draw_radar_airport_glyph(layer, sx, sy, loc->name);
         }
     }
 
@@ -635,15 +639,14 @@ static void draw_radar_static_airport_glyphs(lv_layer_t *layer) {
 }
 #endif
 
-// Marks the current center reference point (Home, or the active saved
-// airport) -- skipped when that location already has its runway diagram
-// drawn, same as map_view.cpp's draw_home_marker().
-static void draw_radar_home_marker(lv_layer_t *layer) {
+// Marks the current center reference point -- the active location's own
+// position -- skipped when that location already has its runway diagram
+// drawn, same as map_view.cpp's draw_active_location_marker().
+static void draw_radar_active_location_marker(lv_layer_t *layer) {
     int active = locations_active_index();
-    if (active != -1) {
-        const Location *loc = locations_get(active);
-        if (loc && loc->runway_count > 0) return;
-    }
+    if (active == -1) return; // nothing selected -- see the empty-state overlay instead
+    const Location *loc = locations_get(active);
+    if (loc && loc->runway_count > 0) return;
 
     int hx, hy;
     if (!to_radar_screen(_proj.center_lat, _proj.center_lon, hx, hy)) return;
@@ -660,36 +663,6 @@ static void draw_radar_home_marker(lv_layer_t *layer) {
     line_dsc.p1 = {(lv_value_precise_t)hx, (lv_value_precise_t)(hy - 8)};
     line_dsc.p2 = {(lv_value_precise_t)hx, (lv_value_precise_t)(hy + 8)};
     lv_draw_line(layer, &line_dsc);
-}
-
-// Marks where Home actually is when it's NOT the active location -- same
-// reasoning as map_view.cpp's draw_home_reference_elsewhere(): a filled dot
-// rather than the "+" cross already used above, so it doesn't read as just
-// another one of those.
-static void draw_radar_home_reference_elsewhere(lv_layer_t *layer) {
-    if (locations_active_index() == -1) return;
-
-    int hx, hy;
-    if (!to_radar_screen(g_config.home_lat, g_config.home_lon, hx, hy)) return;
-
-    lv_draw_rect_dsc_t dot;
-    lv_draw_rect_dsc_init(&dot);
-    dot.bg_color = COLOR_RADAR_AIRPORT;
-    dot.bg_opa = LV_OPA_70;
-    dot.radius = LV_RADIUS_CIRCLE;
-    lv_area_t area = {(lv_coord_t)(hx - 3), (lv_coord_t)(hy - 3),
-                       (lv_coord_t)(hx + 3), (lv_coord_t)(hy + 3)};
-    lv_draw_rect(layer, &dot, &area);
-
-    lv_draw_label_dsc_t lbl;
-    lv_draw_label_dsc_init(&lbl);
-    lbl.color = COLOR_RADAR_AIRPORT;
-    lbl.font = &lv_font_montserrat_14;
-    lbl.opa = LV_OPA_80;
-    lbl.text = "HOME";
-    lv_area_t larea = {(lv_coord_t)(hx + 6), (lv_coord_t)(hy - 8),
-                        (lv_coord_t)(hx + 60), (lv_coord_t)(hy + 8)};
-    lv_draw_label(layer, &lbl, &larea);
 }
 
 // Category + altitude legend -- radar had neither (reported). User asked
@@ -809,12 +782,11 @@ static void draw_filter_label(lv_layer_t *layer) {
 static void radar_draw_cb(lv_event_t *e) {
     lv_layer_t *layer = lv_event_get_layer(e);
     draw_rings(layer);
-    // Secondary locations -- other airports + HOME-elsewhere marker.
-    // Off gives the "just dots" look (VIEW menu, view_menu.cpp) -- the
-    // motivating case for this toggle in the first place.
+    // Secondary locations -- other airports + the active location's own
+    // marker. Off gives the "just dots" look (VIEW menu, view_menu.cpp) --
+    // the motivating case for this toggle in the first place.
     if (secondary_locations_shown()) {
-        draw_radar_home_marker(layer);
-        draw_radar_home_reference_elsewhere(layer);
+        draw_radar_active_location_marker(layer);
 #if HAS_AIRPORTS_DB
         draw_radar_static_airport_glyphs(layer);
 #endif
@@ -908,10 +880,14 @@ static void gnd_click_cb(lv_event_t *e) {
 
 void radar_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
-    _home_list = list;
 
-    _proj.center_lat = g_config.home_lat;
-    _proj.center_lon = g_config.home_lon;
+    // Falls back to 0,0 if nothing's selected yet (fresh install) --
+    // harmless, the per-tick active-location sync below re-centers for real
+    // the moment a location is added and this stops being -1.
+    float lat = 0, lon = 0;
+    locations_get_active_coords(&lat, &lon, nullptr);
+    _proj.center_lat = lat;
+    _proj.center_lon = lon;
     _proj.radius_nm = range_get_nm();
 
     _radar_obj = lv_obj_create(parent);
@@ -1050,18 +1026,18 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
         _sweep_angle += (360.0f * dt) / SWEEP_PERIOD_MS;
         if (_sweep_angle >= 360.0f) _sweep_angle -= 360.0f;
 
-        // Follow the active location (Home or a saved airport) — cheap check,
-        // no per-view "on_show" hook exists for Radar so this runs every tick.
+        // Follow the active location -- cheap check, no per-view "on_show"
+        // hook exists for Radar so this runs every tick. (Used to also
+        // re-point _list between a Home feed and a saved-location feed --
+        // there's only one list now, see its declaration.)
         int active = locations_active_index();
         if (active != _last_active_loc) {
             _last_active_loc = active;
             float lat, lon;
-            int elev;
-            if (locations_get_active_coords(&lat, &lon, &elev)) {
+            if (locations_get_active_coords(&lat, &lon, nullptr)) {
                 _proj.center_lat = lat;
                 _proj.center_lon = lon;
             }
-            _list = locations_active_list(_home_list);
         }
 
         // Only update when range actually changes
@@ -1105,8 +1081,3 @@ void radar_view_clear_trails() {
     if (_radar_obj) lv_obj_invalidate(_radar_obj);
 }
 
-void radar_view_set_home(float lat, float lon) {
-    _proj.center_lat = lat;
-    _proj.center_lon = lon;
-    if (_radar_obj) lv_obj_invalidate(_radar_obj);
-}

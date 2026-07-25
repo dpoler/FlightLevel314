@@ -20,8 +20,7 @@
 #define SYS_COLOR lv_color_hex(0x44cc88)
 #define WARN_COLOR lv_color_hex(0xccaa00)
 
-static AircraftList *_list = nullptr;      // currently effective list
-static AircraftList *_home_list = nullptr; // the list passed in at init
+static AircraftList *_list = nullptr;      // the one aircraft list -- fetch_task always fetches for whichever location is currently active
 static lv_obj_t *_container = nullptr;
 
 // Current count
@@ -204,7 +203,6 @@ static void refresh_stats(lv_timer_t *t) {
     // just however long you happen to have had the Stats screen open. Label
     // updates on an inactive tileview tile are cheap (nothing to redraw
     // until it's actually shown), so there's no real cost to always running.
-    _list = locations_active_list(_home_list);
     stats_update(_list);
     const SessionStats *s = stats_get();
     const FetcherStats *fs = fetcher_get_stats();
@@ -400,7 +398,6 @@ static void create_section_header(lv_obj_t *parent, const char *text, int x, int
 
 void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
-    _home_list = list;
 
     _container = lv_obj_create(parent);
     lv_obj_set_size(_container, STATS_W, STATS_H);

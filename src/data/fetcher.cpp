@@ -177,16 +177,15 @@ static uint32_t _last_update = 0;
 static TaskHandle_t _fetch_task_handle = nullptr;
 static TaskHandle_t _location_poll_task_handle = nullptr;
 static FetcherStats _fstats = {};
-static FetcherStats _loc_stats = {}; // location_fetch_poll's own counters -- see fetcher_get_location_stats()
 
-// Secondary point query for a non-home airport (APRT view). Guarded by its
-// own small mutex since it's written from the UI task and read from
-// location_fetch_poll (polled from within location_poll_task).
-static AircraftList _loc_list;
-static SemaphoreHandle_t _loc_target_mutex = nullptr;
-static float _loc_target_lat = 0, _loc_target_lon = 0;
-static int _loc_target_radius = 0;   // <= 0 means inactive
-static uint32_t _loc_target_gen = 0; // bumped whenever the target changes
+// Given by locations_set_active() (via fetcher_request_immediate_fetch())
+// whenever the active location changes; fetch_task's loop takes-with-timeout
+// on this instead of a bare vTaskDelay, so switching locations wakes it
+// immediately rather than leaving the view showing stale/no data until the
+// next scheduled ~20s tick. Binary, not counting -- multiple switches before
+// the loop gets back around to waiting just leave it signaled once, which
+// just means one (harmless, already-fresh) extra fetch, not a bug.
+static SemaphoreHandle_t _fetch_now_sem = nullptr;
 
 // Military alert dedup — circular buffer of already-alerted ICAO hexes
 #define ALERTED_MAX 64
@@ -393,7 +392,12 @@ static void parse_aircraft_json(JsonDocument &doc, AircraftList *list, bool do_a
     }
     list->count = write;
 
-    // Check for alerts (home list only — a remote APRT-view airport shouldn't page you)
+    // Check for alerts. There's only one active feed now (see the fetch-loop
+    // consolidation this replaced -- no more separate Home-only vs. saved-
+    // location paths), so alerts fire for whichever location is currently
+    // active, not just a privileged "Home". If you want some locations to
+    // never page you, that's a new, separate feature to design -- not
+    // something this collapsed automatically.
     if (do_alerts) {
         for (int i = 0; i < list->count; i++) {
             Aircraft &a = list->aircraft[i];
@@ -411,7 +415,7 @@ static void parse_aircraft_json(JsonDocument &doc, AircraftList *list, bool do_a
     }
 
     list->unlock();
-    if (list == _aircraft_list) _last_update = millis();
+    _last_update = millis();
 }
 
 static bool network_connected() {
@@ -443,143 +447,6 @@ static void update_ip_addr() {
         strlcpy(_fstats.ip_addr, WiFi.localIP().toString().c_str(), sizeof(_fstats.ip_addr));
     else
         strlcpy(_fstats.ip_addr, "N/A", sizeof(_fstats.ip_addr));
-}
-
-// On-demand point query for a non-home airport (APRT view). Called from
-// location_poll_task's own loop (not a separate task — this project's
-// ESP32-P4/C6 combo already runs thin on internal heap, and every extra
-// FreeRTOS task stack is internal DRAM taken away from the SDIO/WiFi driver;
-// a dedicated task for this crashed the SDIO transport under memory pressure).
-// Idles when no target is set; self-throttles to ~15s while a target is
-// active, and fetches immediately whenever the target changes.
-static uint32_t _loc_last_gen = 0;
-static uint32_t _loc_next_fetch = 0;
-static int _loc_consecutive_429s = 0; // adsb.lol rate-limiting this poller specifically
-
-static void location_fetch_poll() {
-    float lat, lon;
-    int radius;
-    uint32_t gen;
-    xSemaphoreTake(_loc_target_mutex, portMAX_DELAY);
-    lat = _loc_target_lat;
-    lon = _loc_target_lon;
-    radius = _loc_target_radius;
-    gen = _loc_target_gen;
-    xSemaphoreGive(_loc_target_mutex);
-
-    if (radius <= 0) {
-        if (_loc_list.count != 0 && _loc_list.lock(pdMS_TO_TICKS(100))) {
-            _loc_list.count = 0;
-            _loc_list.unlock();
-        }
-        _loc_last_gen = gen;
-        return;
-    }
-
-    uint32_t now = millis();
-    bool target_changed = (gen != _loc_last_gen);
-    if (!target_changed && now < _loc_next_fetch) return;
-    _loc_last_gen = gen;
-    _loc_next_fetch = now + 15000;
-
-    if (!network_connected()) return;
-
-    if (http_mutex_acquire(pdMS_TO_TICKS(10000))) {
-        char url[128];
-        snprintf(url, sizeof(url), "https://api.adsb.lol/v2/point/%.4f/%.4f/%d",
-                 lat, lon, radius);
-        WiFiClientSecure client;
-        client.setInsecure(); // matches http.begin(url)'s own no-CA-cert behavior
-        client.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
-        HTTPClient http;
-        http.begin(client, url);
-        http.collectHeaders(kAdsbLolHeaders, 1);
-        // Matches fetch_task's main-loop timeouts/buffer cap below -- this
-        // poll issues the exact same kind of point/radius query (same radius
-        // as whatever's currently selected, up to the widest 50nm preset), so
-        // a response here can be just as large as Home's. The old, tighter
-        // 8s/10s/128KB values here (vs 10s/15s/256KB there) were an
-        // unintentional asymmetry that plausibly caused the read loop to hit
-        // its deadline mid-response on a large saved-location fetch, leaving
-        // a truncated buffer that then failed JSON parsing with
-        // "IncompleteInput" (confirmed via the error logging added above).
-        http.setTimeout(10000);
-        int httpCode = http.GET();
-        if (httpCode == HTTP_CODE_OK) {
-            int content_len = http.getSize();
-            size_t buf_size = (content_len > 0) ? (size_t)content_len + 1 : 256 * 1024;
-            char *buf = (char *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
-            size_t total = 0;
-            if (buf) {
-                size_t target = (content_len > 0) ? (size_t)content_len : buf_size - 1;
-                WiFiClient *stream = http.getStreamPtr();
-                uint32_t deadline = millis() + 15000;
-                while (total < target && millis() < deadline) {
-                    int avail = stream->available();
-                    if (avail > 0) {
-                        int to_read = min((size_t)avail, target - total);
-                        total += stream->readBytes(buf + total, to_read);
-                    } else if (!stream->connected()) {
-                        break;
-                    } else {
-                        vTaskDelay(1);
-                    }
-                }
-                buf[total] = '\0';
-                _loc_stats.bytes_received += total;
-                if (total > 0) {
-                    JsonDocument doc(&_psram_alloc);
-                    DeserializationError err = deserializeJson(doc, buf, total);
-                    if (!err) {
-                        parse_aircraft_json(doc, &_loc_list, false);
-                        _loc_stats.fetch_ok++;
-                        // Matches the main loop's "Fetched N ac" success line --
-                        // this poller previously logged failures only, so a
-                        // healthy location poll left no serial trace at all to
-                        // confirm it was ever actually running.
-                        Serial.printf("[LocPoll] Fetched %d ac\n", _loc_list.count);
-                    } else {
-                        _loc_stats.fetch_fail++;
-                        error_log_add("LocPoll JSON: %s (%uB/%dB)", err.c_str(), total, content_len);
-                    }
-                } else {
-                    _loc_stats.fetch_fail++;
-                    error_log_add("LocPoll: PSRAM alloc fail / empty resp");
-                }
-                heap_caps_free(buf);
-            } else {
-                _loc_stats.fetch_fail++;
-                error_log_add("LocPoll: PSRAM alloc fail");
-            }
-            _loc_consecutive_429s = 0;
-        } else if (httpCode == 429) {
-            // Same adsb.lol rate-limit backoff as the main fetch_task's poll
-            // (see there for why) -- push this poller's own next-attempt
-            // time further out instead of retrying in the usual 15s.
-            _loc_consecutive_429s++;
-            String retry_after = http.header("Retry-After");
-            int retry_secs = retry_after.length() ? retry_after.toInt() : 0;
-            uint32_t backoff_ms;
-            if (retry_secs > 0) {
-                backoff_ms = (uint32_t)retry_secs * 1000;
-            } else {
-                uint32_t mult = 1UL << (_loc_consecutive_429s > 4 ? 4 : _loc_consecutive_429s);
-                backoff_ms = 15000UL * mult;
-                if (backoff_ms > 300000UL) backoff_ms = 300000UL;
-            }
-            _loc_next_fetch = millis() + backoff_ms;
-            _loc_stats.fetch_fail++;
-            error_log_add("LocPoll HTTP 429, backing off %lus", (unsigned long)(backoff_ms / 1000));
-            Serial.printf("[LocPoll] HTTP 429 (rate limited) -- backing off %lus\n",
-                (unsigned long)(backoff_ms / 1000));
-        } else {
-            _loc_consecutive_429s = 0;
-            _loc_stats.fetch_fail++;
-            error_log_add("LocPoll HTTP %d", httpCode);
-        }
-        http.end();
-        http_mutex_release();
-    }
 }
 
 static void fetch_task(void *param) {
@@ -648,16 +515,19 @@ static void fetch_task(void *param) {
             // gets corrected once the connection recovers, since nothing
             // else re-populates the real address after a reconnect.
             update_ip_addr();
-            if (http_mutex_acquire(pdMS_TO_TICKS(15000))) {
+            float lat, lon;
+            if (locations_get_active_coords(&lat, &lon, nullptr) &&
+                http_mutex_acquire(pdMS_TO_TICKS(15000))) {
                 // Built fresh every poll rather than once before this loop
-                // started -- otherwise a Home lat/lon or radius change in
-                // Settings would re-center the map/radar views instantly
-                // (see map_view_center_on()/radar_view_set_home() in
-                // settings_set_change_callback) while the actual ADS-B query
-                // kept silently hitting the old location/radius until reboot.
+                // started -- otherwise switching the active location (or
+                // changing its coordinates) in the picker/settings would
+                // re-center the map/radar views instantly (each view's own
+                // per-tick active-location-change detection does that) while
+                // the actual ADS-B query kept silently hitting the old
+                // location/radius until reboot.
                 char url[128];
                 snprintf(url, sizeof(url), "https://api.adsb.lol/v2/point/%.4f/%.4f/%d",
-                         g_config.home_lat, g_config.home_lon, g_config.radius_nm);
+                         lat, lon, g_config.radius_nm);
                 WiFiClientSecure client;
                 client.setInsecure(); // matches http.begin(url)'s own no-CA-cert behavior
                 client.setHandshakeTimeout(TLS_HANDSHAKE_TIMEOUT_S);
@@ -777,18 +647,23 @@ static void fetch_task(void *param) {
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(extra_delay_ms > 20000 ? extra_delay_ms : 20000));
+        // Wait out the normal cadence, but wake early if
+        // fetcher_request_immediate_fetch() signals a location switch --
+        // see _fetch_now_sem's declaration for why this is a semaphore
+        // wait rather than a bare vTaskDelay.
+        uint32_t cadence_ms = extra_delay_ms > 20000 ? extra_delay_ms : 20000;
+        xSemaphoreTake(_fetch_now_sem, pdMS_TO_TICKS(cadence_ms));
     }
 }
 
-// Background task: fetch route (origin/dest) for aircraft with callsigns
-// Was route_enrich_task (adsbdb.com callsign->route lookups) — removed
-// entirely, since that data comes from the same VRS Standing Data source
-// already documented as unreliable/stale (crowd-sourced, callsign-keyed, no
-// versioning — see project_route_data memory). Kept as a lightweight task
-// purely to drive location_fetch_poll()/locations_add_poll() on their own
-// existing cadence, rather than spawning a new task for them — see
-// project_p4_heap_constraints memory for why that matters on this board.
+// Background task: originally route_enrich_task (adsbdb.com callsign->route
+// lookups) — removed entirely, since that data comes from the same VRS
+// Standing Data source already documented as unreliable/stale (crowd-
+// sourced, callsign-keyed, no versioning — see project_route_data memory).
+// Kept as a lightweight task purely to drive locations_add_poll()/
+// locations_nearby_poll()/enrichment_poll() on their own existing cadence,
+// rather than spawning a new task for them — see project_p4_heap_constraints
+// memory for why that matters on this board.
 static void location_poll_task(void *param) {
     while (!network_connected()) {
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -796,7 +671,6 @@ static void location_poll_task(void *param) {
     vTaskDelay(pdMS_TO_TICKS(5000)); // let main fetcher populate list first
 
     while (true) {
-        location_fetch_poll();
         locations_add_poll();
         locations_nearby_poll(); // nearby-large-airport runway cache -- one queued fetch per tick, same cadence as locations_add_poll()
         enrichment_poll(); // detail-card aircraft/photo lookups -- see enrichment.cpp
@@ -804,25 +678,13 @@ static void location_poll_task(void *param) {
     }
 }
 
-void fetcher_set_location_target(float lat, float lon, int radius_nm) {
-    xSemaphoreTake(_loc_target_mutex, portMAX_DELAY);
-    if (lat != _loc_target_lat || lon != _loc_target_lon || radius_nm != _loc_target_radius) {
-        _loc_target_lat = lat;
-        _loc_target_lon = lon;
-        _loc_target_radius = radius_nm;
-        _loc_target_gen++;
-    }
-    xSemaphoreGive(_loc_target_mutex);
-}
-
-AircraftList* fetcher_location_list() {
-    return &_loc_list;
+void fetcher_request_immediate_fetch() {
+    if (_fetch_now_sem) xSemaphoreGive(_fetch_now_sem);
 }
 
 void fetcher_init(AircraftList *list) {
     _aircraft_list = list;
-    _loc_list.init();
-    _loc_target_mutex = xSemaphoreCreateMutex();
+    _fetch_now_sem = xSemaphoreCreateBinary();
     http_mutex_init();
 
     // Only init ONE network stack per boot
@@ -857,8 +719,4 @@ uint32_t fetcher_last_update() {
 
 const FetcherStats* fetcher_get_stats() {
     return &_fstats;
-}
-
-const FetcherStats* fetcher_get_location_stats() {
-    return &_loc_stats;
 }

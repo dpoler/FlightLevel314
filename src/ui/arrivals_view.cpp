@@ -13,8 +13,7 @@
 #include "../data/storage.h"
 #include "../data/locations.h"
 
-static AircraftList *_list = nullptr;      // currently effective list
-static AircraftList *_home_list = nullptr; // the list passed in at init
+static AircraftList *_list = nullptr;      // the one aircraft list -- fetch_task always fetches for whichever location is currently active
 static lv_obj_t *_board_container = nullptr;
 static lv_obj_t *_filter_btns[NUM_FILTERS] = {};
 // GND is a quick-access toggle for g_config.view_hide_ground[VIEW_ARRIVALS] -- not part of the
@@ -276,12 +275,8 @@ static void update_board(lv_timer_t *t) {
         update_gnd_visual();
     }
 
-    _list = locations_active_list(_home_list);
-    float center_lat, center_lon;
-    if (!locations_get_active_coords(&center_lat, &center_lon, nullptr)) {
-        center_lat = g_config.home_lat;
-        center_lon = g_config.home_lon;
-    }
+    float center_lat = 0, center_lon = 0;
+    locations_get_active_coords(&center_lat, &center_lon, nullptr); // stays 0,0 if nothing's selected -- _list is empty in that case anyway (see fetch_task)
 
     if (!_list->lock(pdMS_TO_TICKS(5))) return;
 
@@ -447,7 +442,6 @@ static void header_label_click_cb(lv_event_t *e) {
 
 void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
-    _home_list = list;
 
     // Make tile fully opaque so radar/map don't bleed through
     lv_obj_set_style_pad_all(parent, 0, 0);

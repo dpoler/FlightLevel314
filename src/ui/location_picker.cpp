@@ -15,7 +15,6 @@
 
 #define COLOR_BG        lv_color_hex(0x0d0d1a)
 #define COLOR_PANEL     lv_color_hex(0x14142a)
-#define COLOR_ROW_HOME  lv_color_hex(0x1a2a3a)
 #define COLOR_ROW       lv_color_hex(0x1a1a2e)
 #define COLOR_ACCENT    lv_color_hex(0x00cc66)
 #define COLOR_TEXT      lv_color_hex(0xccccdd)
@@ -38,17 +37,25 @@ static lv_obj_t *_add_status_lbl = nullptr;
 static lv_obj_t *_add_fetch_btn = nullptr;
 static lv_obj_t *_add_ta = nullptr;
 
+// "Add Location" (waypoint) view widgets -- separate from the ICAO add-flow
+// ones above since both can't be open at once but build_list_view()/
+// close_overlay() need to null out whichever set is currently live. Unlike
+// the ICAO flow, adding a waypoint is synchronous (locations_add_waypoint()
+// -- no network fetch, nothing to poll for), so there's no in-progress flag
+// needed here.
+static lv_obj_t *_wp_name_ta = nullptr;
+static lv_obj_t *_wp_lat_ta = nullptr;
+static lv_obj_t *_wp_lon_ta = nullptr;
+static lv_obj_t *_wp_elev_ta = nullptr;
+static lv_obj_t *_wp_status_lbl = nullptr;
+
 static void build_list_view();
 static void build_add_view();
+static void build_add_waypoint_view();
 
 static void update_picker_label() {
-    int active = locations_active_index();
-    if (active == -1) {
-        lv_label_set_text(_picker_lbl, "HOME");
-    } else {
-        const Location *loc = locations_get(active);
-        lv_label_set_text(_picker_lbl, loc ? loc->icao : "?");
-    }
+    const Location *loc = locations_get(locations_active_index());
+    lv_label_set_text(_picker_lbl, loc ? loc->name : "+ Add");
 }
 
 static void close_overlay() {
@@ -68,6 +75,11 @@ static void close_overlay() {
         _add_status_lbl = nullptr;
         _add_fetch_btn = nullptr;
         _add_ta = nullptr;
+        _wp_name_ta = nullptr;
+        _wp_lat_ta = nullptr;
+        _wp_lon_ta = nullptr;
+        _wp_elev_ta = nullptr;
+        _wp_status_lbl = nullptr;
     }
 }
 
@@ -193,7 +205,7 @@ static void drag_handle_event_cb(lv_event_t *e) {
 
     if (code == LV_EVENT_PRESSED) {
         _drag_row = row;
-        _drag_start_idx = lv_obj_get_index(row) - 1; // -1: the Home row is always sibling 0
+        _drag_start_idx = lv_obj_get_index(row); // every row is a normal _locations[] entry now, no Home-row offset to account for
         _drag_cur_idx = _drag_start_idx;
         lv_point_t p;
         lv_indev_get_point(lv_indev_active(), &p);
@@ -224,7 +236,7 @@ static void drag_handle_event_cb(lv_event_t *e) {
         if (desired_idx > n - 1) desired_idx = n - 1;
 
         if (desired_idx != _drag_cur_idx) {
-            lv_obj_move_to_index(row, desired_idx + 1); // +1: same Home-row offset
+            lv_obj_move_to_index(row, desired_idx);
             _drag_cur_idx = desired_idx;
         }
 
@@ -259,12 +271,17 @@ static void build_list_view() {
     _add_status_lbl = nullptr;
     _add_fetch_btn = nullptr;
     _add_ta = nullptr;
+    _wp_name_ta = nullptr;
+    _wp_lat_ta = nullptr;
+    _wp_lon_ta = nullptr;
+    _wp_elev_ta = nullptr;
+    _wp_status_lbl = nullptr;
 
-    // Sized exactly to content (Home + saved + "Add") -- no minimum floor.
-    // A prior pass added one to avoid a "tiny box" look with few entries, but
-    // that just left dead space below the last row -- exact-fit-until-the-
-    // screen-runs-out is what was actually wanted.
-    int rows = 1 + locations_count() + 1; // Home + saved + "Add" row
+    // Sized exactly to content (saved locations + the two "Add" rows) -- no
+    // minimum floor. A prior pass added one to avoid a "tiny box" look with
+    // few entries, but that just left dead space below the last row --
+    // exact-fit-until-the-screen-runs-out is what was actually wanted.
+    int rows = locations_count() + 2; // saved + "Add Airport" + "Add Location"
     int max_h = LCD_V_RES - STATUS_BAR_HEIGHT - 16; // as tall as the screen allows below the status bar
     int panel_h = rows * ROW_H + 8;
     if (panel_h > max_h) panel_h = max_h;
@@ -289,33 +306,9 @@ static void build_list_view() {
     lv_obj_set_style_pad_row(_panel, 0, 0);
     lv_obj_set_flex_flow(_panel, LV_FLEX_FLOW_COLUMN);
 
-    // Home row
-    {
-        lv_obj_t *row = lv_obj_create(_panel);
-        lv_obj_set_size(row, LV_PCT(100), ROW_H - 4);
-        lv_obj_set_style_bg_color(row, COLOR_ROW_HOME, 0);
-        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(row, locations_active_index() == -1 ? 2 : 0, 0);
-        lv_obj_set_style_border_color(row, COLOR_ACCENT, 0);
-        lv_obj_set_style_radius(row, 6, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_event_cb(row, add_row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
-
-        lv_obj_t *lbl = lv_label_create(row);
-        lv_label_set_text(lbl, "HOME");
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(lbl, COLOR_TEXT, 0);
-        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 10, 0);
-        lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
-
-        // Home has no remove/reorder icons, so its toggle sits alone at the
-        // same x-position the saved rows use below -- keeps it visually
-        // consistent rather than moving it closer to the edge.
-        add_nearby_toggle(row, -1);
-    }
-
-    // Saved airports
+    // Saved locations -- airport or waypoint, no distinction in how the row
+    // itself is built (an airport's name defaults to its ICAO on add, see
+    // locations.cpp).
     int n = locations_count();
     for (int i = 0; i < n; i++) {
         const Location *loc = locations_get(i);
@@ -333,7 +326,7 @@ static void build_list_view() {
         lv_obj_add_event_cb(row, add_row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         lv_obj_t *lbl = lv_label_create(row);
-        lv_label_set_text(lbl, loc->icao);
+        lv_label_set_text(lbl, loc->name);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl, COLOR_TEXT, 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 10, 0);
@@ -364,8 +357,11 @@ static void build_list_view() {
         lv_obj_add_event_cb(grip, drag_handle_event_cb, LV_EVENT_PRESS_LOST, nullptr);
     }
 
-    // Add row
-    {
+    // "Add Airport" row (ICAO lookup, existing flow) and "Add Location" row
+    // (manual lat/lon/elevation, new -- see build_add_waypoint_view()). Two
+    // rows rather than one row plus a type-choice screen, so either is a
+    // single tap away.
+    auto add_row = [&](const char *text, void (*on_click)(lv_event_t *)) {
         lv_obj_t *row = lv_obj_create(_panel);
         lv_obj_set_size(row, LV_PCT(100), ROW_H - 4);
         lv_obj_set_style_bg_color(row, COLOR_BG, 0);
@@ -376,15 +372,17 @@ static void build_list_view() {
         lv_obj_set_style_radius(row, 6, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_event_cb(row, [](lv_event_t *e) { build_add_view(); }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(row, on_click, LV_EVENT_CLICKED, nullptr);
 
         lv_obj_t *lbl = lv_label_create(row);
-        lv_label_set_text(lbl, LV_SYMBOL_PLUS "  Add airport");
+        lv_label_set_text(lbl, text);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl, COLOR_ACCENT, 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 10, 0);
         lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
-    }
+    };
+    add_row(LV_SYMBOL_PLUS "  Add Airport", [](lv_event_t *e) { build_add_view(); });
+    add_row(LV_SYMBOL_PLUS "  Add Location", [](lv_event_t *e) { build_add_waypoint_view(); });
 }
 
 static void fetch_btn_click_cb(lv_event_t *e) {
@@ -470,8 +468,115 @@ static void build_add_view() {
 
     lv_obj_add_event_cb(_add_ta, [](lv_event_t *e) {
         lv_keyboard_set_textarea(_keyboard, _add_ta);
+        // Explicit, not inherited -- the keyboard object is shared and
+        // persists across subviews within one popover session, so without
+        // this an ICAO field opened after a lat/lon/elevation field would
+        // otherwise still be showing the numeric layout.
+        lv_keyboard_set_mode(_keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
         lv_obj_clear_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
     }, LV_EVENT_FOCUSED, nullptr);
+}
+
+// Shared by all four build_add_waypoint_view() fields -- unlike build_add_view()'s
+// single _add_ta (whose FOCUSED handler can just close over that one known
+// widget), the FOCUSED handler here reads lv_event_get_target_obj() so one
+// handler works for any of the four fields it's attached to. kb_mode picks
+// the on-screen keyboard layout to switch to on focus -- LVGL's NUMBER
+// layout (digits, "+/-", ".") is used for lat/lon/elevation so those fields
+// don't need alpha-keyboard round trips just to reach "-" and "." (reported).
+static lv_obj_t *wp_field(int y, const char *placeholder, int max_len,
+                           lv_keyboard_mode_t kb_mode = LV_KEYBOARD_MODE_TEXT_LOWER) {
+    lv_obj_t *ta = lv_textarea_create(_panel);
+    lv_obj_set_size(ta, PANEL_W - 20, 36);
+    lv_obj_set_pos(ta, 0, y);
+    lv_textarea_set_one_line(ta, true);
+    if (max_len > 0) lv_textarea_set_max_length(ta, max_len);
+    lv_textarea_set_placeholder_text(ta, placeholder);
+    lv_obj_add_event_cb(ta, [](lv_event_t *e) {
+        lv_keyboard_set_textarea(_keyboard, lv_event_get_target_obj(e));
+        lv_keyboard_set_mode(_keyboard, (lv_keyboard_mode_t)(intptr_t)lv_event_get_user_data(e));
+        lv_obj_clear_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+    }, LV_EVENT_FOCUSED, (void *)(intptr_t)kb_mode);
+    return ta;
+}
+
+static void waypoint_save_click_cb(lv_event_t *e) {
+    const char *name = lv_textarea_get_text(_wp_name_ta);
+    float lat = atof(lv_textarea_get_text(_wp_lat_ta));
+    float lon = atof(lv_textarea_get_text(_wp_lon_ta));
+    int elev = atoi(lv_textarea_get_text(_wp_elev_ta));
+
+    char err[48];
+    if (locations_add_waypoint(name, lat, lon, elev, err, sizeof(err))) {
+        build_list_view(); // back to the list, now showing the new location
+    } else {
+        lv_label_set_text(_wp_status_lbl, err);
+        lv_obj_set_style_text_color(_wp_status_lbl, COLOR_ERR, 0);
+    }
+}
+
+// Manual lat/lon/elevation entry -- the other add-flow, alongside
+// build_add_view()'s ICAO lookup. No network fetch (locations_add_waypoint()
+// is synchronous), so this is a plain Save button, not the ICAO flow's
+// Fetch-then-poll-for-a-result dance.
+static void build_add_waypoint_view() {
+    if (_panel) {
+        lv_obj_add_flag(_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_delete_async(_panel); // see build_list_view() -- called from a click event on a descendant of _panel (the "Add Location" row)
+    }
+
+    _panel = lv_obj_create(_overlay);
+    lv_obj_set_size(_panel, PANEL_W, 290);
+    lv_obj_set_pos(_panel, 8, 8);
+    lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
+    lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_panel, 1, 0);
+    lv_obj_set_style_border_color(_panel, COLOR_DIM, 0);
+    lv_obj_set_style_border_opa(_panel, LV_OPA_40, 0);
+    lv_obj_set_style_radius(_panel, 8, 0);
+    lv_obj_set_style_pad_all(_panel, 10, 0);
+    lv_obj_clear_flag(_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(_panel);
+    lv_label_set_text(title, "Add location");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(title, COLOR_TEXT, 0);
+    lv_obj_set_pos(title, 0, 0);
+
+    _wp_name_ta = wp_field(28, "Name, e.g. Cabin", LOC_NAME_LEN - 1);
+    _wp_lat_ta  = wp_field(70, "Latitude, e.g. 39.8617", 0, LV_KEYBOARD_MODE_NUMBER);
+    _wp_lon_ta  = wp_field(112, "Longitude, e.g. -104.6731", 0, LV_KEYBOARD_MODE_NUMBER);
+    _wp_elev_ta = wp_field(154, "Elevation ft, e.g. 5430", 0, LV_KEYBOARD_MODE_NUMBER);
+
+    lv_obj_t *save_btn = lv_obj_create(_panel);
+    lv_obj_set_size(save_btn, 90, BTN_H + 10);
+    lv_obj_set_pos(save_btn, 0, 200);
+    lv_obj_set_style_bg_color(save_btn, COLOR_ACCENT, 0);
+    lv_obj_set_style_radius(save_btn, 6, 0);
+    lv_obj_clear_flag(save_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(save_btn, waypoint_save_click_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *save_lbl = lv_label_create(save_btn);
+    lv_label_set_text(save_lbl, "Save");
+    lv_obj_set_style_text_color(save_lbl, lv_color_hex(0x000000), 0);
+    lv_obj_center(save_lbl);
+
+    lv_obj_t *back_btn = lv_obj_create(_panel);
+    lv_obj_set_size(back_btn, 90, BTN_H + 10);
+    lv_obj_set_pos(back_btn, 100, 200);
+    lv_obj_set_style_bg_color(back_btn, COLOR_ROW, 0);
+    lv_obj_set_style_radius(back_btn, 6, 0);
+    lv_obj_clear_flag(back_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(back_btn, [](lv_event_t *e) { build_list_view(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *back_lbl = lv_label_create(back_btn);
+    lv_label_set_text(back_lbl, "Cancel");
+    lv_obj_set_style_text_color(back_lbl, COLOR_DIM, 0);
+    lv_obj_center(back_lbl);
+
+    _wp_status_lbl = lv_label_create(_panel);
+    lv_label_set_text(_wp_status_lbl, "");
+    lv_obj_set_style_text_font(_wp_status_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_width(_wp_status_lbl, PANEL_W - 20);
+    lv_obj_set_pos(_wp_status_lbl, 0, 244);
 }
 
 void location_picker_init(lv_obj_t *screen) {

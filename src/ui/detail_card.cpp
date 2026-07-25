@@ -2,6 +2,7 @@
 #include "detail_card.h"
 #include "geo.h"
 #include "../data/storage.h"
+#include "../data/locations.h"
 #include "../data/enrichment.h"
 #include "../data/airlines.h"
 #include "../pins_config.h"
@@ -389,13 +390,23 @@ void detail_card_show(const Aircraft *ac) {
     lv_label_set_text(_status_label, status);
 
     // === DATA GRID ROW 2 — position & tracking ===
-    float dist = MapProjection::distance_nm(g_config.home_lat, g_config.home_lon, ac->lat, ac->lon);
+    // DIST/BEARING measure from whichever location is actually active, not
+    // a hardcoded Home -- this was a real, latent bug found while removing
+    // Home as a special case: unlike stats.cpp's CLOSEST record (already
+    // fixed for exactly this in an earlier session), this always read
+    // g_config.home_lat/lon regardless of which saved location was being
+    // viewed. Stays 0,0 if nothing's selected (harmless -- the detail card
+    // isn't reachable with an empty aircraft list anyway).
+    float ref_lat = 0, ref_lon = 0;
+    locations_get_active_coords(&ref_lat, &ref_lon, nullptr);
+
+    float dist = MapProjection::distance_nm(ref_lat, ref_lon, ac->lat, ac->lon);
     lv_label_set_text_fmt(_dist_label, "%.1f nm", dist);
 
-    float dlon = (ac->lon - g_config.home_lon) * M_PI / 180.0f;
+    float dlon = (ac->lon - ref_lon) * M_PI / 180.0f;
     float y = sinf(dlon) * cosf(ac->lat * M_PI / 180.0f);
-    float x = cosf(g_config.home_lat * M_PI / 180.0f) * sinf(ac->lat * M_PI / 180.0f) -
-              sinf(g_config.home_lat * M_PI / 180.0f) * cosf(ac->lat * M_PI / 180.0f) * cosf(dlon);
+    float x = cosf(ref_lat * M_PI / 180.0f) * sinf(ac->lat * M_PI / 180.0f) -
+              sinf(ref_lat * M_PI / 180.0f) * cosf(ac->lat * M_PI / 180.0f) * cosf(dlon);
     int bearing = (int)(atan2f(y, x) * 180.0f / M_PI + 360.0f) % 360;
     lv_label_set_text_fmt(_bearing_label, "%03d", bearing);
 

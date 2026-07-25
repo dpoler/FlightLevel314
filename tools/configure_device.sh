@@ -13,10 +13,9 @@
 # operation, never append/increment -- so this script is safe to run more
 # than once, or to run the same menu option more than once in one session.
 #
-# Menu options 3 and 5 are intentionally stubbed -- the device firmware
-# doesn't support them yet (see the project backlog: the location system is
-# still being redesigned, and OTA firmware updates aren't built). The menu
-# structure and serial plumbing here are already in place for when they are.
+# Menu option 5 is intentionally stubbed -- OTA firmware updates aren't
+# built yet (see the project backlog). The menu structure and serial
+# plumbing here are already in place for when it is.
 
 set -euo pipefail
 
@@ -114,7 +113,7 @@ while true; do
     echo ""
     echo "1) Set airportdb.io API token"
     echo "2) Set WiFi credentials"
-    echo "3) Set Home location (lat/lon/elevation)  [not yet supported by this firmware]"
+    echo "3) Add a saved location (name/lat/lon/elevation)"
     echo "4) Factory reset (erase all settings and saved locations)"
     echo "5) Update firmware  [not yet supported by this firmware]"
     echo "0) Exit"
@@ -138,8 +137,12 @@ while true; do
             echo "Reboot the device (power cycle) to apply."
             ;;
         3)
-            echo "Not yet supported -- the location system is still being redesigned."
-            echo "See the project backlog (\"Generalize Home into the saved-locations system\")."
+            read -r -p "Location name (short, no '|'): " loc_name
+            read -r -p "Latitude: " loc_lat
+            read -r -p "Longitude: " loc_lon
+            read -r -p "Elevation (ft): " loc_elev
+            send_line "ADD_WAYPOINT=${loc_name}|${loc_lat}|${loc_lon}|${loc_elev}"
+            show_response
             ;;
         4)
             read -r -p "This will ERASE ALL settings and saved locations. Type YES to confirm: " confirm

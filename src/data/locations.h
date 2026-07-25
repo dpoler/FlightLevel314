@@ -2,12 +2,16 @@
 #include <cstddef>
 #include "aircraft.h"
 
-#define MAX_LOCATIONS 15   // saved airports, not counting Home
+#define MAX_LOCATIONS 15   // saved locations (airports + waypoints)
 #define MAX_RUNWAYS   12   // KORD has exactly 8 active runways (11 total, 3
                             // closed) -- was capped at 8, right at the edge;
                             // bumped for headroom now that closed runways are
                             // filtered out during parsing (locations.cpp)
 #define LOC_ICAO_LEN  8
+#define LOC_NAME_LEN  17   // 16 usable chars + null -- picker rows are narrow;
+                            // airports auto-name themselves after their ICAO,
+                            // waypoints need a user-chosen name to identify
+                            // them at all (no ICAO to fall back on)
 
 // Safety ceiling for cached nearby LARGE airports per location (see the
 // nearby-runways declarations below). Large-only rarely approaches this even
@@ -23,8 +27,17 @@ struct LocRunway {
     char he_id[4];
 };
 
+// A saved location is either an airport or a plain waypoint -- there is no
+// other kind, and no separately-tracked "Home". icao[0] == '\0' is the
+// discriminator: empty means "this is a waypoint" (lat/lon/elevation entered
+// directly by the user, no runway geometry, never attempts an airportdb.io
+// fetch). Airports have runways[]/runway_count from airportdb.io as before.
+// Every location -- airport or waypoint -- has a `name` used for display;
+// for airports it's auto-set to the ICAO on add, for waypoints the user
+// supplies it (it's the only thing identifying the row in the picker).
 struct Location {
     char icao[LOC_ICAO_LEN];
+    char name[LOC_NAME_LEN];
     float lat, lon;
     int elevation_ft;
     LocRunway runways[MAX_RUNWAYS];
@@ -35,19 +48,26 @@ struct Location {
                           // locations_nearby_count())
 };
 
-// Home is not stored here — it's the existing g_config.home_lat/home_lon,
-// treated as the implicit location at index -1 everywhere in this API.
-
-// Load saved airports from NVS. Call once at boot.
+// Load saved locations from NVS. Call once at boot.
 void locations_init();
 
-int locations_count();                     // number of saved (non-home) airports
+int locations_count();                     // number of saved locations
 const Location* locations_get(int idx);    // idx in [0, locations_count())
 
-// Fetch runway/elevation data for `icao` from airportdb.io and persist it.
-// Blocking network call — call from a background task, not the UI thread.
-// Returns true on success; on failure, if err is non-null, writes a short reason.
+// Fetch runway/elevation data for `icao` from airportdb.io and persist it as
+// a new airport-type location. Blocking network call — call from a
+// background task, not the UI thread. Returns true on success; on failure,
+// if err is non-null, writes a short reason.
 bool locations_add_from_icao(const char *icao, char *err, size_t err_size);
+
+// Adds a plain waypoint -- no network fetch, so this is synchronous and safe
+// to call directly from the UI thread (unlike locations_add_from_icao(),
+// there's nothing to poll for). name is truncated to LOC_NAME_LEN-1 and has
+// any '|' stripped (the serial-config protocol's field delimiter -- see
+// serial_config.cpp). Returns true on success; on failure (name empty, or
+// the location list is full), if err is non-null, writes a short reason.
+bool locations_add_waypoint(const char *name, float lat, float lon, int elevation_ft,
+                             char *err, size_t err_size);
 
 // Request/response pair for adding a location from the UI thread without
 // spawning a new task — a dedicated task's stack was enough extra internal-DRAM
@@ -67,32 +87,29 @@ void locations_remove(int idx);
 // Moves the location at `from` to position `to`, shifting everything between
 // them by one slot (same semantics as a list drag-to-reorder). No-op if
 // either index is out of range or they're equal. The active selection (if
-// any) is remapped to keep pointing at the same airport, not the same slot.
+// any) is remapped to keep pointing at the same location, not the same slot.
 void locations_reorder(int from, int to);
 
-// Currently selected location. -1 = Home.
+// Currently selected location. -1 = none selected (empty list, or nothing
+// chosen yet -- e.g. right after a factory reset). Callers must handle this
+// as a real "no active location" state, not assume there's always a
+// fallback -- there isn't one anymore.
 int locations_active_index();
 void locations_set_active(int idx);
 
-// Convenience — resolves the active selection (Home or a saved Location) into
-// a lat/lon/elevation triple. Returns false if idx is out of range.
+// Convenience — resolves the active selection into a lat/lon/elevation
+// triple. Returns false if nothing is active (see locations_active_index()).
 bool locations_get_active_coords(float *lat, float *lon, int *elevation_ft);
 
-// Resolves the active selection into whichever AircraftList currently holds
-// its data: `home_list` when Home is active, or the shared on-demand list
-// (fetcher_location_list()) when a saved airport is active. Views should call
-// this each time they need the list, rather than caching the result — the
-// active location can change out from under them at any time via the picker.
-AircraftList* locations_active_list(AircraftList *home_list);
-
 // "Nearby large airports" cache: draws full runway geometry (not just a
-// glyph) for large airports near a saved location or Home, on top of that
-// location's own runways. idx follows locations_active_index()'s convention:
-// -1 = Home, [0, locations_count()) = saved. Large airports only (from the
-// static DB's `large` flag) -- medium airports stay glyph-only. A dense
-// 50nm radius (e.g. KJFK) can have ~20 airports total, but rarely more than
-// a handful of LARGE ones, which is both the cheaper set to fetch and the
-// one worth a full runway diagram at a glance.
+// glyph) for large airports near a saved location, on top of that location's
+// own runways. Works identically for airport- and waypoint-type locations --
+// the original motivating case was a plain waypoint dropped between several
+// nearby airports. Large airports only (from the static DB's `large` flag)
+// -- medium airports stay glyph-only. A dense 50nm radius (e.g. KJFK) can
+// have ~20 airports total, but rarely more than a handful of LARGE ones,
+// which is both the cheaper set to fetch and the one worth a full runway
+// diagram at a glance.
 //
 // Fetched once, at the moment the toggle is first turned on -- same
 // fetch-and-cache-at-a-discrete-action reasoning as locations_add_from_icao()
@@ -115,7 +132,7 @@ const Location* locations_nearby_get_active(int *count);
 void locations_nearby_poll();
 
 // Erases the entire "adsb_locs" NVS namespace -- every saved location and
-// every nearby-runways cache blob (nb_<ICAO>/nb_home keys live in this same
+// every nearby-runways cache blob (nb_<name> keys live in this same
 // namespace, so a full clear takes those with it too, no separate cleanup
 // needed). Does not touch in-memory state -- caller is expected to reboot
 // immediately (serial_config.cpp's FACTORY_RESET does), at which point

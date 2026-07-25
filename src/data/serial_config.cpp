@@ -3,6 +3,7 @@
 #include "locations.h"
 #include <Arduino.h>
 #include <cstring>
+#include <cstdlib>
 
 #define LINE_BUF_SIZE 200
 
@@ -42,6 +43,29 @@ static void handle_line(char *line) {
         strlcpy(g_config.wifi_pass, line + 10, sizeof(g_config.wifi_pass));
         storage_save_config(g_config);
         Serial.printf("OK WiFi password saved (%d chars) -- reboot to apply\n", (int)strlen(g_config.wifi_pass));
+    } else if (strncmp(line, "ADD_WAYPOINT=", 13) == 0) {
+        // <name>|<lat>|<lon>|<elevation_ft> -- pipe-delimited (not comma) so
+        // a name can contain a comma if a user wants one. locations_add_waypoint()
+        // still strips any literal '|' from the parsed name defensively.
+        char args[LINE_BUF_SIZE];
+        strlcpy(args, line + 13, sizeof(args));
+        char *name = args;
+        char *lat_s = strchr(name, '|');
+        char *lon_s = lat_s ? strchr(lat_s + 1, '|') : nullptr;
+        char *elev_s = lon_s ? strchr(lon_s + 1, '|') : nullptr;
+        if (!lat_s || !lon_s || !elev_s) {
+            Serial.println("ERR ADD_WAYPOINT needs <name>|<lat>|<lon>|<elevation_ft>");
+        } else {
+            *lat_s++ = '\0';
+            *lon_s++ = '\0';
+            *elev_s++ = '\0';
+            char err[64] = {};
+            if (locations_add_waypoint(name, atof(lat_s), atof(lon_s), atoi(elev_s), err, sizeof(err))) {
+                Serial.printf("OK Added location \"%s\"\n", name);
+            } else {
+                Serial.printf("ERR %s\n", err);
+            }
+        }
     } else if (strcmp(line, "FACTORY_RESET=CONFIRM") == 0) {
         // Requires the exact confirm string, not just "FACTORY_RESET" --
         // this is destructive (wipes every saved setting and location) and
@@ -54,7 +78,7 @@ static void handle_line(char *line) {
         delay(200); // let the OK line actually flush over USB CDC before reset
         ESP.restart();
     } else {
-        Serial.println("ERR Unknown command. Supported: PING, TOKEN=, WIFI_SSID=, WIFI_PASS=, FACTORY_RESET=CONFIRM");
+        Serial.println("ERR Unknown command. Supported: PING, TOKEN=, WIFI_SSID=, WIFI_PASS=, ADD_WAYPOINT=, FACTORY_RESET=CONFIRM");
     }
 }
 
