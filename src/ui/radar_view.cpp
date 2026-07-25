@@ -536,6 +536,25 @@ static void draw_radar_airport_glyph(lv_layer_t *layer, int sx, int sy, const ch
     lv_draw_label(layer, &lbl, &area);
 }
 
+// Small text-only ICAO label (no cross/glyph lines) for an airport drawn
+// with full runway geometry via the nearby-runways cache -- see
+// map_view.cpp's draw_airport_id_label() for the full reasoning (those
+// airports skip draw_radar_airport_glyph() to avoid the double-draw bug,
+// which otherwise left them with no on-screen identification at all).
+static void draw_radar_airport_id_label(lv_layer_t *layer, const Location *loc, RadarLabelRectSet &placed) {
+    int sx, sy;
+    if (!to_radar_screen(loc->lat, loc->lon, sx, sy)) return;
+
+    lv_draw_label_dsc_t lbl;
+    lv_draw_label_dsc_init(&lbl);
+    lbl.color = COLOR_RADAR_AIRPORT;
+    lbl.font = &lv_font_montserrat_10;
+    lbl.opa = LV_OPA_60;
+    lbl.align = LV_TEXT_ALIGN_CENTER;
+
+    place_radar_runway_label(layer, &lbl, placed, sx, sy, 0.0f, 1.0f, loc->icao, 50, 14);
+}
+
 // Every *saved* airport currently in range -- full runway geometry for
 // whichever is active, a plain glyph for the rest (same reasoning as
 // map_view.cpp: two full runway diagrams on screen at once isn't obviously
@@ -580,7 +599,10 @@ static void draw_radar_saved_airports(lv_layer_t *layer) {
     }
 
     for (int i = 0; i < nearby_n; i++) {
-        if (nearby[i].runway_count > 0) draw_radar_runways_for(layer, &nearby[i], placed, radius_nm);
+        if (nearby[i].runway_count > 0) {
+            draw_radar_runways_for(layer, &nearby[i], placed, radius_nm);
+            draw_radar_airport_id_label(layer, &nearby[i], placed);
+        }
     }
 }
 
