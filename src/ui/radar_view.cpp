@@ -548,6 +548,22 @@ static void draw_radar_saved_airports(lv_layer_t *layer) {
     float radius_nm = range_get_nm();
     int active = locations_active_index();
     int n = locations_count();
+
+    // Nearby large airports (locations.h's nearby-runways cache) -- computed
+    // first so the loop below can skip a redundant glyph for any non-active
+    // saved airport that's also one of the active location's cached nearby
+    // airports. See map_view.cpp's draw_saved_airports() for the full
+    // reasoning (bug: nearby_start_scan() only excludes the owner's own
+    // ICAO, not other saved locations, so such an airport got both a glyph
+    // and full runways drawn on top of each other).
+    int nearby_n;
+    const Location *nearby = locations_nearby_get_active(&nearby_n);
+    auto in_nearby_cache = [&](const char *icao) {
+        for (int i = 0; i < nearby_n; i++)
+            if (strcmp(nearby[i].icao, icao) == 0) return true;
+        return false;
+    };
+
     for (int i = 0; i < n; i++) {
         const Location *loc = locations_get(i);
         if (!loc) continue;
@@ -556,16 +572,13 @@ static void draw_radar_saved_airports(lv_layer_t *layer) {
 
         if (loc->runway_count > 0 && i == active) {
             draw_radar_runways_for(layer, loc, placed, radius_nm);
+        } else if (in_nearby_cache(loc->icao)) {
+            continue; // drawn with full runways by the nearby-cache pass below instead
         } else {
             draw_radar_airport_glyph(layer, sx, sy, loc->icao);
         }
     }
 
-    // Nearby large airports (locations.h's nearby-runways cache) -- see
-    // map_view.cpp's draw_saved_airports() for the full reasoning; only the
-    // active location's cache is ever resident, loaded lazily.
-    int nearby_n;
-    const Location *nearby = locations_nearby_get_active(&nearby_n);
     for (int i = 0; i < nearby_n; i++) {
         if (nearby[i].runway_count > 0) draw_radar_runways_for(layer, &nearby[i], placed, radius_nm);
     }
