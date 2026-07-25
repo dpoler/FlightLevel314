@@ -16,8 +16,14 @@
 // Create the status bar at the top of the screen (STATUS_BAR_HEIGHT tall)
 lv_obj_t *status_bar_create(lv_obj_t *parent);
 
-// Update status bar with current data
-void status_bar_update(bool wifi_connected, int aircraft_count, uint32_t last_update_ms);
+// Update status bar with current data. aircraft_count is what's actually
+// passing the active view's filter/GND/radius (what you'd count on
+// screen); total_aircraft_count is everything currently tracked regardless
+// of that (same figure Stats' CURRENT TRAFFIC column shows as "Total: N")
+// -- shown together so a filtered-down count doesn't read as "the device
+// only sees a few aircraft" when it is really "your filter is hiding most
+// of what it sees."
+void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircraft_count, uint32_t last_update_ms);
 
 // Last aircraft_count passed to status_bar_update() -- reused by the
 // screensaver (screensaver.cpp) instead of recomputing its own count.

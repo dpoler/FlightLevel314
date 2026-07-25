@@ -27,6 +27,7 @@
 
 static AircraftList *_list = nullptr;      // the one aircraft list -- fetch_task always fetches for whichever location is currently active
 static lv_obj_t *_container = nullptr;
+static lv_obj_t *_traffic_total_lbl = nullptr; // "Total: N" caption under CURRENT TRAFFIC
 
 // Category rows
 struct BarRow {
@@ -209,6 +210,8 @@ static void refresh_stats(lv_timer_t *t) {
     stats_update(_list);
     const SessionStats *s = stats_get();
     const FetcherStats *fs = fetcher_get_stats();
+
+    lv_label_set_text_fmt(_traffic_total_lbl, "Total: %d", s->current_count);
 
     // Category bars
     int cat_counts[] = {s->jets, s->ga, s->heli, s->military, s->emergency};
@@ -441,8 +444,21 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_pos(now_header, lx, 8);
     lv_obj_clear_flag(now_header, LV_OBJ_FLAG_CLICKABLE);
 
-    // Category breakdown
-    int type_y = 8 + COL_HEADER_GAP;
+    // "Total: N" caption, same position/style/purpose as LOCATION's "since
+    // last switch" caption below -- lines the two column headers up with
+    // matching header-plus-caption shapes instead of one having a caption
+    // and the other just floating alone above TYPE.
+    _traffic_total_lbl = lv_label_create(_container);
+    lv_label_set_text(_traffic_total_lbl, "Total: 0");
+    lv_obj_set_style_text_font(_traffic_total_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_traffic_total_lbl, DIM_COLOR, 0);
+    lv_obj_set_pos(_traffic_total_lbl, lx, 32);
+    lv_obj_clear_flag(_traffic_total_lbl, LV_OBJ_FLAG_CLICKABLE);
+
+    // Category breakdown -- type_y matches LOCATION's rc_y (COL_HEADER_GAP +
+    // ROW_H, not just COL_HEADER_GAP) so TYPE and RECORDS line up now that
+    // both columns have a caption line under their header.
+    int type_y = 8 + COL_HEADER_GAP + ROW_H;
     create_section_header(_container, "TYPE", lx, type_y);
     for (int i = 0; i < 5; i++) {
         // EMRG's wide "M" runs into the count digit at the default 42px
