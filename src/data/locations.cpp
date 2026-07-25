@@ -739,21 +739,21 @@ void locations_nearby_set_enabled(int idx, bool on) {
     _locations[idx].nearby_enabled = on;
     save_all();
 
-    if (!on) {
-        // The resident draw-time cache (_nearby[]) only reloads when the
-        // *active index* changes (see locations_nearby_get_active()) -- it
-        // never re-checks the enabled flag on its own while staying on the
-        // same location, so without this a toggle-off left the already-
-        // loaded runways drawing indefinitely (reported: turning it back
-        // off after turning it on had no visible effect). Invalidating the
-        // resident cache forces the next draw call to re-evaluate
-        // locations_nearby_enabled(), which now correctly returns false.
-        // Cached data on disk is untouched, so turning back on still
-        // doesn't need to re-fetch.
-        if (idx == _active_index) _nearby_loaded_for = -2;
-        return;
-    }
-    if (locations_nearby_count(idx) > 0) return; // already cached, nothing to do
+    // The resident draw-time cache (_nearby[]) only reloads when the
+    // *active index* changes (see locations_nearby_get_active()) -- it
+    // never re-checks the enabled flag on its own while staying on the
+    // same location. Invalidate it here on every flip, not just off, so the
+    // next draw call re-evaluates from scratch regardless of direction:
+    // off needs it to stop returning the already-loaded runways (reported:
+    // had no visible effect); on needs it to start returning the
+    // already-on-disk data again instead of the "0, already evaluated"
+    // result the *previous* off toggle left cached, which otherwise left
+    // turning it back on invisible until switching away and back to this
+    // location forced a real reload (reported, same underlying cause).
+    if (idx == _active_index) _nearby_loaded_for = -2;
+
+    if (!on) return;
+    if (locations_nearby_count(idx) > 0) return; // already cached, nothing to (re)fetch
 
     if (_nearby_queue_active) {
         nearby_queue_pending(idx); // another owner's pass is already running -- wait our turn
