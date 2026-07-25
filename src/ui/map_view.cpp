@@ -742,6 +742,19 @@ static void draw_aircraft(lv_layer_t *layer) {
         if (ac_opa == 0) continue;
         if (!aircraft_passes_filter(ac)) continue;
         if (g_config.view_hide_ground[VIEW_MAP] && ac.on_ground) continue;
+        // to_screen() only checks the rectangular canvas bounds, not a
+        // circular radius -- an aircraft beyond the bullseye ring but still
+        // inside the canvas corners would pass it and get drawn, while the
+        // status bar/Stats' filtered count (main.cpp) uses a true circular
+        // distance_nm > radius_nm cutoff, same as Radar's to_radar_screen()
+        // already enforces for everything it draws. Without this, Map could
+        // show aircraft the status bar count did not include, and vice
+        // versa never happened, only ever this direction -- reported as
+        // "filtered number only counts the bullseye, not what is on
+        // screen." Explicit distance check here brings Map's drawn set back
+        // in line with what every count of "aircraft currently shown"
+        // elsewhere in the app already means.
+        if (MapProjection::distance_nm(_proj.center_lat, _proj.center_lon, ac.lat, ac.lon) > _proj.radius_nm) continue;
 
         int sx, sy;
         if (!_proj.to_screen(ac.lat, ac.lon, sx, sy)) continue;
@@ -1130,12 +1143,14 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
             return;
         }
 
-        // Hit test against aircraft (30px hit radius) -- same filter/hide_ground
-        // gating as draw_aircraft(), so a hidden aircraft can't be tapped.
+        // Hit test against aircraft (30px hit radius) -- same filter/hide_ground/
+        // radius gating as draw_aircraft(), so a hidden aircraft can't be tapped.
         if (!_list->lock(pdMS_TO_TICKS(10))) return;
         for (int i = 0; i < _list->count; i++) {
             if (!aircraft_passes_filter(_list->aircraft[i])) continue;
             if (g_config.view_hide_ground[VIEW_MAP] && _list->aircraft[i].on_ground) continue;
+            if (MapProjection::distance_nm(_proj.center_lat, _proj.center_lon,
+                    _list->aircraft[i].lat, _list->aircraft[i].lon) > _proj.radius_nm) continue;
             int sx, sy;
             if (_proj.to_screen(_list->aircraft[i].lat, _list->aircraft[i].lon, sx, sy)) {
                 int dx = tx - sx;
