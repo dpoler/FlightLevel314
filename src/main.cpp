@@ -208,10 +208,6 @@ void setup() {
             g_config.last_range_idx = range_get_index();
             storage_save_config(g_config);
         }
-        if (locations_active_index() == -1) { // don't yank the view off a saved airport
-            map_view_center_on(cfg->home_lat, cfg->home_lon);
-            radar_view_set_home(cfg->home_lat, cfg->home_lon);
-        }
     });
 
     // On first boot (no credentials in NVS), open settings automatically
@@ -229,7 +225,7 @@ void setup() {
     // visits Map once (reported on hardware).
     lv_timer_create([](lv_timer_t *timer) {
         int count = 0;
-        AircraftList *list = locations_active_list(&aircraft_list);
+        AircraftList *list = &aircraft_list;
         float center_lat, center_lon;
         locations_get_active_coords(&center_lat, &center_lon, nullptr);
         float radius_nm = range_get_nm();
@@ -263,16 +259,10 @@ void setup() {
     // when the idle timeout fires.
     screensaver_init(screen, set_backlight);
 
-    // Must come after fetcher_init() -- resuming into Arrivals synchronously
-    // calls arrivals_view_on_show() -> update_board(), which (for a saved,
-    // non-Home location) reaches for fetcher_location_list()'s AircraftList.
-    // That list's internal mutex is only created inside fetcher_init()'s
-    // _loc_list.init() call; calling this any earlier hit a null semaphore
-    // (assert failed: xQueueSemaphoreTake, confirmed on hardware). Map/Radar
-    // don't have this problem since their periodic redraw timers can't fire
-    // until loop() starts pumping lv_timer_handler(), by which point setup()
-    // has already fully completed -- only Arrivals does synchronous work
-    // immediately on "show".
+    // See views_resume_last_view()'s own comment for its real ordering
+    // constraint (must follow detail_card_init()/alerts_init(), both already
+    // satisfied above) -- placed here, after fetcher_init(), simply so
+    // resuming into Arrivals has live data to draw on the very first frame.
     views_resume_last_view();
 }
 

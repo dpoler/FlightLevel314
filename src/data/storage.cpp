@@ -13,9 +13,6 @@ UserConfig storage_load_config() {
     cfg.wifi_ssid[0] = '\0';
     cfg.wifi_pass[0] = '\0';
     cfg.airportdb_token[0] = '\0';
-    cfg.home_lat = 0.0f;
-    cfg.home_lon = 0.0f;
-    cfg.home_elevation_ft = 0;
     cfg.radius_nm = 50;
     cfg.radius_presets[0] = 5;
     cfg.radius_presets[1] = 10;
@@ -49,9 +46,7 @@ UserConfig storage_load_config() {
     }
     cfg.last_view_idx = 0;   // VIEW_MAP
     cfg.last_range_idx = 0;  // widest preset
-    cfg.last_location_icao[0] = '\0'; // Home
-    cfg.home_nearby_enabled = false;
-    cfg.home_nearby_count = 0;
+    cfg.last_location_name[0] = '\0'; // nothing selected
 
     _prefs.begin("adsb", true); // read-only
 
@@ -62,9 +57,6 @@ UserConfig storage_load_config() {
         strlcpy(cfg.wifi_pass, _prefs.getString("pass", cfg.wifi_pass).c_str(), sizeof(cfg.wifi_pass));
     if (_prefs.isKey("apt_tok"))
         strlcpy(cfg.airportdb_token, _prefs.getString("apt_tok", cfg.airportdb_token).c_str(), sizeof(cfg.airportdb_token));
-    cfg.home_lat = _prefs.getFloat("lat", cfg.home_lat);
-    cfg.home_lon = _prefs.getFloat("lon", cfg.home_lon);
-    cfg.home_elevation_ft = _prefs.getInt("home_elev", cfg.home_elevation_ft);
     cfg.radius_nm = _prefs.getInt("radius", cfg.radius_nm);
     cfg.radius_presets[0] = _prefs.getInt("rad0", cfg.radius_presets[0]);
     cfg.radius_presets[1] = _prefs.getInt("rad1", cfg.radius_presets[1]);
@@ -105,9 +97,7 @@ UserConfig storage_load_config() {
     cfg.last_view_idx = _prefs.getInt("last_view", cfg.last_view_idx);
     cfg.last_range_idx = _prefs.getInt("last_rng", cfg.last_range_idx);
     if (_prefs.isKey("last_loc"))
-        strlcpy(cfg.last_location_icao, _prefs.getString("last_loc", cfg.last_location_icao).c_str(), sizeof(cfg.last_location_icao));
-    cfg.home_nearby_enabled = _prefs.getBool("hm_nb_on", cfg.home_nearby_enabled);
-    cfg.home_nearby_count = _prefs.getInt("hm_nb_cnt", cfg.home_nearby_count);
+        strlcpy(cfg.last_location_name, _prefs.getString("last_loc", cfg.last_location_name).c_str(), sizeof(cfg.last_location_name));
 
     _prefs.end();
     Serial.println("Storage: config loaded from NVS");
@@ -120,9 +110,6 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putString("ssid", cfg.wifi_ssid);
     _prefs.putString("pass", cfg.wifi_pass);
     _prefs.putString("apt_tok", cfg.airportdb_token);
-    _prefs.putFloat("lat", cfg.home_lat);
-    _prefs.putFloat("lon", cfg.home_lon);
-    _prefs.putInt("home_elev", cfg.home_elevation_ft);
     _prefs.putInt("radius", cfg.radius_nm);
     _prefs.putInt("rad0", cfg.radius_presets[0]);
     _prefs.putInt("rad1", cfg.radius_presets[1]);
@@ -162,9 +149,7 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putBool("show2loc1", cfg.view_show_secondary_locations[1]);
     _prefs.putInt("last_view", cfg.last_view_idx);
     _prefs.putInt("last_rng", cfg.last_range_idx);
-    _prefs.putString("last_loc", cfg.last_location_icao);
-    _prefs.putBool("hm_nb_on", cfg.home_nearby_enabled);
-    _prefs.putInt("hm_nb_cnt", cfg.home_nearby_count);
+    _prefs.putString("last_loc", cfg.last_location_name);
 
     _prefs.end();
     Serial.println("Storage: config saved to NVS");

@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include "stats.h"
 #include "geo.h"
-#include "../data/storage.h"
 #include "../data/locations.h"
 #include <cstring>
 #include <cstdlib>
@@ -189,11 +188,11 @@ void stats_update(AircraftList *list) {
     _stats.spd_very_fast = 0;
     _stats.spd_extreme = 0;
 
-    // CLOSEST should measure from wherever is actually being viewed, not
-    // always Home -- falls back to Home's coords if the active location was
-    // somehow removed out from under us (locations_get_active_coords()
-    // leaves these untouched on failure).
-    float ref_lat = g_config.home_lat, ref_lon = g_config.home_lon;
+    // CLOSEST should measure from wherever is actually being viewed --
+    // stays 0,0 if nothing's selected (locations_get_active_coords() leaves
+    // these untouched on failure), which is harmless since list is empty in
+    // that case anyway (see fetch_task).
+    float ref_lat = 0, ref_lon = 0;
     locations_get_active_coords(&ref_lat, &ref_lon, nullptr);
 
     uint32_t now = millis();

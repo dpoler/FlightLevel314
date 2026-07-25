@@ -30,9 +30,8 @@
 #define HAS_AIRPORTS_DB 0
 #endif
 
-static AircraftList *_list = nullptr;      // currently effective list (home or active saved location)
-static AircraftList *_home_list = nullptr; // the list passed in at init — always the home feed
-static int _last_active_loc = -2;          // sentinel so the first tick always syncs (-1 is a valid "Home")
+static AircraftList *_list = nullptr;      // the one aircraft list -- fetch_task always fetches for whichever location is currently active
+static int _last_active_loc = -2;          // sentinel so the first tick always syncs (-1 is a valid "nothing selected")
 static lv_obj_t *_canvas = nullptr;
 static MapProjection _proj;
 // Per-view "clear trails" cutoff -- Map and Radar share the same underlying
@@ -156,16 +155,10 @@ static void overlay_dismiss() {
 static void overlay_update() {
     if (!_overlay || _overlay_dismissed) return;
 
-    // If a saved (non-Home) location is active on boot (resume-on-boot,
-    // locations.cpp), _list is fetcher_location_list(), fed entirely by the
-    // separate location_fetch_poll() -- the main fetcher_get_stats() counters
-    // only ever reflect the Home feed, which keeps ticking "N ok / 0 err"
-    // regardless, misleadingly implying everything's fine while the actual
-    // feed this overlay is waiting on is a different poll entirely (reported:
-    // stuck on "Waiting for aircraft..." with healthy-looking Home stats).
-    bool on_saved_location = (locations_active_index() != -1);
-    const FetcherStats *net_fs = fetcher_get_stats(); // ip_addr is global network state either way
-    const FetcherStats *fs = on_saved_location ? fetcher_get_location_stats() : net_fs;
+    // There's only one fetch path/stats source now (see the fetch-loop
+    // consolidation this replaced -- no more separate Home-only vs.
+    // saved-location polls, so no more picking which stats to show).
+    const FetcherStats *fs = fetcher_get_stats();
     NetType net = fetcher_connection_type();
 
     // Status text
@@ -173,21 +166,58 @@ static void overlay_update() {
         overlay_dismiss();
         return;
     }
+
+    // Network isn't up yet -- show the normal acquiring-IP sequence
+    // regardless of whether a location is selected, so first boot still
+    // looks like it's doing something before landing on either state below.
     if (net == NET_NONE) {
+        lv_obj_clear_flag(_overlay_spinner, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(_overlay_net, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(_overlay_stats, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(_overlay_error, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(_overlay_status, "Connecting...");
-    } else if (fs->fetch_ok == 0 && fs->fetch_fail == 0) {
+        lv_label_set_text(_overlay_net, g_config.use_ethernet ? "Ethernet..." : "WiFi...");
+        ErrorSnapshot snap = error_log_snapshot();
+        if (snap.count > 0) {
+            lv_label_set_text(_overlay_error, snap.entries[snap.count - 1].msg);
+            lv_obj_set_style_text_color(_overlay_error, lv_color_hex(0xff6666), 0);
+        }
+        return;
+    }
+
+    if (locations_active_index() == -1) {
+        // Network's up, but nothing saved yet (fresh install, factory
+        // reset, or the last location was removed) -- this isn't a
+        // "waiting on the network" state at all, there's nothing to fetch
+        // until the user adds a location, so a spinner + IP/fetch-stats
+        // here previously read as "stuck loading" instead of "needs your
+        // input" (reported on hardware: it never dismissed, since dismissal
+        // is gated on aircraft arriving, which can't happen with nothing
+        // selected). Hide everything that implies in-progress network
+        // activity and point at the picker button by name instead.
+        lv_obj_add_flag(_overlay_spinner, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(_overlay_net, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(_overlay_stats, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(_overlay_error, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(_overlay_status, "No location added yet\n\nTap +Add to get started");
+        return;
+    }
+
+    lv_obj_clear_flag(_overlay_spinner, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(_overlay_net, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(_overlay_stats, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(_overlay_error, LV_OBJ_FLAG_HIDDEN);
+
+    if (fs->fetch_ok == 0 && fs->fetch_fail == 0) {
         lv_label_set_text(_overlay_status, "Fetching...");
     } else {
         lv_label_set_text(_overlay_status, "Waiting for aircraft...");
     }
 
-    // Network info
-    if (net != NET_NONE) {
-        const char *type = (net == NET_ETHERNET) ? "ETH" : "WiFi";
-        lv_label_set_text_fmt(_overlay_net, "%s  %s", type, net_fs->ip_addr);
-    } else {
-        lv_label_set_text(_overlay_net, g_config.use_ethernet ? "Ethernet..." : "WiFi...");
-    }
+    // Network info -- net is always connected here, having already returned
+    // above for the NET_NONE case
+    const char *type = (net == NET_ETHERNET) ? "ETH" : "WiFi";
+    lv_label_set_text_fmt(_overlay_net, "%s  %s", type, fs->ip_addr);
 
     // Fetch stats
     if (fs->fetch_ok > 0 || fs->fetch_fail > 0) {
@@ -387,16 +417,15 @@ static void draw_range_rings(lv_layer_t *layer) {
     }
 }
 
-// Marks the current center reference point — home when Home is active, or
-// the selected airport's reference point otherwise. Skipped when the active
-// location already has its runway diagram drawn — the runways themselves
-// mark the airport, and the cross is just clutter on top of them.
-static void draw_home_marker(lv_layer_t *layer) {
+// Marks the current center reference point -- the active location's own
+// position. Skipped when the active location already has its runway diagram
+// drawn -- the runways themselves mark the airport, and the cross is just
+// clutter on top of them.
+static void draw_active_location_marker(lv_layer_t *layer) {
     int active = locations_active_index();
-    if (active != -1) {
-        const Location *loc = locations_get(active);
-        if (loc && loc->runway_count > 0) return;
-    }
+    if (active == -1) return; // nothing selected -- see the empty-state overlay instead
+    const Location *loc = locations_get(active);
+    if (loc && loc->runway_count > 0) return;
 
     int hx, hy;
     if (!_proj.to_screen(_proj.center_lat, _proj.center_lon, hx, hy)) return;
@@ -415,47 +444,8 @@ static void draw_home_marker(lv_layer_t *layer) {
     lv_draw_line(layer, &line_dsc);
 }
 
-// Shared with draw_airport_glyph() further down -- Home's marker uses the
-// same color as every other airport reference point now (dot shape is
-// the only thing distinguishing it, not a separate hue).
+// Shared with draw_airport_glyph() further down.
 #define COLOR_AIRPORT_GLYPH lv_color_hex(0x557799)
-
-// Marks where Home actually is when it's NOT the active location -- e.g.
-// looking at a saved airport close enough that Home would otherwise be
-// on-screen with nothing to show for it. draw_home_marker() above only
-// marks whichever location is active (Home or the selected airport), so
-// this is a second, independent marker specifically for Home's own
-// coordinates. Filled circle rather than a "+" cross (already used by both
-// draw_home_marker() and draw_airport_glyph()) so it doesn't read as just
-// another one of those.
-static void draw_home_reference_elsewhere(lv_layer_t *layer) {
-    if (locations_active_index() == -1) return; // already home -- draw_home_marker() covers it
-
-    int hx, hy;
-    if (!_proj.to_screen(g_config.home_lat, g_config.home_lon, hx, hy)) return;
-
-    // Dimmed to match draw_airport_glyph()'s own opacity (LV_OPA_70/80) --
-    // this marker shouldn't outshine the airport reference points it sits
-    // alongside, just read distinctly from them (dot vs. their "+").
-    lv_draw_rect_dsc_t dot;
-    lv_draw_rect_dsc_init(&dot);
-    dot.bg_color = COLOR_AIRPORT_GLYPH;
-    dot.bg_opa = LV_OPA_70;
-    dot.radius = LV_RADIUS_CIRCLE;
-    lv_area_t area = {(lv_coord_t)(hx - 3), (lv_coord_t)(hy - 3),
-                       (lv_coord_t)(hx + 3), (lv_coord_t)(hy + 3)};
-    lv_draw_rect(layer, &dot, &area);
-
-    lv_draw_label_dsc_t lbl;
-    lv_draw_label_dsc_init(&lbl);
-    lbl.color = COLOR_AIRPORT_GLYPH;
-    lbl.font = &lv_font_montserrat_14;
-    lbl.opa = LV_OPA_80;
-    lbl.text = "HOME";
-    lv_area_t larea = {(lv_coord_t)(hx + 6), (lv_coord_t)(hy - 8),
-                        (lv_coord_t)(hx + 60), (lv_coord_t)(hy + 8)};
-    lv_draw_label(layer, &lbl, &larea);
-}
 
 // Tracks label bounding boxes already drawn this frame (across every saved
 // airport being drawn), so a new label can check whether its default spot
@@ -576,10 +566,11 @@ static void draw_runways_for(lv_layer_t *layer, const Location *loc, LabelRectSe
 
 #define GLYPH_R 5
 
-// Small "+ ICAO" marker for an airport we don't have runway geometry for —
-// either a saved Location with no runway data, or an unsaved airport from
-// the static DB.
-static void draw_airport_glyph(lv_layer_t *layer, int sx, int sy, const char *icao) {
+// Small "+ label" marker for a saved location we don't have runway geometry
+// for -- an airport (label = ICAO) with no runway data, an unsaved airport
+// from the static DB (also ICAO), or a plain waypoint (label = its name,
+// since it has no ICAO at all).
+static void draw_airport_glyph(lv_layer_t *layer, int sx, int sy, const char *label) {
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
     line.color = COLOR_AIRPORT_GLYPH;
@@ -598,7 +589,7 @@ static void draw_airport_glyph(lv_layer_t *layer, int sx, int sy, const char *ic
     lbl.color = COLOR_AIRPORT_GLYPH;
     lbl.font = &lv_font_montserrat_14;
     lbl.opa = LV_OPA_80;
-    lbl.text = icao;
+    lbl.text = label;
     lv_area_t area = {(lv_coord_t)(sx + GLYPH_R + 2), (lv_coord_t)(sy - 8),
                        (lv_coord_t)(sx + GLYPH_R + 60), (lv_coord_t)(sy + 8)};
     lv_draw_label(layer, &lbl, &area);
@@ -671,7 +662,11 @@ static void draw_saved_airports(lv_layer_t *layer) {
         } else if (in_nearby_cache(loc->icao)) {
             continue; // drawn with full runways by the nearby-cache pass below instead
         } else {
-            draw_airport_glyph(layer, sx, sy, loc->icao);
+            // loc->name, not loc->icao -- icao is empty for a waypoint (its
+            // discriminator from an airport), which previously left the
+            // glyph with a blank label; name defaults to the ICAO for
+            // airports, so this doesn't change their label.
+            draw_airport_glyph(layer, sx, sy, loc->name);
         }
     }
 
@@ -1024,20 +1019,20 @@ static void draw_static_background(lv_layer_t *layer) {
 }
 #endif
 
-// Re-centers on and re-lists whatever location is currently active, if it
-// changed since the last check. Cheap to call often.
+// Re-centers on whatever location is currently active, if it changed since
+// the last check. Cheap to call often. (Used to also re-point _list between
+// a Home feed and a saved-location feed -- there's only one list now, see
+// its declaration.)
 static void sync_active_location() {
     int active = locations_active_index();
     if (active == _last_active_loc) return;
     _last_active_loc = active;
 
     float lat, lon;
-    int elev;
-    if (locations_get_active_coords(&lat, &lon, &elev)) {
+    if (locations_get_active_coords(&lat, &lon, nullptr)) {
         _proj.center_lat = lat;
         _proj.center_lon = lon;
     }
-    _list = locations_active_list(_home_list);
     if (_canvas) lv_obj_invalidate(_canvas);
 }
 
@@ -1048,11 +1043,10 @@ static void canvas_draw_cb(lv_event_t *e) {
     draw_static_background(layer);
 #endif
     draw_range_rings(layer);
-    // Secondary locations -- other airports + HOME-elsewhere marker.
-    // Off gives the "just dots" look (VIEW menu, view_menu.cpp).
+    // Secondary locations -- other airports + the active location's own
+    // marker. Off gives the "just dots" look (VIEW menu, view_menu.cpp).
     if (secondary_locations_shown()) {
-        draw_home_marker(layer);
-        draw_home_reference_elsewhere(layer);
+        draw_active_location_marker(layer);
 #if HAS_AIRPORTS_DB
         draw_static_airport_glyphs(layer);
 #endif
@@ -1067,10 +1061,14 @@ static void canvas_draw_cb(lv_event_t *e) {
 
 void map_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
-    _home_list = list;
 
-    _proj.center_lat = g_config.home_lat;
-    _proj.center_lon = g_config.home_lon;
+    // Falls back to 0,0 if nothing's selected yet (fresh install) --
+    // harmless, sync_active_location() re-centers for real the moment a
+    // location is added and this stops being -1.
+    float lat = 0, lon = 0;
+    locations_get_active_coords(&lat, &lon, nullptr);
+    _proj.center_lat = lat;
+    _proj.center_lon = lon;
     _proj.radius_nm = range_get_nm();
     _proj.screen_w = CANVAS_W;
     _proj.screen_h = MAP_PROJ_H;

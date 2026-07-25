@@ -16,12 +16,12 @@ NetType fetcher_connection_type();
 // Returns the timestamp of the last successful fetch
 uint32_t fetcher_last_update();
 
-// On-demand point query for a non-home location (a saved airport far from
-// home_lat/home_lon, which the main fetch loop never covers). Call with
-// radius_nm > 0 to (re)target and start/continue polling; call with
-// radius_nm <= 0 to pause polling and clear the list.
-void fetcher_set_location_target(float lat, float lon, int radius_nm);
-AircraftList* fetcher_location_list();
+// Wakes the fetch loop immediately instead of leaving it to its normal
+// ~20s cadence -- call whenever the active location changes (locations.cpp's
+// locations_set_active() does) so switching locations doesn't leave the view
+// showing stale (or no) data until the next scheduled tick. Safe to call
+// before fetcher_init() (a no-op until the semaphore it signals exists).
+void fetcher_request_immediate_fetch();
 
 // Network stats
 struct FetcherStats {
@@ -32,10 +32,3 @@ struct FetcherStats {
     char ip_addr[16];
 };
 const FetcherStats* fetcher_get_stats();
-
-// Same shape, tracks the separate secondary-location poll (location_fetch_poll)
-// -- a saved (non-Home) location's fetch never touches fetcher_get_stats(),
-// so a boot-time overlay/UI that's actually waiting on a saved location's
-// aircraft needs its own ok/err/bytes rather than showing the unrelated
-// Home feed's numbers next to a permanently-empty list.
-const FetcherStats* fetcher_get_location_stats();

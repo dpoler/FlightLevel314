@@ -13,9 +13,6 @@ static bool _visible = false;
 // Text areas
 static lv_obj_t *_ta_ssid = nullptr;
 static lv_obj_t *_ta_pass = nullptr;
-static lv_obj_t *_ta_lat = nullptr;
-static lv_obj_t *_ta_lon = nullptr;
-static lv_obj_t *_ta_elev = nullptr;
 static lv_obj_t *_ta_airportdb_token = nullptr;
 
 // Controls
@@ -51,6 +48,11 @@ static void show_keyboard_for(lv_obj_t *ta) {
 
 static void ta_focus_cb(lv_event_t *e) {
     show_keyboard_for(lv_event_get_target_obj(e));
+    // Range Presets pass LV_KEYBOARD_MODE_NUMBER as user_data (digits, "+/-",
+    // "." on one layout instead of buried on the alpha keyboard); every
+    // other field here leaves user_data null, which is also
+    // LV_KEYBOARD_MODE_TEXT_LOWER (0).
+    lv_keyboard_set_mode(_keyboard, (lv_keyboard_mode_t)(intptr_t)lv_event_get_user_data(e));
 }
 
 static void keyboard_ready_cb(lv_event_t *e) {
@@ -110,9 +112,6 @@ static void save_and_close(lv_event_t *e) {
     strncpy(_cfg.airportdb_token, lv_textarea_get_text(_ta_airportdb_token), sizeof(_cfg.airportdb_token) - 1);
     _cfg.airportdb_token[sizeof(_cfg.airportdb_token) - 1] = '\0';
     for (char *p = _cfg.airportdb_token; *p; p++) if (*p == '\r' || *p == '\n') *p = '\0';
-    _cfg.home_lat = atof(lv_textarea_get_text(_ta_lat));
-    _cfg.home_lon = atof(lv_textarea_get_text(_ta_lon));
-    _cfg.home_elevation_ft = atoi(lv_textarea_get_text(_ta_elev));
     for (int i = 0; i < 4; i++) {
         int v = atoi(lv_textarea_get_text(_ta_radius[i]));
         if (v < 1) v = 1;
@@ -233,7 +232,8 @@ void settings_init(lv_obj_t *parent) {
         lv_obj_set_style_border_color(_ta_radius[i], lv_color_hex(0x333366), 0);
         lv_obj_set_style_border_width(_ta_radius[i], 1, 0);
         lv_obj_set_style_border_color(_ta_radius[i], ACCENT_COLOR, LV_STATE_FOCUSED);
-        lv_obj_add_event_cb(_ta_radius[i], ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
+        lv_obj_add_event_cb(_ta_radius[i], ta_focus_cb, LV_EVENT_FOCUSED,
+                            (void *)(intptr_t)LV_KEYBOARD_MODE_NUMBER);
     }
 
     // Metric
@@ -259,31 +259,22 @@ void settings_init(lv_obj_t *parent) {
     // === RIGHT SIDE (x=420) ===
     int rx = 420;
 
-    // Location
-    char lat_str[16], lon_str[16];
-    snprintf(lat_str, sizeof(lat_str), "%.4f", _cfg.home_lat);
-    snprintf(lon_str, sizeof(lon_str), "%.4f", _cfg.home_lon);
+    // Location entry (Home lat/lon/elevation, and airport-by-ICAO) now
+    // happens entirely through the location picker's add-flow
+    // (location_picker.cpp) instead of here -- there's no single
+    // distinguished "Home" location anymore, just saved locations like any
+    // other. Aircraft Trails on/off, length, and clear are similarly
+    // consolidated in the status bar's VIEW chip popover
+    // (status_bar.cpp -> view_menu.cpp) instead of living here.
 
-    create_label(_panel, "Home Latitude", rx, 36);
-    _ta_lat = create_textarea(_panel, "40.7128", lat_str, rx, 54);
+    // Auto-cycle -- shifted up into the space Home lat/lon used to occupy.
+    create_label(_panel, "Auto-Cycle Views", rx, 36);
+    _sw_cycle = create_switch(_panel, rx + 140, 34, _cfg.cycle_enabled);
 
-    create_label(_panel, "Home Longitude", rx, 96);
-    _ta_lon = create_textarea(_panel, "-74.0060", lon_str, rx, 114);
-
-    // Aircraft Trails on/off, length, and clear are now consolidated in the
-    // status bar's VIEW chip popover (status_bar.cpp -> view_menu.cpp)
-    // instead of living here -- see the "consolidate trail controls"
-    // backlog note.
-
-    // Auto-cycle -- shifted up into the space the Trails controls used to
-    // occupy above.
-    create_label(_panel, "Auto-Cycle Views", rx, 158);
-    _sw_cycle = create_switch(_panel, rx + 140, 156, _cfg.cycle_enabled);
-
-    create_label(_panel, "Cycle Interval", rx, 188);
+    create_label(_panel, "Cycle Interval", rx, 66);
     _slider_cycle_int = lv_slider_create(_panel);
     lv_obj_set_size(_slider_cycle_int, 180, 10);
-    lv_obj_set_pos(_slider_cycle_int, rx, 208);
+    lv_obj_set_pos(_slider_cycle_int, rx, 86);
     lv_slider_set_range(_slider_cycle_int, 15, 120);
     lv_slider_set_value(_slider_cycle_int, _cfg.cycle_interval_s, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_slider_cycle_int, lv_color_hex(0x333366), 0);
@@ -294,7 +285,7 @@ void settings_init(lv_obj_t *parent) {
     lv_label_set_text_fmt(_cycle_int_label, "%ds", _cfg.cycle_interval_s);
     lv_obj_set_style_text_color(_cycle_int_label, lv_color_white(), 0);
     lv_obj_set_style_text_font(_cycle_int_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(_cycle_int_label, rx + 190, 204);
+    lv_obj_set_pos(_cycle_int_label, rx + 190, 82);
 
     lv_obj_add_event_cb(_slider_cycle_int, [](lv_event_t *e) {
         int val = lv_slider_get_value(lv_event_get_target_obj(e));
@@ -311,7 +302,7 @@ void settings_init(lv_obj_t *parent) {
 #if 0
     lv_obj_t *display_btn = lv_button_create(_panel);
     lv_obj_set_size(display_btn, FIELD_W, 40);
-    lv_obj_set_pos(display_btn, rx, 240);
+    lv_obj_set_pos(display_btn, rx, 118);
     lv_obj_set_style_bg_color(display_btn, lv_color_hex(0x1a1a3a), 0);
     lv_obj_set_style_border_color(display_btn, lv_color_hex(0x333366), 0);
     lv_obj_set_style_border_width(display_btn, 1, 0);
@@ -326,17 +317,9 @@ void settings_init(lv_obj_t *parent) {
     }, LV_EVENT_CLICKED, nullptr);
 #endif
 
-    // airportdb.io token — used by the location picker's "Add airport" flow
-    create_label(_panel, "Airport DB Token (airportdb.io)", rx, 364);
-    _ta_airportdb_token = create_textarea(_panel, "token", _cfg.airportdb_token, rx, 382);
-
-    // Home field elevation — saved Locations get this from airportdb.io
-    // automatically; Home has no such lookup, so it's entered here. Used for
-    // AGL calculations (e.g. the ascending/descending filter).
-    char elev_str[8];
-    snprintf(elev_str, sizeof(elev_str), "%d", _cfg.home_elevation_ft);
-    create_label(_panel, "Home Elevation (ft MSL)", rx, 430);
-    _ta_elev = create_textarea(_panel, "e.g. 5431", elev_str, rx, 448);
+    // airportdb.io token — used by the location picker's "Add Airport" flow
+    create_label(_panel, "Airport DB Token (airportdb.io)", rx, 242);
+    _ta_airportdb_token = create_textarea(_panel, "token", _cfg.airportdb_token, rx, 260);
 
     // === Save button (centered at bottom) ===
     lv_obj_t *save_btn = lv_button_create(_panel);
@@ -373,14 +356,6 @@ void settings_show() {
     lv_textarea_set_password_mode(_ta_pass, true);
     lv_textarea_set_text(_ta_airportdb_token, _cfg.airportdb_token);
     lv_label_set_text(lv_obj_get_child(_btn_show_pass, 0), LV_SYMBOL_EYE_OPEN);
-
-    char lat_str[16], lon_str[16], elev_str[8];
-    snprintf(lat_str, sizeof(lat_str), "%.4f", _cfg.home_lat);
-    snprintf(lon_str, sizeof(lon_str), "%.4f", _cfg.home_lon);
-    snprintf(elev_str, sizeof(elev_str), "%d", _cfg.home_elevation_ft);
-    lv_textarea_set_text(_ta_lat, lat_str);
-    lv_textarea_set_text(_ta_lon, lon_str);
-    lv_textarea_set_text(_ta_elev, elev_str);
 
     for (int i = 0; i < 4; i++) {
         char rbuf[8];
