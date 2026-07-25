@@ -12,14 +12,18 @@ static SessionStats _stats;
 static char _seen_icaos[MAX_UNIQUE][7];
 static int _seen_count = 0;
 
-// unique_seen/peak_count/top_types/top_airlines are meant to describe
-// whichever location is currently selected (see stats_view.cpp's per-column
-// global-vs-per-location split) -- without this, switching from Home to a
-// saved airport (or back) kept accumulating into the same global counters,
-// so e.g. "UNIQUE" silently became "unique aircraft across every location
-// you've ever viewed since boot" instead of "unique aircraft at the one
-// you're looking at now". Reset on location change; boot_time/UPTIME stays
-// genuinely global and is not reset here.
+// unique_seen/peak_count/top_types/top_airlines/fastest_*/slowest_*/
+// highest_*/lowest_*/closest_* are meant to describe whichever location is
+// currently selected (see stats_view.cpp's "THIS LOCATION" column) --
+// without this, switching from one location to another kept accumulating
+// into the same global counters/records, so e.g. "UNIQUE" silently became
+// "unique aircraft across every location you've ever viewed since boot"
+// instead of "unique aircraft at the one you're looking at now". Reset on
+// location change; boot_time/UPTIME stays genuinely global and is not reset
+// here. current_count/jets/ga/heli/military/emergency/alt_*/spd_* are a
+// different kind of thing entirely -- a live snapshot, rebuilt from scratch
+// every single call regardless of location (see stats_view.cpp's "RIGHT
+// NOW" column) -- so they are reset unconditionally further down, not here.
 static int _last_active_loc = -2; // sentinel so the very first call resets/syncs
 
 static bool already_seen(const char *icao) {
@@ -159,6 +163,26 @@ void stats_update(AircraftList *list) {
         _stats.unique_seen = 0;
         memset(_stats.top_types, 0, sizeof(_stats.top_types));
         memset(_stats.top_airlines, 0, sizeof(_stats.top_airlines));
+
+        // FASTEST/SLOWEST/HIGHEST/LOWEST/CLOSEST are genuine running
+        // records now, same idea as PEAK just above -- only reset on a
+        // location switch, not every tick. They used to be re-zeroed
+        // unconditionally below on every single call, which made "RECORDS"
+        // a misnomer: it showed whichever aircraft happened to be most
+        // extreme in that instant's snapshot, not the actual highest/
+        // fastest/etc seen since this location became active. An aircraft
+        // that already left will keep showing here as the record-holder
+        // until the next location switch -- that is the point, not a bug.
+        _stats.fastest_speed = 0;
+        _stats.fastest_callsign[0] = 0;
+        _stats.slowest_speed = 99999;
+        _stats.slowest_callsign[0] = 0;
+        _stats.highest_alt = -9999;
+        _stats.highest_callsign[0] = 0;
+        _stats.lowest_alt = 999999;
+        _stats.lowest_callsign[0] = 0;
+        _stats.closest_dist = 9999.0f;
+        _stats.closest_callsign[0] = 0;
     }
 
     _stats.current_count = 0;
@@ -172,16 +196,6 @@ void stats_update(AircraftList *list) {
     _stats.alt_med = 0;
     _stats.alt_high = 0;
     _stats.alt_very_high = 0;
-    _stats.fastest_speed = 0;
-    _stats.fastest_callsign[0] = 0;
-    _stats.slowest_speed = 99999;
-    _stats.slowest_callsign[0] = 0;
-    _stats.highest_alt = -9999;
-    _stats.highest_callsign[0] = 0;
-    _stats.lowest_alt = 999999;
-    _stats.lowest_callsign[0] = 0;
-    _stats.closest_dist = 9999.0f;
-    _stats.closest_callsign[0] = 0;
     _stats.spd_slow = 0;
     _stats.spd_med = 0;
     _stats.spd_fast = 0;

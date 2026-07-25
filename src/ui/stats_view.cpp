@@ -19,6 +19,11 @@
 #define ACCENT_COLOR lv_color_hex(0x4488ff)
 #define SYS_COLOR lv_color_hex(0x44cc88)
 #define WARN_COLOR lv_color_hex(0xccaa00)
+// Column-identity accent for the "THIS LOCATION" (session) column -- lets
+// UNIQUE/PEAK and the column header itself read as visually distinct from
+// the "RIGHT NOW" (live) column's ACCENT_COLOR, reinforcing the reset-on-
+// switch grouping without needing a caption to explain it every time.
+#define SESSION_COLOR lv_color_hex(0xaa88ff)
 
 static AircraftList *_list = nullptr;      // the one aircraft list -- fetch_task always fetches for whichever location is currently active
 static lv_obj_t *_container = nullptr;
@@ -412,7 +417,13 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     views_attach_swipe(_container);
 
     // ============================================================
-    // LEFT COLUMN (x=15): Aircraft tracking
+    // LEFT COLUMN (x=15): "RIGHT NOW" -- everything here is recalculated
+    // from scratch on every refresh_stats() tick (~2s) from whichever
+    // aircraft are currently visible. Nothing in this column accumulates
+    // over time or remembers anything from a previous tick -- that's the
+    // "THIS LOCATION" column (center) below, kept deliberately separate so
+    // the live-vs-accumulated distinction is a structural fact of the
+    // screen instead of something that has to be explained in prose.
     // ============================================================
     int lx = 15;
 
@@ -425,9 +436,9 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_clear_flag(_count_label, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *subtitle = lv_label_create(_container);
-    lv_label_set_text(subtitle, "TRACKING");
+    lv_label_set_text(subtitle, "RIGHT NOW - every ~2s"); // plain ASCII -- compiled LVGL fonts may not carry non-ASCII glyphs
     lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(subtitle, DIM_COLOR, 0);
+    lv_obj_set_style_text_color(subtitle, ACCENT_COLOR, 0); // ties this column's identity to ACCENT_COLOR, contrasting with THIS LOCATION's SESSION_COLOR
     lv_obj_set_pos(subtitle, lx, 40);
     lv_obj_clear_flag(subtitle, LV_OBJ_FLAG_CLICKABLE);
 
@@ -442,9 +453,52 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
                        lx, cat_y + i * ROW_H, &lv_font_montserrat_14, name_off);
     }
 
+    // Altitude distribution -- moved into this column (was its own "center
+    // column" before) since it is exactly the same kind of live, from-
+    // scratch-every-tick data as the count/category bars just above it, not
+    // a separate concept.
+    int alt_y = cat_y + 5 * ROW_H + SECTION_GAP;
+    create_section_header(_container, "ALTITUDE", lx, alt_y);
+    for (int i = 0; i < 5; i++) {
+        create_bar_row(_container, &_alt_rows[i], ALT_NAMES[i],
+                       lv_color_to_u32(altitude_color(ALT_SAMPLES[i])),
+                       lx, alt_y + ROW_H_WIDE + i * ROW_H_WIDE, &lv_font_montserrat_16, 52, 88);
+    }
+
+    // Speed distribution -- same reasoning as ALTITUDE above
+    int spd_y = alt_y + 6 * ROW_H_WIDE + SECTION_GAP;
+    create_section_header(_container, "SPEED", lx, spd_y);
+    for (int i = 0; i < 5; i++) {
+        create_bar_row(_container, &_spd_rows[i], SPD_NAMES[i], SPD_COLORS[i],
+                       lx, spd_y + ROW_H_WIDE + i * ROW_H_WIDE, &lv_font_montserrat_16, 52, 88);
+    }
+
+    // ============================================================
+    // CENTER COLUMN (x=340): "THIS LOCATION" -- everything here is
+    // accumulated since the active location was last switched (see
+    // stats.cpp: reset happens once, the moment locations_active_index()
+    // changes -- leaving location A and arriving at location B are the same
+    // event, not two separate resets). RECORDS in particular changed
+    // meaning from earlier versions of this screen: FASTEST/SLOWEST/
+    // HIGHEST/LOWEST/CLOSEST used to be recalculated from scratch every
+    // tick just like the RIGHT NOW column, which read as "session records"
+    // but was actually "whatever's true this instant" -- misleading, and
+    // the reason this whole reorg happened. They are now genuine running
+    // extremes: the most extreme value seen since this location became
+    // active, same as PEAK already was.
+    // ============================================================
+    int cx = 340;
+
+    lv_obj_t *loc_header = lv_label_create(_container);
+    lv_label_set_text(loc_header, "THIS LOCATION - resets on switch");
+    lv_obj_set_style_text_font(loc_header, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(loc_header, SESSION_COLOR, 0);
+    lv_obj_set_pos(loc_header, cx, 8);
+    lv_obj_clear_flag(loc_header, LV_OBJ_FLAG_CLICKABLE);
+
     // Records — compact rows with inline header + value
-    int rc_y = cat_y + 5 * ROW_H + SECTION_GAP;
-    create_section_header(_container, "RECORDS", lx, rc_y);
+    int rc_y = 8 + ROW_H;
+    create_section_header(_container, "RECORDS", cx, rc_y);
 
     lv_color_t rec_hdr = DIM_COLOR;
     lv_color_t rec_val = lv_color_hex(0xccccdd);
@@ -456,7 +510,7 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_label_set_text(h, hdr);
         lv_obj_set_style_text_font(h, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(h, rec_hdr, 0);
-        lv_obj_set_pos(h, lx, y);
+        lv_obj_set_pos(h, cx, y);
         lv_obj_clear_flag(h, LV_OBJ_FLAG_CLICKABLE);
 
         lv_obj_t *v = lv_label_create(_container);
@@ -465,7 +519,7 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_obj_set_style_text_color(v, rec_val, 0);
         // 80px, not 68 -- "SLOWEST" (widest header, thanks to the W) was
         // running right up against the value column at the old offset.
-        lv_obj_set_pos(v, lx + 80, y);
+        lv_obj_set_pos(v, cx + 80, y);
         lv_obj_clear_flag(v, LV_OBJ_FLAG_CLICKABLE);
         return v;
     };
@@ -481,68 +535,41 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     _closest_val = make_rec_row("CLOSEST", rr + rh * 4);
     lv_obj_set_style_text_color(_closest_val, lv_color_hex(0x44ddaa), 0);
 
-    // Session -- scoped to whichever location is currently active (see
-    // stats.cpp: resets on location change), unlike SYSTEM/NETWORK below
-    // which are genuinely device-global. UPTIME lives in SYSTEM instead of
-    // here for exactly that reason -- it doesn't reset when you switch
-    // locations, so grouping it with UNIQUE/PEAK would be misleading.
+    // AC SEEN -- UPTIME deliberately still lives in SYSTEM (right column),
+    // not here, despite looking like a natural fit -- it does not reset
+    // when you switch locations (genuinely device-global), so grouping it
+    // with UNIQUE/PEAK would misrepresent it as location-scoped.
     int ss_y = rr + rh * 5 + SECTION_GAP;
-    create_section_header(_container, "AC SEEN", lx, ss_y);
+    create_section_header(_container, "AC SEEN", cx, ss_y);
     // Stacked vertically (one inline "HEADER  value" row per stat), matching
-    // RECORDS above, rather than side by side.
-    _unique_val = create_inline_row(_container, "UNIQUE", lx, ss_y + ROW_H, ACCENT_COLOR, 80);
-    _peak_val = create_inline_row(_container, "PEAK", lx, ss_y + ROW_H * 2, ACCENT_COLOR, 80);
+    // RECORDS above, rather than side by side. SESSION_COLOR (not
+    // ACCENT_COLOR) -- these are THIS LOCATION data, not RIGHT NOW data.
+    _unique_val = create_inline_row(_container, "UNIQUE", cx, ss_y + ROW_H, SESSION_COLOR, 80);
+    _peak_val = create_inline_row(_container, "PEAK", cx, ss_y + ROW_H * 2, SESSION_COLOR, 80);
 
     // Top airlines -- AC SEEN is 2 rows deep (ROW_H * 2) plus its own
     // header pitch (ROW_H), then the usual gap before the next header.
     int al_y = ss_y + ROW_H * 3 + SECTION_GAP;
-    create_section_header(_container, "TOP AIRLINES", lx, al_y);
+    create_section_header(_container, "TOP AIRLINES", cx, al_y);
     for (int i = 0; i < 5; i++) {
         _airline_labels[i] = lv_label_create(_container);
         lv_label_set_text(_airline_labels[i], "");
         lv_obj_set_style_text_font(_airline_labels[i], &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(_airline_labels[i], lv_color_hex(0xccccdd), 0);
-        lv_obj_set_pos(_airline_labels[i], lx + (i % 3) * 80, al_y + ROW_H + (i / 3) * ROW_H);
+        lv_obj_set_pos(_airline_labels[i], cx + (i % 3) * 80, al_y + ROW_H + (i / 3) * ROW_H);
         lv_obj_clear_flag(_airline_labels[i], LV_OBJ_FLAG_CLICKABLE);
     }
 
     // Top aircraft types -- same reasoning as above (2 rows of airlines)
     int ty_y = al_y + ROW_H * 3 + SECTION_GAP;
-    create_section_header(_container, "TOP TYPES", lx, ty_y);
+    create_section_header(_container, "TOP TYPES", cx, ty_y);
     for (int i = 0; i < 5; i++) {
         _type_labels[i] = lv_label_create(_container);
         lv_label_set_text(_type_labels[i], "");
         lv_obj_set_style_text_font(_type_labels[i], &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(_type_labels[i], lv_color_hex(0xccccdd), 0);
-        lv_obj_set_pos(_type_labels[i], lx + (i % 3) * 80, ty_y + ROW_H + (i / 3) * ROW_H);
+        lv_obj_set_pos(_type_labels[i], cx + (i % 3) * 80, ty_y + ROW_H + (i / 3) * ROW_H);
         lv_obj_clear_flag(_type_labels[i], LV_OBJ_FLAG_CLICKABLE);
-    }
-
-    // ============================================================
-    // CENTER COLUMN (x=340): Distributions -- ground traffic excluded (see
-    // stats.cpp), so only 5 rows each now instead of 6. That, plus SYSTEM
-    // moving out (below), freed up enough room to size these up a notch
-    // (16pt instead of 14pt, wider offsets to match) for legibility.
-    // ============================================================
-    int cx = 340;
-
-    // Altitude distribution -- header aligned with TRACKING (left column),
-    // not the top of the container, so all three columns' first header
-    // lines sit on the same row.
-    int alt_y = 40;
-    create_section_header(_container, "ALTITUDE", cx, alt_y);
-    for (int i = 0; i < 5; i++) {
-        create_bar_row(_container, &_alt_rows[i], ALT_NAMES[i],
-                       lv_color_to_u32(altitude_color(ALT_SAMPLES[i])),
-                       cx, alt_y + ROW_H_WIDE + i * ROW_H_WIDE, &lv_font_montserrat_16, 52, 88);
-    }
-
-    // Speed distribution
-    int spd_y = alt_y + 6 * ROW_H_WIDE + SECTION_GAP;
-    create_section_header(_container, "SPEED", cx, spd_y);
-    for (int i = 0; i < 5; i++) {
-        create_bar_row(_container, &_spd_rows[i], SPD_NAMES[i], SPD_COLORS[i],
-                       cx, spd_y + ROW_H_WIDE + i * ROW_H_WIDE, &lv_font_montserrat_16, 52, 88);
     }
 
     // ============================================================
