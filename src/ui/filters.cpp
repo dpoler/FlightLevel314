@@ -112,7 +112,17 @@ static const int32_t AGL_BAND_FT = 10000;
 
 static bool passes_category_filters(const Aircraft &ac, unsigned bits) {
     if ((bits & (1u << FILT_AIRLINE)) &&
-        (is_airline_callsign(ac.callsign) || (ac.category[0] == 'A' && ac.category[1] >= '3')))
+        (is_airline_callsign(ac.callsign) ||
+         // A3-A6 = large/high-vortex-large/heavy/high-performance -- the
+         // "big fixed-wing" signal this is meant to catch as a callsign-
+         // independent fallback. A7 is rotorcraft, not commercial size
+         // class, and `>= '3'` alone doesn't exclude it -- caught a real
+         // report of NYPD (and presumably any A7-squawking) helicopters
+         // showing up under COM. aircraft_icons.h's classify_icon() and
+         // stats.cpp already guard against this (A7 checked/excluded
+         // first); this call site was the one place doing the category
+         // check standalone, with nothing upstream of it filtering A7 out.
+         (ac.category[0] == 'A' && ac.category[1] >= '3' && ac.category[1] <= '6')))
         return true;
     if ((bits & (1u << FILT_MILITARY)) && ac.is_military)
         return true;
