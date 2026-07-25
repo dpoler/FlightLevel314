@@ -604,6 +604,29 @@ static void draw_airport_glyph(lv_layer_t *layer, int sx, int sy, const char *ic
     lv_draw_label(layer, &lbl, &area);
 }
 
+// Small text-only ICAO label (no cross/glyph lines) for an airport drawn
+// with full runway geometry via the nearby-runways cache -- those airports
+// deliberately skip draw_airport_glyph() (to avoid the double-draw bug: a
+// cross+label glyph AND runway lines at once), which left them with no
+// on-screen identification at all. Kept minimal -- small, dim, no lines --
+// so it doesn't compete visually with the runway diagram itself. Reuses
+// place_runway_label()'s existing collision-avoidance against already-
+// placed runway-end designators (same LabelRectSet), so it steers clear of
+// those rather than risking an overlapping label pair.
+static void draw_airport_id_label(lv_layer_t *layer, const Location *loc, LabelRectSet &placed) {
+    int sx, sy;
+    if (!_proj.to_screen(loc->lat, loc->lon, sx, sy)) return;
+
+    lv_draw_label_dsc_t lbl;
+    lv_draw_label_dsc_init(&lbl);
+    lbl.color = COLOR_AIRPORT_GLYPH;
+    lbl.font = &lv_font_montserrat_10;
+    lbl.opa = LV_OPA_60;
+    lbl.align = LV_TEXT_ALIGN_CENTER;
+
+    place_runway_label(layer, &lbl, placed, sx, sy, 0.0f, 1.0f, loc->icao, 50, 14);
+}
+
 // Draws every *saved* airport currently on screen. Only the currently
 // active/selected location gets full runway geometry — other saved airports
 // that happen to be in view are shown as a plain glyph, otherwise a KDEN-vs-
@@ -653,7 +676,10 @@ static void draw_saved_airports(lv_layer_t *layer) {
     }
 
     for (int i = 0; i < nearby_n; i++) {
-        if (nearby[i].runway_count > 0) draw_runways_for(layer, &nearby[i], placed, radius_nm);
+        if (nearby[i].runway_count > 0) {
+            draw_runways_for(layer, &nearby[i], placed, radius_nm);
+            draw_airport_id_label(layer, &nearby[i], placed);
+        }
     }
 }
 
