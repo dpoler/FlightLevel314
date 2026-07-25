@@ -657,17 +657,26 @@ static void draw_saved_airports(lv_layer_t *layer) {
         int sx, sy;
         if (!_proj.to_screen(loc->lat, loc->lon, sx, sy)) continue;
 
-        if (loc->runway_count > 0 && i == active) {
-            draw_runways_for(layer, loc, placed, radius_nm);
-        } else if (in_nearby_cache(loc->icao)) {
-            continue; // drawn with full runways by the nearby-cache pass below instead
-        } else {
-            // loc->name, not loc->icao -- icao is empty for a waypoint (its
-            // discriminator from an airport), which previously left the
-            // glyph with a blank label; name defaults to the ICAO for
-            // airports, so this doesn't change their label.
-            draw_airport_glyph(layer, sx, sy, loc->name);
+        if (i == active) {
+            // The active location is already identified via the status-bar
+            // picker chip -- no label needed here. An active airport gets
+            // full runway geometry; an active waypoint has none, and was
+            // already given its own unlabeled marker by
+            // draw_active_location_marker() above, so there's nothing left
+            // to draw for it in this loop (it used to fall through to the
+            // glyph branch below, drawing a redundant second marker with
+            // its own name floating next to it -- reported on hardware).
+            if (loc->runway_count > 0) draw_runways_for(layer, loc, placed, radius_nm);
+            continue;
         }
+        if (in_nearby_cache(loc->icao)) {
+            continue; // drawn with full runways by the nearby-cache pass below instead
+        }
+        // loc->name, not loc->icao -- icao is empty for a waypoint (its
+        // discriminator from an airport), which previously left the glyph
+        // with a blank label; name defaults to the ICAO for airports, so
+        // this doesn't change their label.
+        draw_airport_glyph(layer, sx, sy, loc->name);
     }
 
     for (int i = 0; i < nearby_n; i++) {
