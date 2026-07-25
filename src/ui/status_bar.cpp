@@ -180,7 +180,7 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     return bar;
 }
 
-void status_bar_update(bool wifi_connected, int aircraft_count, uint32_t last_update_ms) {
+void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircraft_count, uint32_t last_update_ms) {
     // Network icon — show type and color by status
     NetType net = fetcher_connection_type();
     if (net == NET_ETHERNET) {
@@ -194,9 +194,17 @@ void status_bar_update(bool wifi_connected, int aircraft_count, uint32_t last_up
         lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0xcc3333), 0);
     }
 
-    // Aircraft count
+    // Aircraft count -- "N/M AC" only when the active filter/GND/radius is
+    // actually hiding some of what's tracked (total > shown), so a filtered
+    // count doesn't read as "the device barely sees anything" when really
+    // most of it is just filtered out of view. Reported as confusing when
+    // this number silently disagreed with Stats' CURRENT TRAFFIC total.
     _last_aircraft_count = aircraft_count;
-    lv_label_set_text_fmt(ac_count_label, "%d AC", aircraft_count);
+    if (total_aircraft_count > aircraft_count) {
+        lv_label_set_text_fmt(ac_count_label, "%d/%d AC", aircraft_count, total_aircraft_count);
+    } else {
+        lv_label_set_text_fmt(ac_count_label, "%d AC", aircraft_count);
+    }
 
     // Last update
     if (last_update_ms == 0) {

@@ -22,6 +22,7 @@
 #include "ui/arrivals_view.h"
 #include "ui/filters.h"
 #include "ui/screensaver.h"
+#include "ui/stats.h"
 #include "ui/geo.h"
 #include "data/storage.h"
 #include "data/error_log.h"
@@ -241,7 +242,12 @@ void setup() {
             }
             list->unlock();
         }
-        status_bar_update(fetcher_wifi_connected(), count, fetcher_last_update());
+        // stats_get()->current_count is the same "everything currently
+        // tracked" figure the Stats screen shows under CURRENT TRAFFIC's
+        // "Total: N" -- reused here rather than a second definition, so the
+        // status bar and Stats screen can never silently disagree about
+        // what "total" means.
+        status_bar_update(fetcher_wifi_connected(), count, stats_get()->current_count, fetcher_last_update());
     }, 1000, nullptr);
 
     Serial.println("LVGL initialized - UI ready");
