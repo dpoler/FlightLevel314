@@ -631,8 +631,18 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
         }
     }, 33, nullptr);
 
-    // Refresh timer — match fetch interval so we don't recount stale data
-    lv_timer_create(refresh_stats, 20000, nullptr);
+    // Refresh timer -- stats_update() just reads whatever is currently in
+    // the live aircraft list, so polling it more often than the ~20s fetch
+    // cadence doesn't "recount stale data" (the reasoning this used to be
+    // pinned to the fetch interval for); it just redraws the same numbers
+    // an extra few times between fetches, which is cheap. The real cost of
+    // the old 20s interval showed up right after a location switch: the
+    // aircraft-list clear (fetcher.cpp's fetcher_request_immediate_fetch())
+    // and the fresh fetch landing could both complete within a couple of
+    // seconds, but the visible reset/repopulation of UNIQUE/PEAK/CLOSEST
+    // stayed invisible for up to 20s until this timer's next tick happened
+    // to fire -- reported as "stats do update but it takes a while."
+    lv_timer_create(refresh_stats, 2000, nullptr);
 }
 
 void stats_view_update() {

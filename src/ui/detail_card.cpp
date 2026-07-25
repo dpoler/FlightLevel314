@@ -53,6 +53,7 @@ static lv_timer_t *_update_timer = nullptr;
 
 static bool _visible = false;
 static Aircraft _current_ac;
+static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syncs _current_ac from this every tick
 
 #define CARD_H 330
 #define CARD_BG lv_color_hex(0x141428)
@@ -171,34 +172,164 @@ static lv_obj_t *make_data_row(lv_obj_t *parent, const char *label_text,
     return lbl;
 }
 
-static void update_timer_cb(lv_timer_t *timer) {
-    if (!_visible) return;
+// Renders everything in the data grid (rows 1-3) from `ac`. Shared by
+// detail_card_show()'s initial paint and update_timer_cb()'s per-tick
+// refresh -- previously this only ever ran once, at the moment the card was
+// tapped open, so DIST/BEARING/ALT/SPD/position/etc. all froze at whatever
+// they were then. That was most visible as "switching to a different active
+// location doesn't update DIST/BEARING for an aircraft visible from both"
+// (reported), but it was really a general staleness bug, not something
+// specific to switching -- none of this ever tracked live telemetry updates
+// either, switching or not.
+static void render_grid(const Aircraft *ac) {
+    // === DATA GRID ROW 1 — flight state ===
+    if (ac->on_ground) {
+        lv_label_set_text(_alt_label, "GND");
+    } else if (ac->altitude >= 18000) {
+        lv_label_set_text_fmt(_alt_label, "FL%d", ac->altitude / 100);
+    } else {
+        lv_label_set_text_fmt(_alt_label, "%d ft", ac->altitude);
+    }
 
-    // Update signal age
-    uint32_t age_ms = millis() - _current_ac.last_seen;
-    if (age_ms < 60000) {
+    lv_label_set_text_fmt(_spd_label, "%d kts", ac->speed);
+    lv_label_set_text_fmt(_hdg_label, "%03d", ac->heading);
+    lv_label_set_text_fmt(_vrate_label, "%+d fpm", ac->vert_rate);
+    lv_label_set_text_fmt(_squawk_label, "%04d", ac->squawk);
+
+    const char *status;
+    if (ac->on_ground) status = "On Ground";
+    else if (ac->vert_rate > 300) status = "Climbing";
+    else if (ac->vert_rate < -300) status = "Descending";
+    else status = "Cruising";
+    lv_label_set_text(_status_label, status);
+
+    // === DATA GRID ROW 2 — position & tracking ===
+    // DIST/BEARING measure from whichever location is actually active, not
+    // a hardcoded Home -- this was a real, latent bug found while removing
+    // Home as a special case: unlike stats.cpp's CLOSEST record (already
+    // fixed for exactly this in an earlier session), this always read
+    // g_config.home_lat/lon regardless of which saved location was being
+    // viewed. Stays 0,0 if nothing's selected (harmless -- the detail card
+    // isn't reachable with an empty aircraft list anyway). Recomputed every
+    // call (not just once at tap time) so switching the active location
+    // updates these for whatever aircraft the card is already showing.
+    float ref_lat = 0, ref_lon = 0;
+    locations_get_active_coords(&ref_lat, &ref_lon, nullptr);
+
+    float dist = MapProjection::distance_nm(ref_lat, ref_lon, ac->lat, ac->lon);
+    lv_label_set_text_fmt(_dist_label, "%.1f nm", dist);
+
+    float dlon = (ac->lon - ref_lon) * M_PI / 180.0f;
+    float y = sinf(dlon) * cosf(ac->lat * M_PI / 180.0f);
+    float x = cosf(ref_lat * M_PI / 180.0f) * sinf(ac->lat * M_PI / 180.0f) -
+              sinf(ref_lat * M_PI / 180.0f) * cosf(ac->lat * M_PI / 180.0f) * cosf(dlon);
+    int bearing = (int)(atan2f(y, x) * 180.0f / M_PI + 360.0f) % 360;
+    lv_label_set_text_fmt(_bearing_label, "%03d", bearing);
+
+    lv_label_set_text_fmt(_lat_label, "%.4f", ac->lat);
+    lv_label_set_text_fmt(_lon_label, "%.4f", ac->lon);
+
+    // Trail stats
+    if (ac->trail_count >= 2) {
+        uint32_t dur_ms = ac->trail[ac->trail_count - 1].timestamp - ac->trail[0].timestamp;
+        uint32_t secs = dur_ms / 1000;
+        if (secs < 60) {
+            lv_label_set_text_fmt(_track_label, "%d pts %lus",
+                ac->trail_count, (unsigned long)secs);
+        } else {
+            lv_label_set_text_fmt(_track_label, "%d pts %lum%lus",
+                ac->trail_count, (unsigned long)(secs / 60), (unsigned long)(secs % 60));
+        }
+    } else if (ac->trail_count == 1) {
+        lv_label_set_text(_track_label, "1 pt");
+    } else {
+        lv_label_set_text(_track_label, "new");
+    }
+
+    // Signal age
+    uint32_t age_ms = millis() - ac->last_seen;
+    if (age_ms < 1000) {
+        lv_label_set_text(_signal_label, "live");
+    } else if (age_ms < 60000) {
         lv_label_set_text_fmt(_signal_label, "%lus", (unsigned long)(age_ms / 1000));
     } else {
         lv_label_set_text_fmt(_signal_label, "%lum%lus",
             (unsigned long)(age_ms / 60000), (unsigned long)((age_ms / 1000) % 60));
     }
 
-    // Update tracked time
-    if (_current_ac.trail_count >= 2) {
-        uint32_t dur_ms = _current_ac.trail[_current_ac.trail_count - 1].timestamp
-                          - _current_ac.trail[0].timestamp;
-        uint32_t secs = dur_ms / 1000;
-        if (secs < 60) {
-            lv_label_set_text_fmt(_track_label, "%d pts %lus",
-                _current_ac.trail_count, (unsigned long)secs);
+    // === DATA GRID ROW 3 — extended flight params ===
+    if (ac->mach > 0.01f) {
+        lv_label_set_text_fmt(_mach_label, "%.3f", ac->mach);
+    } else {
+        lv_label_set_text(_mach_label, "--");
+    }
+
+    if (ac->ias > 0) {
+        lv_label_set_text_fmt(_ias_label, "%d kts", ac->ias);
+    } else {
+        lv_label_set_text(_ias_label, "--");
+    }
+
+    if (ac->tas > 0) {
+        lv_label_set_text_fmt(_tas_label, "%d kts", ac->tas);
+    } else {
+        lv_label_set_text(_tas_label, "--");
+    }
+
+    if (ac->nav_altitude > 0) {
+        if (ac->nav_altitude >= 18000) {
+            lv_label_set_text_fmt(_nav_alt_label, "FL%d", ac->nav_altitude / 100);
         } else {
-            lv_label_set_text_fmt(_track_label, "%d pts %lum%lus",
-                _current_ac.trail_count, (unsigned long)(secs / 60), (unsigned long)(secs % 60));
+            lv_label_set_text_fmt(_nav_alt_label, "%d ft", ac->nav_altitude);
         }
+    } else {
+        lv_label_set_text(_nav_alt_label, "--");
+    }
+
+    // Roll angle
+    if (ac->roll != 0.0f) {
+        lv_label_set_text_fmt(_roll_label, "%.1f%s", ac->roll, ac->roll > 0 ? " R" : " L");
+    } else {
+        lv_label_set_text(_roll_label, "--");
+    }
+
+    // Altimeter QNH
+    if (ac->nav_qnh > 0.0f) {
+        lv_label_set_text_fmt(_qnh_label, "%.1f hPa", ac->nav_qnh);
+    } else {
+        lv_label_set_text(_qnh_label, "--");
     }
 }
 
-void detail_card_init(lv_obj_t *parent) {
+static void update_timer_cb(lv_timer_t *timer) {
+    if (!_visible) return;
+
+    // Re-sync _current_ac from the live list every tick, by icao_hex --
+    // without this the card was a frozen snapshot of whatever the aircraft
+    // looked like the instant it was tapped, never reflecting its actual
+    // live telemetry (position, altitude, speed...) or a since-changed
+    // active location's DIST/BEARING. Left as the last-known snapshot (not
+    // cleared/dismissed) if the aircraft is no longer in the live list --
+    // e.g. it went fully stale, or a location switch just cleared the list
+    // and a fresh fetch for the new location hasn't landed yet -- so the
+    // card still shows something rather than going blank, and signal age
+    // (computed from the frozen _current_ac.last_seen in that case) keeps
+    // climbing to make clear it is not current.
+    if (_list && _list->lock(pdMS_TO_TICKS(20))) {
+        for (int i = 0; i < _list->count; i++) {
+            if (strcmp(_list->aircraft[i].icao_hex, _current_ac.icao_hex) == 0) {
+                memcpy(&_current_ac, &_list->aircraft[i], sizeof(Aircraft));
+                break;
+            }
+        }
+        _list->unlock();
+    }
+
+    render_grid(&_current_ac);
+}
+
+void detail_card_init(lv_obj_t *parent, AircraftList *list) {
+    _list = list;
     _card = lv_obj_create(parent);
     lv_obj_set_size(_card, LCD_H_RES, CARD_H);
     lv_obj_set_pos(_card, 0, LCD_V_RES); // start off-screen (below)
@@ -368,118 +499,8 @@ void detail_card_show(const Aircraft *ac) {
 
     // Clear enrichment fields
     lv_label_set_text(_aircraft_detail_label, "");
-    // === DATA GRID ROW 1 — flight state ===
-    if (ac->on_ground) {
-        lv_label_set_text(_alt_label, "GND");
-    } else if (ac->altitude >= 18000) {
-        lv_label_set_text_fmt(_alt_label, "FL%d", ac->altitude / 100);
-    } else {
-        lv_label_set_text_fmt(_alt_label, "%d ft", ac->altitude);
-    }
 
-    lv_label_set_text_fmt(_spd_label, "%d kts", ac->speed);
-    lv_label_set_text_fmt(_hdg_label, "%03d", ac->heading);
-    lv_label_set_text_fmt(_vrate_label, "%+d fpm", ac->vert_rate);
-    lv_label_set_text_fmt(_squawk_label, "%04d", ac->squawk);
-
-    const char *status;
-    if (ac->on_ground) status = "On Ground";
-    else if (ac->vert_rate > 300) status = "Climbing";
-    else if (ac->vert_rate < -300) status = "Descending";
-    else status = "Cruising";
-    lv_label_set_text(_status_label, status);
-
-    // === DATA GRID ROW 2 — position & tracking ===
-    // DIST/BEARING measure from whichever location is actually active, not
-    // a hardcoded Home -- this was a real, latent bug found while removing
-    // Home as a special case: unlike stats.cpp's CLOSEST record (already
-    // fixed for exactly this in an earlier session), this always read
-    // g_config.home_lat/lon regardless of which saved location was being
-    // viewed. Stays 0,0 if nothing's selected (harmless -- the detail card
-    // isn't reachable with an empty aircraft list anyway).
-    float ref_lat = 0, ref_lon = 0;
-    locations_get_active_coords(&ref_lat, &ref_lon, nullptr);
-
-    float dist = MapProjection::distance_nm(ref_lat, ref_lon, ac->lat, ac->lon);
-    lv_label_set_text_fmt(_dist_label, "%.1f nm", dist);
-
-    float dlon = (ac->lon - ref_lon) * M_PI / 180.0f;
-    float y = sinf(dlon) * cosf(ac->lat * M_PI / 180.0f);
-    float x = cosf(ref_lat * M_PI / 180.0f) * sinf(ac->lat * M_PI / 180.0f) -
-              sinf(ref_lat * M_PI / 180.0f) * cosf(ac->lat * M_PI / 180.0f) * cosf(dlon);
-    int bearing = (int)(atan2f(y, x) * 180.0f / M_PI + 360.0f) % 360;
-    lv_label_set_text_fmt(_bearing_label, "%03d", bearing);
-
-    lv_label_set_text_fmt(_lat_label, "%.4f", ac->lat);
-    lv_label_set_text_fmt(_lon_label, "%.4f", ac->lon);
-
-    // Trail stats
-    if (ac->trail_count >= 2) {
-        uint32_t dur_ms = ac->trail[ac->trail_count - 1].timestamp - ac->trail[0].timestamp;
-        uint32_t secs = dur_ms / 1000;
-        if (secs < 60) {
-            lv_label_set_text_fmt(_track_label, "%d pts %lus",
-                ac->trail_count, (unsigned long)secs);
-        } else {
-            lv_label_set_text_fmt(_track_label, "%d pts %lum%lus",
-                ac->trail_count, (unsigned long)(secs / 60), (unsigned long)(secs % 60));
-        }
-    } else if (ac->trail_count == 1) {
-        lv_label_set_text(_track_label, "1 pt");
-    } else {
-        lv_label_set_text(_track_label, "new");
-    }
-
-    // Signal age
-    uint32_t age_ms = millis() - ac->last_seen;
-    if (age_ms < 1000) {
-        lv_label_set_text(_signal_label, "live");
-    } else {
-        lv_label_set_text_fmt(_signal_label, "%lus", (unsigned long)(age_ms / 1000));
-    }
-
-    // === DATA GRID ROW 3 — extended flight params ===
-    if (ac->mach > 0.01f) {
-        lv_label_set_text_fmt(_mach_label, "%.3f", ac->mach);
-    } else {
-        lv_label_set_text(_mach_label, "--");
-    }
-
-    if (ac->ias > 0) {
-        lv_label_set_text_fmt(_ias_label, "%d kts", ac->ias);
-    } else {
-        lv_label_set_text(_ias_label, "--");
-    }
-
-    if (ac->tas > 0) {
-        lv_label_set_text_fmt(_tas_label, "%d kts", ac->tas);
-    } else {
-        lv_label_set_text(_tas_label, "--");
-    }
-
-    if (ac->nav_altitude > 0) {
-        if (ac->nav_altitude >= 18000) {
-            lv_label_set_text_fmt(_nav_alt_label, "FL%d", ac->nav_altitude / 100);
-        } else {
-            lv_label_set_text_fmt(_nav_alt_label, "%d ft", ac->nav_altitude);
-        }
-    } else {
-        lv_label_set_text(_nav_alt_label, "--");
-    }
-
-    // Roll angle
-    if (ac->roll != 0.0f) {
-        lv_label_set_text_fmt(_roll_label, "%.1f%s", ac->roll, ac->roll > 0 ? " R" : " L");
-    } else {
-        lv_label_set_text(_roll_label, "--");
-    }
-
-    // Altimeter QNH
-    if (ac->nav_qnh > 0.0f) {
-        lv_label_set_text_fmt(_qnh_label, "%.1f hPa", ac->nav_qnh);
-    } else {
-        lv_label_set_text(_qnh_label, "--");
-    }
+    render_grid(ac);
 
     // === Slide in ===
     lv_obj_scroll_to_y(_card, 0, LV_ANIM_OFF);
