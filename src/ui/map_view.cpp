@@ -619,6 +619,24 @@ static void draw_saved_airports(lv_layer_t *layer) {
     float radius_nm = range_get_nm();
     int active = locations_active_index();
     int n = locations_count();
+
+    // Nearby large airports (locations.h's nearby-runways cache) -- computed
+    // first so the saved-locations loop below can skip a redundant glyph for
+    // any non-active saved airport that also happens to be one of the active
+    // location's cached nearby airports (nearby_start_scan() only excludes
+    // the owner's own ICAO, not other saved locations -- without this check,
+    // that airport got both a glyph *and* full runways drawn on top of each
+    // other). Only the active location's cache is ever resident
+    // (locations_nearby_get_active() loads it lazily), so this is a cheap
+    // no-op when the toggle is off or nothing's been fetched yet.
+    int nearby_n;
+    const Location *nearby = locations_nearby_get_active(&nearby_n);
+    auto in_nearby_cache = [&](const char *icao) {
+        for (int i = 0; i < nearby_n; i++)
+            if (strcmp(nearby[i].icao, icao) == 0) return true;
+        return false;
+    };
+
     for (int i = 0; i < n; i++) {
         const Location *loc = locations_get(i);
         if (!loc) continue;
@@ -627,18 +645,13 @@ static void draw_saved_airports(lv_layer_t *layer) {
 
         if (loc->runway_count > 0 && i == active) {
             draw_runways_for(layer, loc, placed, radius_nm);
+        } else if (in_nearby_cache(loc->icao)) {
+            continue; // drawn with full runways by the nearby-cache pass below instead
         } else {
             draw_airport_glyph(layer, sx, sy, loc->icao);
         }
     }
 
-    // Nearby large airports (locations.h's nearby-runways cache) -- full
-    // runway geometry on top of the active location's own, same as if each
-    // were individually saved. Only the active location's cache is ever
-    // resident (locations_nearby_get_active() loads it lazily), so this is a
-    // cheap no-op when the toggle is off or nothing's been fetched yet.
-    int nearby_n;
-    const Location *nearby = locations_nearby_get_active(&nearby_n);
     for (int i = 0; i < nearby_n; i++) {
         if (nearby[i].runway_count > 0) draw_runways_for(layer, &nearby[i], placed, radius_nm);
     }
