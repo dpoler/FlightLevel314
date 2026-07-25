@@ -739,9 +739,20 @@ void locations_nearby_set_enabled(int idx, bool on) {
     _locations[idx].nearby_enabled = on;
     save_all();
 
-    // Turning off just stops drawing it -- cached data stays on disk so
-    // turning back on later doesn't need to re-fetch.
-    if (!on) return;
+    if (!on) {
+        // The resident draw-time cache (_nearby[]) only reloads when the
+        // *active index* changes (see locations_nearby_get_active()) -- it
+        // never re-checks the enabled flag on its own while staying on the
+        // same location, so without this a toggle-off left the already-
+        // loaded runways drawing indefinitely (reported: turning it back
+        // off after turning it on had no visible effect). Invalidating the
+        // resident cache forces the next draw call to re-evaluate
+        // locations_nearby_enabled(), which now correctly returns false.
+        // Cached data on disk is untouched, so turning back on still
+        // doesn't need to re-fetch.
+        if (idx == _active_index) _nearby_loaded_for = -2;
+        return;
+    }
     if (locations_nearby_count(idx) > 0) return; // already cached, nothing to do
 
     if (_nearby_queue_active) {
