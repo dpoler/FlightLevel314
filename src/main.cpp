@@ -230,6 +230,15 @@ void setup() {
         float center_lat, center_lon;
         locations_get_active_coords(&center_lat, &center_lon, nullptr);
         float radius_nm = range_get_nm();
+        // Map deliberately draws (and lets you tap) aircraft beyond the
+        // bullseye ring, out to its rectangular canvas edges -- extra
+        // screen space used on purpose, unlike Radar's circular clip, which
+        // is meant to look like a radar (see map_view_aircraft_visible()'s
+        // own comment). views_filterable_index() also falls back to
+        // VIEW_MAP when Stats is active, so this applies there too. Using
+        // the plain radius check here for Map used to undercount relative
+        // to what it actually drew (reported).
+        bool is_map = (views_filterable_index() == VIEW_MAP);
         if (list->lock(pdMS_TO_TICKS(5))) {
             uint32_t now = millis();
             for (int i = 0; i < list->count; i++) {
@@ -237,7 +246,11 @@ void setup() {
                 if (compute_aircraft_opacity(ac.stale_since, now) == 0) continue;
                 if (!aircraft_passes_filter(ac)) continue;
                 if (g_config.view_hide_ground[views_filterable_index()] && ac.on_ground) continue;
-                if (MapProjection::distance_nm(center_lat, center_lon, ac.lat, ac.lon) > radius_nm) continue;
+                if (is_map) {
+                    if (!map_view_aircraft_visible(ac.lat, ac.lon)) continue;
+                } else {
+                    if (MapProjection::distance_nm(center_lat, center_lon, ac.lat, ac.lon) > radius_nm) continue;
+                }
                 count++;
             }
             list->unlock();
