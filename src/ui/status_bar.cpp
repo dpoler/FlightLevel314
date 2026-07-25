@@ -194,18 +194,20 @@ void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircra
         lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0xcc3333), 0);
     }
 
-    // Aircraft count -- "M AC (N SHOWN)" only when the active filter/GND/
-    // radius is actually hiding some of what's tracked (total > shown), so
-    // a filtered count doesn't read as "the device barely sees anything"
-    // when really most of it is just filtered out of view. Reported as
-    // confusing when this number silently disagreed with Stats' CURRENT
-    // TRAFFIC total. Wider than a plain count -- picked over the more
-    // compact "N/M AC" for clarity; may need the location chip nudged over
-    // if this ever collides with it once a FILTER-menu chip is added here
-    // too.
+    // Aircraft count -- "N/M AC" only when the active filter/GND/radius is
+    // actually hiding some of what's tracked (total > shown), so a filtered
+    // count doesn't read as "the device barely sees anything" when really
+    // most of it is just filtered out of view. Reported as confusing when
+    // this number silently disagreed with Stats' CURRENT TRAFFIC total.
+    // The wider "M AC (N SHOWN)" form was tried first for clarity but got
+    // clipped by the location chip at only ~98px of available width
+    // (reported: "OWN)" cut off at 154/52) -- back to this compact form,
+    // which still fits at three digits ("199/200 AC"), and this bar's
+    // remaining width is needed for the still-planned FILTER-menu chip
+    // rather than a wider aircraft-count label.
     _last_aircraft_count = aircraft_count;
     if (total_aircraft_count > aircraft_count) {
-        lv_label_set_text_fmt(ac_count_label, "%d AC (%d SHOWN)", total_aircraft_count, aircraft_count);
+        lv_label_set_text_fmt(ac_count_label, "%d/%d AC", aircraft_count, total_aircraft_count);
     } else {
         lv_label_set_text_fmt(ac_count_label, "%d AC", aircraft_count);
     }
