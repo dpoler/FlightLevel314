@@ -11,6 +11,7 @@
 #include "../data/error_log.h"
 #include "../data/locations.h"
 #include "../data/storage.h" // g_config.airportdb_token -- see AIRPORTDB row below
+#include "../version.h" // FIRMWARE_VERSION_STR -- see VERSION row below
 #include "geo.h" // altitude_color()
 
 #define STATS_W LCD_H_RES
@@ -89,6 +90,7 @@ static lv_obj_t *_bytes_val = nullptr;
 static lv_obj_t *_latency_val = nullptr;
 static lv_obj_t *_rssi_val = nullptr;
 static lv_obj_t *_airportdb_val = nullptr; // never entered on-device (see settings.cpp) -- this is the only on-device confirmation a token is set
+static lv_obj_t *_version_val = nullptr; // set once at init -- FIRMWARE_VERSION_STR is a compile-time constant, never changes at runtime
 
 // Error log
 static lv_obj_t *_err_count_lbl = nullptr;
@@ -633,8 +635,15 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     _bytes_val = create_inline_row(_container, "RX DATA", rx, net_y + ROW_H * 4, SYS_COLOR, 90);
     _latency_val = create_inline_row(_container, "LATENCY", rx, net_y + ROW_H * 5, SYS_COLOR, 90);
     _airportdb_val = create_inline_row(_container, "AIRPORTDB", rx, net_y + ROW_H * 6, SYS_COLOR, 90);
+    // On-device way to confirm what's actually running -- there wasn't one
+    // before OTA updates existed, worth having now that "which build is
+    // this" is a real question. Set once here, not in refresh_stats() --
+    // FIRMWARE_VERSION_STR never changes at runtime, no point re-setting it
+    // on every refresh tick like the rows above (which reflect live state).
+    _version_val = create_inline_row(_container, "VERSION", rx, net_y + ROW_H * 7, SYS_COLOR, 90);
+    lv_label_set_text(_version_val, FIRMWARE_VERSION_STR);
 
-    int sy = net_y + 7 * ROW_H + SECTION_GAP;
+    int sy = net_y + 8 * ROW_H + SECTION_GAP;
     create_section_header(_container, "SYSTEM", rx, sy);
 
     _heap_val = create_stat_pair(_container, "HEAP", rx, sy + 18, SYS_COLOR);
