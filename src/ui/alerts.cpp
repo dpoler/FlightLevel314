@@ -133,7 +133,6 @@ void alerts_init(lv_obj_t *parent) {
                 if (strcmp(aircraft_list.aircraft[i].icao_hex, _current_hex) == 0) {
                     Aircraft ac_copy = aircraft_list.aircraft[i];
                     aircraft_list.unlock();
-                    views_pause_cycle();
                     lv_tileview_set_tile_by_index(views_get_tileview(), VIEW_MAP, 0, LV_ANIM_OFF);
                     map_view_track(ac_copy.icao_hex);
                     detail_card_show(&ac_copy);

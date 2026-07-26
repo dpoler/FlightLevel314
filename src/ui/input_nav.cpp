@@ -41,7 +41,6 @@ void input_nav_tick() {
                 int next = (current + d) % 4;
                 if (next < 0) next += 4;
                 lv_tileview_set_tile_by_index(views_get_tileview(), next, 0, LV_ANIM_OFF);
-                views_pause_cycle();
             }
             if (select) {
                 // Enter aircraft selection mode
@@ -49,7 +48,6 @@ void input_nav_tick() {
                 if (count > 0) {
                     _selected_idx = 0;
                     _state = NAV_AIRCRAFT_SELECTED;
-                    views_pause_cycle();
 
                     // Center map on selected aircraft
                     if (_list->lock(pdMS_TO_TICKS(10))) {

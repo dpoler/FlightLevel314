@@ -26,7 +26,7 @@ int views_get_active_index();
 // (filters.cpp's FILT_* bitmask + GND; see storage.h).
 int views_filterable_index();
 
-// Get the tileview object (for view cycling)
+// Get the tileview object
 lv_obj_t *views_get_tileview();
 
 // Switch to a view by index — updates all state immediately, no tileview callback needed
@@ -35,9 +35,6 @@ void views_switch_to(int idx);
 // Resume the view active at last shutdown/reboot (g_config.last_view_idx).
 // Call after detail_card_init()/alerts_init() -- see views.cpp for why.
 void views_resume_last_view();
-
-// Pause auto-cycle (call when user manually selects a view)
-void views_pause_cycle();
 
 // Attach manual left/right swipe detection to obj (PRESSING-based, no tileview animation)
 void views_attach_swipe(lv_obj_t *obj);

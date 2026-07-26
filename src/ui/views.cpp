@@ -16,18 +16,6 @@ static lv_obj_t *tileview;
 static lv_obj_t *tiles[NUM_VIEWS];
 static int _active_index = VIEW_MAP;
 
-// View cycle state — per-view dwell times (ms)
-static const uint32_t CYCLE_DWELL_MS[] = {
-    15000,  // MAP:      15s
-    15000,  // RADAR:    15s
-    15000,  // ARRIVALS: 15s
-    5000,   // STATS:     5s (glance only during auto-cycle)
-};
-#define CYCLE_PAUSE_MS   60000  // 60s pause after touch
-static uint32_t _last_touch_time = 0;
-static uint32_t _last_cycle_time = 0;
-static bool _cycle_paused = false;
-
 #define CONTENT_Y STATUS_BAR_HEIGHT
 #define CONTENT_H (LCD_V_RES - STATUS_BAR_HEIGHT)
 
@@ -46,55 +34,6 @@ static void tileview_changed_cb(lv_event_t *e) {
     // Dismiss overlays when switching views
     detail_card_hide();
     alerts_dismiss();
-}
-
-static void touch_pause_cb(lv_event_t *e) {
-    _last_touch_time = millis();
-    _last_cycle_time = _last_touch_time; // reset dwell timer so full 10s after unpause
-    if (!_cycle_paused) {
-        _cycle_paused = true;
-        status_bar_set_auto_indicator(false);
-    }
-}
-
-static void cycle_timer_cb(lv_timer_t *t) {
-    // Respect config toggle
-    if (!g_config.cycle_enabled) {
-        if (!_cycle_paused) {
-            _cycle_paused = true;
-            status_bar_set_auto_indicator(false);
-        }
-        return;
-    }
-
-    uint32_t now = millis();
-    uint32_t pause_ms = (uint32_t)g_config.cycle_inactivity_s * 1000;
-
-    // Check if pause has expired
-    if (_cycle_paused) {
-        if (now - _last_touch_time >= pause_ms) {
-            _cycle_paused = false;
-            _last_cycle_time = now;
-            status_bar_set_auto_indicator(true);
-        }
-        return;
-    }
-
-    // Use per-view dwell: config interval for MAP/RADAR/ARRIVALS, 5s for STATS
-    uint32_t dwell = (_active_index == VIEW_STATS) ? 5000
-                     : (uint32_t)g_config.cycle_interval_s * 1000;
-
-    if (now - _last_cycle_time >= dwell) {
-        _last_cycle_time = now;
-        int next = (_active_index + 1) % NUM_VIEWS;
-        if (next == VIEW_MAP) range_cycle();
-        // Update state directly — don't rely on VALUE_CHANGED callback
-        _active_index = next;
-        status_bar_set_active_dot(next);
-        if (next != VIEW_ARRIVALS) lv_obj_invalidate(tiles[next]);
-        lv_tileview_set_tile_by_index(tileview, next, 0, LV_ANIM_OFF);
-        if (next == VIEW_ARRIVALS) arrivals_view_on_show();
-    }
 }
 
 void views_init(lv_obj_t *parent, AircraftList *list) {
@@ -123,20 +62,11 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
 
     lv_obj_add_event_cb(tileview, tileview_changed_cb, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    // Touch anywhere on tileview pauses auto-cycle
-    lv_obj_add_event_cb(tileview, touch_pause_cb, LV_EVENT_PRESSED, nullptr);
-
     // Init all views
     map_view_init(tiles[VIEW_MAP], list);
     radar_view_init(tiles[VIEW_RADAR], list);
     arrivals_view_init(tiles[VIEW_ARRIVALS], list);
     stats_view_init(tiles[VIEW_STATS], list);
-
-    // Start auto-cycle timer (respects g_config.cycle_enabled)
-    _last_cycle_time = millis();
-    status_bar_set_auto_indicator(g_config.cycle_enabled);
-    if (!g_config.cycle_enabled) _cycle_paused = true;
-    lv_timer_create(cycle_timer_cb, 1000, nullptr);
 }
 
 lv_obj_t *views_get_tile(int view_index) {
@@ -159,8 +89,8 @@ lv_obj_t *views_get_tileview() {
 void views_resume_last_view() {
     // Resume the view active at last shutdown/reboot instead of always
     // booting into Map -- last_view_idx is only ever written from a
-    // deliberate nav tap/swipe (views_switch_to), never from the auto-cycle
-    // timer, so this reflects where the user actually left off.
+    // deliberate nav tap/swipe (views_switch_to), so this reflects where
+    // the user actually left off.
     //
     // Deliberately called by main.cpp only after detail_card_init()/
     // alerts_init() have run: switching tiles here can synchronously fire
@@ -188,13 +118,10 @@ void views_switch_to(int idx) {
     if (idx == VIEW_ARRIVALS) arrivals_view_on_show();
     detail_card_hide();
     alerts_dismiss();
-    views_pause_cycle();
 
     // Persist for resume-on-boot -- deliberately only from this
-    // deliberate-switch path (nav tap / swipe gesture), not from
-    // cycle_timer_cb's automatic advance, which would mean a blocking NVS
-    // write every ~15s while auto-cycling (the same class of bug fixed for
-    // the trail-length slider).
+    // deliberate-switch path (nav tap / swipe gesture), a discrete human
+    // action, not something on a timer.
     if (g_config.last_view_idx != idx) {
         g_config.last_view_idx = idx;
         storage_save_config(g_config);
@@ -226,13 +153,4 @@ void views_attach_swipe(lv_obj_t *obj) {
             views_switch_to((dx < 0) ? (v + 1) % NUM_VIEWS : (v + NUM_VIEWS - 1) % NUM_VIEWS);
         }
     }, LV_EVENT_PRESSING, nullptr);
-}
-
-void views_pause_cycle() {
-    _last_touch_time = millis();
-    _last_cycle_time = _last_touch_time;
-    if (!_cycle_paused) {
-        _cycle_paused = true;
-        status_bar_set_auto_indicator(false);
-    }
 }
