@@ -80,10 +80,77 @@ bool gt911_touch::begin_safe()
     return true;
 }
 
+// Tears down and recreates the touch driver from scratch -- reinitializing
+// via esp_lcd_touch_new_i2c_gt911() re-toggles the GT911's hardware RST pin
+// as part of normal init, which is a real hardware reset regardless of
+// whether the underlying problem is an I2C bus wedge or the chip having
+// gone into some unresponsive/sleep state -- see getTouch()'s comment for
+// why this exists. Old handles are torn down first to avoid an "already
+// added" conflict when re-creating the I2C device at the same address.
+void gt911_touch::reset_and_reinit()
+{
+    if (tp) {
+        esp_lcd_touch_del(tp);
+        tp = nullptr;
+    }
+    if (tp_io_handle) {
+        esp_lcd_panel_io_del(tp_io_handle);
+        tp_io_handle = nullptr;
+    }
+    _ready = false;
+    _is_pressed = false;
+    _release_streak = 0;
+    _released_at_ms = 0;
+    _i2c_failing = false;
+    begin_safe();
+}
+
 bool gt911_touch::getTouch(uint16_t *x, uint16_t *y)
 {
-    if (!_ready) return false;
-    esp_lcd_touch_read_data(tp);
+    // Recovery for a real hardware gap: nothing in this driver (or the
+    // vendored esp_lcd_touch_gt911.c underneath it) ever checks whether an
+    // I2C read to the GT911 actually succeeds -- a failed read just leaves
+    // the last-known touch state frozen forever, silently, with nothing
+    // else in the app affected. Confirmed on real hardware: touch went
+    // completely unresponsive after being idle for about an hour, with the
+    // rest of the device still running fine, and needed a full board reset
+    // to recover -- consistent with either an I2C bus wedge or the GT911
+    // going into some unresponsive/sleep state that pure polling never
+    // recovers from on its own. This tracks how long reads have been
+    // failing and forces a real hardware re-init (reset_and_reinit(), which
+    // re-toggles the GT911's RST pin) after a sustained failure, instead of
+    // requiring a full board power-cycle. Not confirmed which of the two
+    // root causes this actually is -- the fix is the same either way.
+    constexpr uint32_t I2C_FAIL_RECOVER_MS = 2000;
+    constexpr uint32_t RECOVER_RETRY_MS = 3000;
+
+    uint32_t now = millis();
+
+    if (!_ready) {
+        // A prior recovery attempt failed -- keep retrying periodically
+        // rather than giving up forever (e.g. if the chip is genuinely
+        // still resetting/settling right after a reinit attempt).
+        if (now - _last_recover_attempt_ms >= RECOVER_RETRY_MS) {
+            _last_recover_attempt_ms = now;
+            reset_and_reinit();
+        }
+        return false;
+    }
+
+    esp_err_t read_err = esp_lcd_touch_read_data(tp);
+    if (read_err != ESP_OK) {
+        if (!_i2c_failing) {
+            _i2c_failing = true;
+            _i2c_fail_since_ms = now;
+        } else if (now - _i2c_fail_since_ms >= I2C_FAIL_RECOVER_MS) {
+            ESP_LOGE(TAG, "Touch I2C failing for >%lums, forcing reinit", (unsigned long)I2C_FAIL_RECOVER_MS);
+            _last_recover_attempt_ms = now;
+            reset_and_reinit();
+        }
+        return false;
+    }
+    _i2c_failing = false;
+
     uint16_t rx, ry;
     bool raw_pressed = esp_lcd_touch_get_coordinates(tp, &rx, &ry, touch_strength, &touch_cnt, 1);
 
@@ -114,8 +181,6 @@ bool gt911_touch::getTouch(uint16_t *x, uint16_t *y)
     // this filters the bounce without making real double-taps feel delayed.
     constexpr uint8_t RELEASE_DEBOUNCE_N = 3;
     constexpr uint32_t RELEASE_COOLDOWN_MS = 80;
-
-    uint32_t now = millis();
 
     if (_is_pressed) {
         if (raw_pressed) {
