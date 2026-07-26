@@ -125,6 +125,7 @@ function Invoke-RebootAndReconnect {
 function Set-DeviceToken {
     $token = Read-PlainText "Paste your airportdb.io token"
     Show-Response $script:port "TOKEN=$token"
+    Write-Host "Used automatically the next time you add an airport by ICAO on the device."
 }
 
 function Set-DeviceWifi {
@@ -132,14 +133,32 @@ function Set-DeviceWifi {
     Show-Response $script:port "WIFI_SSID=$ssid"
     $pass = Read-PlainText "WiFi password"
     Show-Response $script:port "WIFI_PASS=$pass"
+    Write-Host "The device only reads WiFi credentials at boot, so a restart is needed"
+    Write-Host "before it connects with these -- this script will do that for you."
 }
 
+# Distinct from Show-Response -- needs the actual response text (not just
+# printed) to decide whether to show the follow-up explanation, since that
+# only makes sense if the add actually succeeded (an ERR here is usually
+# "location list full" or "name already used", not a connectivity problem).
 function Add-DeviceLocation {
     $locName = Read-Host "Location name (short, no '|')"
     $locLat = Read-Host "Latitude"
     $locLon = Read-Host "Longitude"
     $locElev = Read-Host "Elevation (ft)"
-    Show-Response $script:port "ADD_WAYPOINT=$locName|$locLat|$locLon|$locElev"
+    $resp = Send-AndRead $script:port "ADD_WAYPOINT=$locName|$locLat|$locLon|$locElev"
+    if ([string]::IsNullOrEmpty($resp)) {
+        Write-Host "(no response from device -- check it's still connected)"
+        return
+    }
+    Write-Host $resp
+    if ($resp -like "OK*") {
+        Write-Host "Saved to the device's location list. This does NOT change what's"
+        Write-Host "currently on screen and the new location is not auto-selected --"
+        Write-Host "on the device, tap the location button (top of the screen) and"
+        Write-Host "choose `"$locName`" from the list to actually view it. No reboot"
+        Write-Host "needed for this to take effect."
+    }
 }
 
 # ---- menu -----------------------------------------------------------------
@@ -174,7 +193,6 @@ try {
             }
             "3" {
                 Add-DeviceLocation
-                Write-Host "Applied immediately -- no reboot needed."
             }
             "4" {
                 $confirm = Read-Host "This will ERASE ALL settings and saved locations. Type YES to confirm"
