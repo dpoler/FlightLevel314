@@ -1,0 +1,27 @@
+# ESP-Hosted SDIO configuration for the Elecrow CrowPanel ESP32-P4 Advance
+# 10.1" (SKU DHE04310D, hardware/software V1.1). jc1060's board variant
+# (esp32-p4-evboard) apparently defaults to different SDIO pins/bus width
+# than this board actually uses -- these lines override just the ESP_HOSTED
+# SDIO settings for the [env:crowpanel] build (see platformio.ini), leaving
+# everything else (PSRAM, flash, partitions, BT) to the board variant's own
+# defaults, same as jc1060 gets today.
+#
+# Values are copied verbatim from Elecrow's own tested example project for
+# this exact board revision: Elecrow-RD/CrowPanel-Advanced-10.1inch-ESP32-
+# P4-HMI-AI-Display-1024x600-IPS-Touch-Screen, path
+# example/V1.1/idf-code/Lesson17-Wi-Fi_function/ESP32_P4-softAP/
+# sdkconfig.defaults.esp32p4 (fetched 2026-07-25) -- not guessed. That
+# project is Elecrow's own reference ESP-IDF WiFi bring-up example for this
+# board, so these are the pins/bus-width their own hardware team validated,
+# not a generic ESP32-P4-Function-EV-Board assumption.
+#
+# UNCONFIRMED whether this file actually gets merged into the build --
+# see platformio.ini's board_build.cmake_extra_args comment. Never build or
+# hardware tested.
+CONFIG_ESP_HOSTED_SDIO_1_BIT_BUS=y
+CONFIG_ESP_HOSTED_SDIO_BUS_WIDTH=1
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CMD_SLOT_1=19
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CLK_SLOT_1=18
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D0_SLOT_1=14
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_1BIT_BUS_SLOT_1=15
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=32

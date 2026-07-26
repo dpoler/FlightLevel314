@@ -5,7 +5,21 @@
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_heap_caps.h"
 #include "pins_config.h"
+// Board-specific LCD panel driver -- both jd9165_lcd and ek79007_lcd expose
+// an identical method set (begin/lcd_draw_bitmap/example_bsp_set_lcd_
+// backlight/get_handle/etc, see hal/ek79007_lcd.h's header comment), so
+// aliasing the type/handle-struct names here is enough to keep every other
+// `lcd.`/`bsp_lcd_handles_t` call site below unconditional -- nothing past
+// this block needs to know which board it's building for.
+#ifdef BOARD_CROWPANEL
+#include "hal/ek79007_lcd.h"
+typedef ek79007_lcd board_lcd_t;
+typedef bsp_lcd_handles_ek79007_t board_lcd_handles_t;
+#else
 #include "hal/jd9165_lcd.h"
+typedef jd9165_lcd board_lcd_t;
+typedef bsp_lcd_handles_t board_lcd_handles_t;
+#endif
 #include "hal/gt911_touch.h"
 #include "data/aircraft.h"
 #include "data/fetcher.h"
@@ -34,7 +48,7 @@
 volatile bool touch_active = false;
 
 // Hardware drivers
-static jd9165_lcd lcd(LCD_RST);
+static board_lcd_t lcd(LCD_RST);
 static gt911_touch touch(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT);
 
 // Aircraft data
@@ -125,7 +139,7 @@ void setup() {
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     // Register vsync callback for proper flush synchronization
-    bsp_lcd_handles_t lcd_handles;
+    board_lcd_handles_t lcd_handles;
     lcd.get_handle(&lcd_handles);
     esp_lcd_dpi_panel_event_callbacks_t cbs = {};
     cbs.on_color_trans_done = flush_ready_cb;
