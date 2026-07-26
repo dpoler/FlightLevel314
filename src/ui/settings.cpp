@@ -20,8 +20,6 @@ static lv_obj_t *_ta_radius[4] = {nullptr, nullptr, nullptr, nullptr};
 static lv_obj_t *_sw_metric = nullptr;
 static lv_obj_t *_sw_ethernet = nullptr;
 static lv_obj_t *_btn_show_pass = nullptr;
-static lv_obj_t *_sw_alert_mil = nullptr;
-static lv_obj_t *_sw_alert_emg = nullptr;
 
 static UserConfig _cfg;
 
@@ -126,8 +124,12 @@ static void save_and_close(lv_event_t *e) {
     _cfg.radius_nm = _cfg.radius_presets[3]; // max preset = API query radius
     _cfg.use_metric = lv_obj_has_state(_sw_metric, LV_STATE_CHECKED);
     _cfg.use_ethernet = lv_obj_has_state(_sw_ethernet, LV_STATE_CHECKED);
-    _cfg.alert_military = lv_obj_has_state(_sw_alert_mil, LV_STATE_CHECKED);
-    _cfg.alert_emergency = lv_obj_has_state(_sw_alert_emg, LV_STATE_CHECKED);
+    // alert_military/alert_emergency are no longer set from a widget here --
+    // moved to the VIEW menu's ALERTS section (view_menu.cpp), which writes
+    // g_config directly. _cfg already picked up whatever that last set, via
+    // the fresh storage_load_config() at the top of settings_show() --
+    // nothing here touches those two fields, so this save can't clobber
+    // them back to a stale value.
 
     storage_save_config(_cfg);
     Serial.println("Config saved to NVS");
@@ -244,12 +246,8 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_font(net_hint, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(net_hint, 164, 260);
 
-    // Alert toggles
-    create_label(_panel, "Mil Alerts", 0, 292);
-    _sw_alert_mil = create_switch(_panel, 110, 290, _cfg.alert_military);
-
-    create_label(_panel, "Emg Alerts", 0, 326);
-    _sw_alert_emg = create_switch(_panel, 110, 324, _cfg.alert_emergency);
+    // Military/Emergency alert toggles moved to the VIEW menu's ALERTS
+    // section (view_menu.cpp) -- not duplicated here.
 
     // === RIGHT SIDE (x=420) ===
     int rx = 420;
@@ -336,12 +334,6 @@ void settings_show() {
 
     if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
     else lv_obj_clear_state(_sw_metric, LV_STATE_CHECKED);
-
-    if (_cfg.alert_military) lv_obj_add_state(_sw_alert_mil, LV_STATE_CHECKED);
-    else lv_obj_clear_state(_sw_alert_mil, LV_STATE_CHECKED);
-
-    if (_cfg.alert_emergency) lv_obj_add_state(_sw_alert_emg, LV_STATE_CHECKED);
-    else lv_obj_clear_state(_sw_alert_emg, LV_STATE_CHECKED);
 
     if (_cfg.use_ethernet) lv_obj_add_state(_sw_ethernet, LV_STATE_CHECKED);
     else lv_obj_clear_state(_sw_ethernet, LV_STATE_CHECKED);

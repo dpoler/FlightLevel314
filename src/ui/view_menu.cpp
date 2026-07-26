@@ -10,7 +10,7 @@
 #include "../data/storage.h"
 
 #define PANEL_W 270
-#define PANEL_H 360
+#define PANEL_H 460
 
 #define COLOR_PANEL  lv_color_hex(0x14142a)
 #define COLOR_ACCENT lv_color_hex(0x00cc66)
@@ -228,6 +228,24 @@ static void open_overlay() {
     section_header(_panel, "LOCATIONS", 290);
     toggle_row(_panel, "Other Airports", 318, secondary_locations_shown(), [](lv_event_t *e) {
         secondary_locations_toggle();
+    });
+
+    // ============================================================
+    // Alerts -- military/emergency toast popups. Deliberately global
+    // (g_config.alert_military/alert_emergency directly), not per-view like
+    // everything else in this popover -- an emergency squawk should alert
+    // you regardless of which tile happens to be showing, not only while
+    // you're looking at Map and not Radar. Moved here from Settings, which
+    // now has one less thing.
+    // ============================================================
+    section_header(_panel, "ALERTS", 352);
+    toggle_row(_panel, "Military", 380, g_config.alert_military, [](lv_event_t *e) {
+        g_config.alert_military = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+        storage_save_config(g_config);
+    });
+    toggle_row(_panel, "Emergency", 414, g_config.alert_emergency, [](lv_event_t *e) {
+        g_config.alert_emergency = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+        storage_save_config(g_config);
     });
 }
 
