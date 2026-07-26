@@ -60,6 +60,24 @@ void ek79007_lcd::example_bsp_enable_dsi_phy_power()
     };
     ESP_ERROR_CHECK(esp_ldo_acquire_channel(&ldo_mipi_phy_config, &ldo_mipi_phy));
     ESP_LOGI(TAG, "MIPI DSI PHY Powered on");
+    // Settle delay -- confirmed on real hardware: the DSI video link
+    // reliably locks/produces an image on a fresh cold power-on, but after
+    // many rapid ESP.restart()-driven resets in quick succession (from the
+    // WiFi crash-loop -- see fetcher.cpp's known SDIO fragility), the panel
+    // started coming up blank/black (backlight on, no image, everything
+    // else running normally) on most subsequent boots until a slower manual
+    // reset or full power-cycle. Nothing here ever explicitly releases this
+    // LDO channel, and a warm software reset reaches this line far sooner
+    // after the previous boot than a cold power-on ever would, with the
+    // same acquire call each time regardless of whatever state the analog
+    // PHY rail is actually in. This delay is a mechanism-agnostic
+    // mitigation (covers both "needs more settle time" and "needs a genuine
+    // off-then-on transition to fully reset" without knowing which) --
+    // cheap on a cold boot where it likely wasn't needed at all. Unverified
+    // whether this actually fixes the rapid-reset case; needs testing
+    // specifically by deliberately reset-cycling the board a few times in a
+    // row, not just a single cold boot.
+    vTaskDelay(pdMS_TO_TICKS(50));
 #endif
 }
 

@@ -59,14 +59,41 @@ static lv_display_t *disp;
 static uint16_t *buf0;
 static uint16_t *buf1;
 
+// Watchdog for a dropped flush-complete event -- see flush_ready_cb's
+// comment. Plain volatiles, not a mutex: disp_flush_cb runs on the main
+// task, flush_ready_cb runs in the DPI panel's ISR context, and both only
+// ever do a single aligned write/read of these -- same pattern as this
+// file's existing `touch_active`.
+static volatile bool _flush_pending = false;
+static volatile uint32_t _flush_started_at_ms = 0;
+
 // Display flush callback
 static void disp_flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *color_map) {
+    _flush_pending = true;
+    _flush_started_at_ms = millis();
     lcd.lcd_draw_bitmap(area->x1, area->y1, area->x2 + 1, area->y2 + 1, (uint16_t *)color_map);
 }
 
-// Vsync callback — signals LVGL that flush is complete
+// Vsync callback — signals LVGL that flush is complete. If this ISR is ever
+// missed (a dropped hardware event -- this exact chip already has a known
+// PSRAM cache-coherency erratum, see the "no aircraft photos" known issue --
+// or any other transient DMA/panel hiccup), lv_display_flush_ready() never
+// fires, LVGL's flush state machine waits forever, and no future frame ever
+// renders again -- silently, with nothing else in the app affected (same
+// architectural gap as the touch driver's I2C-failure case: a single missed
+// hardware completion event with no timeout anywhere). Confirmed on real
+// hardware: display goes fully blank/black after some period of otherwise-
+// normal runtime (well under an hour), independent of the touch issue.
+// loop()'s watchdog (see below) detects a flush that's been pending too
+// long and force-reboots rather than leaving the screen dead indefinitely --
+// full restart, not an attempted in-place re-init, since safely tearing
+// down and recreating the DSI bus/panel/LVGL association mid-session is far
+// riskier than the touch driver's comparatively simple I2C reinit, and this
+// project already uses a full ESP.restart() as the recovery path for other
+// confirmed-stuck subsystems (see fetcher.cpp's SDIO crash handling).
 static bool flush_ready_cb(esp_lcd_panel_handle_t panel,
     esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx) {
+    _flush_pending = false;
     lv_display_flush_ready((lv_display_t *)user_ctx);
     return false;
 }
@@ -317,6 +344,16 @@ void setup() {
 void loop() {
     lv_timer_handler();
     serial_config_poll();
+
+    // Flush watchdog -- see flush_ready_cb's comment. 3000ms is generous
+    // (a real frame completes in low tens of ms even under load) but still
+    // catches a genuinely dead flush well before a user would sit staring
+    // at a blank screen wondering if it's ever coming back.
+    if (_flush_pending && (millis() - _flush_started_at_ms > 3000)) {
+        Serial.println("Display flush stuck >3s (missed panel event?) -- rebooting");
+        Serial.flush();
+        ESP.restart();
+    }
 
     // Heap monitor — log every 10s for crash diagnosis
     static uint32_t last_heap_log = 0;
