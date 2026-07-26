@@ -26,9 +26,19 @@ static UserConfig _cfg;
 // Callback for config changes (set by main)
 static settings_changed_cb_t _on_change = nullptr;
 
-#define PANEL_W 820
-#define PANEL_H (LCD_V_RES - 40)
-#define FIELD_W 240
+// Single column now -- WiFi/range/metric/ethernet/token is all that is
+// left here (Home lat/lon, trails, GND, Military/Emergency alerts, and
+// Auto-Cycle all moved out over time to the location picker/VIEW menu/
+// filter column), so the old wide two-column 820px layout was mostly
+// empty space by the end. Sized to fit exactly what remains, not to match
+// the VIEW-menu-style small anchored popovers (status_bar.cpp) -- this
+// stays a centered modal since WiFi credential entry benefits from more
+// room for the on-screen keyboard than a 270px popover gives, and this
+// panel is now an occasional fallback (configure_device.sh/.ps1 is the
+// primary path for WiFi/token) rather than something tapped often.
+#define PANEL_W 370
+#define PANEL_H 460
+#define FIELD_W 280
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
 #define ACCENT_COLOR lv_color_hex(0x00cc66)
@@ -185,7 +195,13 @@ void settings_init(lv_obj_t *parent) {
     // Load current config
     _cfg = storage_load_config();
 
-    // === LEFT SIDE (x=0) ===
+    // Single column (x=0) -- everything else that used to live here has
+    // moved: Home lat/lon and airport-by-ICAO entry to the location picker's
+    // add-flow, Trails/Tags/Secondary-locations/Alerts to the status bar's
+    // VIEW chip popover, GND to a quick-access filter-column button, and
+    // Auto-Cycle removed outright. What is left is genuinely everything
+    // this panel still owns: WiFi, range presets, units, network mode, and
+    // the airportdb.io token.
 
     // WiFi
     create_label(_panel, "WiFi SSID", 0, 36);
@@ -246,31 +262,13 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_font(net_hint, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(net_hint, 164, 260);
 
-    // Military/Emergency alert toggles moved to the VIEW menu's ALERTS
-    // section (view_menu.cpp) -- not duplicated here.
-
-    // === RIGHT SIDE (x=420) ===
-    int rx = 420;
-
-    // Location entry (Home lat/lon/elevation, and airport-by-ICAO) now
-    // happens entirely through the location picker's add-flow
-    // (location_picker.cpp) instead of here -- there's no single
-    // distinguished "Home" location anymore, just saved locations like any
-    // other. Aircraft Trails on/off, length, and clear are similarly
-    // consolidated in the status bar's VIEW chip popover
-    // (status_bar.cpp -> view_menu.cpp) instead of living here.
-
-    // Hide ground aircraft -- moved to a quick-access GND button in the
-    // right-edge filter column (map/radar/arrivals), same control as this
-    // used to be, just not buried in Settings anymore.
-
     // Display / Screensaver button -- deactivated 2026-07-23 along with the
     // rest of screensaver.cpp (see the #if 0 block there for why). Left
     // commented out rather than deleted so it's a one-step re-enable.
 #if 0
     lv_obj_t *display_btn = lv_button_create(_panel);
     lv_obj_set_size(display_btn, FIELD_W, 40);
-    lv_obj_set_pos(display_btn, rx, 118);
+    lv_obj_set_pos(display_btn, 0, 300);
     lv_obj_set_style_bg_color(display_btn, lv_color_hex(0x1a1a3a), 0);
     lv_obj_set_style_border_color(display_btn, lv_color_hex(0x333366), 0);
     lv_obj_set_style_border_width(display_btn, 1, 0);
@@ -286,9 +284,8 @@ void settings_init(lv_obj_t *parent) {
 #endif
 
     // airportdb.io token — used by the location picker's "Add Airport" flow.
-    // Shifted up into the space Auto-Cycle Views used to occupy (removed).
-    create_label(_panel, "Airport DB Token (airportdb.io)", rx, 36);
-    _ta_airportdb_token = create_textarea(_panel, "token", _cfg.airportdb_token, rx, 54);
+    create_label(_panel, "Airport DB Token (airportdb.io)", 0, 300);
+    _ta_airportdb_token = create_textarea(_panel, "token", _cfg.airportdb_token, 0, 318);
 
     // === Save button (centered at bottom) ===
     lv_obj_t *save_btn = lv_button_create(_panel);
