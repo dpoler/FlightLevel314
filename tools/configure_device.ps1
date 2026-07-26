@@ -30,13 +30,42 @@ function New-DevicePort {
     return $p
 }
 
+# Reads lines until one is an actual protocol reply (starts with "OK" or
+# "ERR") or the overall read-timeout budget runs out, discarding anything
+# else. Necessary because the device's serial line is shared with incidental
+# log output -- e.g. storage_save_config() (called by TOKEN=/WIFI_SSID=/
+# WIFI_PASS= right before each one's own OK line) unconditionally prints
+# "Storage: config saved to NVS" first. A naive "read one line, trust it"
+# reader grabs that debug line instead of the real reply, leaving the real
+# reply sitting unread in the buffer -- which then desyncs every following
+# read for the rest of the session (each one now returns the *previous*
+# command's real reply instead of its own), not just this one command
+# (reported: WIFI_SSID showed the debug line as if it were the response,
+# then the REBOOT reply after it never arrived). Same risk exists for any
+# other stray Serial output anywhere in the firmware -- filtering by prefix
+# instead of blindly trusting the first line handles all of those too.
 function Send-AndRead {
     param($Port, [string]$Line)
     $Port.WriteLine($Line)
+    $originalTimeout = $Port.ReadTimeout
+    $deadline = (Get-Date).AddMilliseconds($originalTimeout)
     try {
-        return $Port.ReadLine().Trim()
-    } catch [System.TimeoutException] {
-        return ""
+        while ($true) {
+            $remainingMs = [int](($deadline - (Get-Date)).TotalMilliseconds)
+            if ($remainingMs -le 0) { return "" }
+            $Port.ReadTimeout = $remainingMs
+            try {
+                $resp = $Port.ReadLine().Trim()
+            } catch [System.TimeoutException] {
+                return ""
+            }
+            if ($resp -like "OK*" -or $resp -like "ERR*") {
+                return $resp
+            }
+            # else: stray log line -- discard, keep waiting within budget
+        }
+    } finally {
+        $Port.ReadTimeout = $originalTimeout
     }
 }
 
