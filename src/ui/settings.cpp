@@ -3,6 +3,8 @@
 #include "screensaver.h"
 #include "../pins_config.h"
 #include "../data/storage.h"
+#include "../data/ota.h"
+#include "../version.h"
 #include <cstdio>
 
 static lv_obj_t *_overlay = nullptr;
@@ -20,6 +22,10 @@ static lv_obj_t *_ta_radius[4] = {nullptr, nullptr, nullptr, nullptr};
 static lv_obj_t *_sw_metric = nullptr;
 static lv_obj_t *_sw_ethernet = nullptr;
 static lv_obj_t *_btn_show_pass = nullptr;
+static lv_obj_t *_ota_status_lbl = nullptr;
+static lv_obj_t *_ota_btn = nullptr;
+static lv_obj_t *_ota_btn_lbl = nullptr;
+static lv_timer_t *_ota_timer = nullptr;
 
 static UserConfig _cfg;
 
@@ -36,11 +42,16 @@ static settings_changed_cb_t _on_change = nullptr;
 // -- this stays a centered modal since WiFi credential entry benefits
 // from more room for the on-screen keyboard than a 270px popover gives.
 #define PANEL_W 370
-#define PANEL_H 430
+#define PANEL_H 500
 #define FIELD_W 280
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
 #define ACCENT_COLOR lv_color_hex(0x00cc66)
+// Same hex values as stats_view.cpp's SYS_COLOR/WARN_COLOR, kept in sync by
+// eye since this file has no shared color header to pull them from.
+#define OTA_OK_COLOR lv_color_hex(0x44cc88)
+#define OTA_WARN_COLOR lv_color_hex(0xccaa00)
+#define OTA_ERR_COLOR lv_color_hex(0xcc4444)
 
 static lv_obj_t *_focused_ta = nullptr;
 
@@ -101,6 +112,72 @@ static lv_obj_t *create_switch(lv_obj_t *parent, int x, int y, bool checked) {
     lv_obj_set_style_bg_color(sw, ACCENT_COLOR, LV_PART_INDICATOR | LV_STATE_CHECKED);
     if (checked) lv_obj_add_state(sw, LV_STATE_CHECKED);
     return sw;
+}
+
+// Reflects the shared ota_status/ota_latest_tag/ota_progress state (set by
+// ota_poll(), driven from location_poll_task -- see data/ota.h) into the
+// panel's status line and button. Polled on a timer rather than event-
+// driven since ota_poll() runs on a different task with no callback hook
+// back into LVGL; this is the same pattern the rest of this app uses for
+// any state a background task updates asynchronously.
+static void ota_ui_refresh(lv_timer_t *t) {
+    (void)t;
+    char buf[48];
+    switch (ota_status) {
+        case OTA_IDLE:
+            lv_label_set_text(_ota_status_lbl, "Not checked yet");
+            lv_obj_set_style_text_color(_ota_status_lbl, LABEL_COLOR, 0);
+            lv_label_set_text(_ota_btn_lbl, "Check for Update");
+            lv_obj_clear_state(_ota_btn, LV_STATE_DISABLED);
+            break;
+        case OTA_CHECKING:
+            lv_label_set_text(_ota_status_lbl, "Checking...");
+            lv_obj_set_style_text_color(_ota_status_lbl, OTA_WARN_COLOR, 0);
+            lv_label_set_text(_ota_btn_lbl, "Checking...");
+            lv_obj_add_state(_ota_btn, LV_STATE_DISABLED);
+            break;
+        case OTA_UP_TO_DATE:
+            lv_label_set_text(_ota_status_lbl, "Up to date");
+            lv_obj_set_style_text_color(_ota_status_lbl, OTA_OK_COLOR, 0);
+            lv_label_set_text(_ota_btn_lbl, "Check for Update");
+            lv_obj_clear_state(_ota_btn, LV_STATE_DISABLED);
+            break;
+        case OTA_AVAILABLE:
+            snprintf(buf, sizeof(buf), "Update available: %s", ota_latest_tag);
+            lv_label_set_text(_ota_status_lbl, buf);
+            lv_obj_set_style_text_color(_ota_status_lbl, OTA_WARN_COLOR, 0);
+            snprintf(buf, sizeof(buf), "Update to %s", ota_latest_tag);
+            lv_label_set_text(_ota_btn_lbl, buf);
+            lv_obj_clear_state(_ota_btn, LV_STATE_DISABLED);
+            break;
+        case OTA_DOWNLOADING:
+            snprintf(buf, sizeof(buf), "Downloading... %d%%", ota_progress);
+            lv_label_set_text(_ota_status_lbl, buf);
+            lv_obj_set_style_text_color(_ota_status_lbl, OTA_WARN_COLOR, 0);
+            lv_label_set_text(_ota_btn_lbl, "Updating...");
+            lv_obj_add_state(_ota_btn, LV_STATE_DISABLED);
+            break;
+        case OTA_DONE:
+            // Device reboots itself right after this (ota.cpp's do_update()
+            // calls ESP.restart() on success) -- this state is essentially
+            // never visible, but handled in case that timing ever changes.
+            lv_label_set_text(_ota_status_lbl, "Update complete, rebooting...");
+            lv_obj_set_style_text_color(_ota_status_lbl, OTA_OK_COLOR, 0);
+            lv_obj_add_state(_ota_btn, LV_STATE_DISABLED);
+            break;
+        case OTA_ERROR:
+            lv_label_set_text(_ota_status_lbl, "Check failed -- try again");
+            lv_obj_set_style_text_color(_ota_status_lbl, OTA_ERR_COLOR, 0);
+            lv_label_set_text(_ota_btn_lbl, "Check for Update");
+            lv_obj_clear_state(_ota_btn, LV_STATE_DISABLED);
+            break;
+    }
+}
+
+static void ota_btn_clicked(lv_event_t *e) {
+    (void)e;
+    if (ota_status == OTA_AVAILABLE) ota_request_update();
+    else if (ota_status != OTA_CHECKING && ota_status != OTA_DOWNLOADING) ota_request_check();
 }
 
 static void save_and_close(lv_event_t *e) {
@@ -208,9 +285,10 @@ void settings_init(lv_obj_t *parent) {
     // only via tools/configure_device.sh/.ps1's TOKEN= serial command; the
     // STAT screen's DEVICE column shows whether one is currently set
     // (stats_view.cpp) so there's still an on-device way to confirm it. What
-    // is left here is WiFi, network mode, range presets, and units, in that
-    // order (WiFi/Ethernet grouped together as "how this thing gets online",
-    // then the display-affecting settings after).
+    // is left here is WiFi, network mode, range presets, units, and firmware
+    // update, in that order (WiFi/Ethernet grouped together as "how this
+    // thing gets online", then the display-affecting settings, then device/
+    // firmware identity last).
 
     // WiFi
     create_label(_panel, "WiFi SSID", 0, 36);
@@ -276,6 +354,48 @@ void settings_init(lv_obj_t *parent) {
     // group above).
     create_label(_panel, "Metric Units", 0, 290);
     _sw_metric = create_switch(_panel, 110, 288, _cfg.use_metric);
+
+    // Firmware update -- same extra breathing room above as Range Presets/
+    // Metric got, for the same reason (a standalone group, not part of the
+    // WiFi/Ethernet group above). Version display used to live on the Stats
+    // screen instead; moved here since Settings is a better match for
+    // device/firmware identity than Stats' live aircraft/network telemetry
+    // (see project_backlog memory -- a fuller "Device column" reorg is
+    // planned but not yet designed, this is the minimal version of it).
+    create_label(_panel, "Firmware Update", 0, 336);
+    { lv_obj_t *ver = lv_label_create(_panel);
+      char vbuf[40];
+      snprintf(vbuf, sizeof(vbuf), "Running: %s", FIRMWARE_VERSION_STR);
+      lv_label_set_text(ver, vbuf);
+      lv_obj_set_style_text_color(ver, lv_color_hex(0xccccdd), 0);
+      lv_obj_set_style_text_font(ver, &lv_font_montserrat_14, 0);
+      lv_obj_set_pos(ver, 0, 356); }
+
+    _ota_status_lbl = lv_label_create(_panel);
+    lv_obj_set_style_text_font(_ota_status_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(_ota_status_lbl, 0, 378);
+
+    _ota_btn = lv_button_create(_panel);
+    lv_obj_set_size(_ota_btn, FIELD_W, 36);
+    lv_obj_set_pos(_ota_btn, 0, 402);
+    lv_obj_set_style_bg_color(_ota_btn, lv_color_hex(0x1a1a3a), 0);
+    lv_obj_set_style_border_color(_ota_btn, lv_color_hex(0x333366), 0);
+    lv_obj_set_style_border_width(_ota_btn, 1, 0);
+    lv_obj_set_style_radius(_ota_btn, 6, 0);
+    lv_obj_set_style_bg_color(_ota_btn, lv_color_hex(0x1a1a3a), LV_STATE_DISABLED);
+    lv_obj_set_style_text_color(_ota_btn, lv_color_hex(0x555577), LV_STATE_DISABLED);
+    _ota_btn_lbl = lv_label_create(_ota_btn);
+    lv_label_set_text(_ota_btn_lbl, "Check for Update");
+    lv_obj_set_style_text_color(_ota_btn_lbl, lv_color_hex(0xccccdd), 0);
+    lv_obj_set_style_text_font(_ota_btn_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(_ota_btn_lbl);
+    lv_obj_add_event_cb(_ota_btn, ota_btn_clicked, LV_EVENT_CLICKED, nullptr);
+
+    ota_ui_refresh(nullptr);
+    // 500ms is fine -- an OTA check/download takes seconds, not something
+    // that needs snappier feedback than that, and this only runs while the
+    // Settings panel object exists (created once at boot, never destroyed).
+    _ota_timer = lv_timer_create(ota_ui_refresh, 500, nullptr);
 
     // Display / Screensaver button -- deactivated 2026-07-23 along with the
     // rest of screensaver.cpp (see the #if 0 block there for why). Left
