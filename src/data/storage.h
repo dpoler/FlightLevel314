@@ -11,11 +11,6 @@ struct UserConfig {
     char watchlist[10][7]; // up to 10 ICAO hex codes
     int watchlist_count;
 
-    // View cycle settings
-    bool cycle_enabled;
-    int cycle_interval_s;    // seconds between auto-advance (default 30)
-    int cycle_inactivity_s;  // seconds before resuming cycling after touch (default 60)
-
     // Alert settings
     bool alert_military;     // show popup for military aircraft
     bool alert_emergency;    // show popup for squawk 7500/7600/7700

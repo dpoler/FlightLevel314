@@ -35,9 +35,6 @@ void status_bar_set_active_dot(int view_index);
 // Set callback for gear icon tap
 void status_bar_set_gear_callback(lv_event_cb_t cb);
 
-// Show/hide the AUTO cycle indicator near view dots
-void status_bar_set_auto_indicator(bool visible);
-
 // Screen x of the VIEW chip -- its own popover (view_menu.cpp) anchors
 // under this instead of a hardcoded position, since (unlike the location
 // picker chip at the fixed LOCATION_CHIP_X) this chip's x depends on

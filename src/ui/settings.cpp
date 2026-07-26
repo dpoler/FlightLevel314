@@ -22,9 +22,6 @@ static lv_obj_t *_sw_ethernet = nullptr;
 static lv_obj_t *_btn_show_pass = nullptr;
 static lv_obj_t *_sw_alert_mil = nullptr;
 static lv_obj_t *_sw_alert_emg = nullptr;
-static lv_obj_t *_sw_cycle = nullptr;
-static lv_obj_t *_slider_cycle_int = nullptr;
-static lv_obj_t *_cycle_int_label = nullptr;
 
 static UserConfig _cfg;
 
@@ -131,8 +128,6 @@ static void save_and_close(lv_event_t *e) {
     _cfg.use_ethernet = lv_obj_has_state(_sw_ethernet, LV_STATE_CHECKED);
     _cfg.alert_military = lv_obj_has_state(_sw_alert_mil, LV_STATE_CHECKED);
     _cfg.alert_emergency = lv_obj_has_state(_sw_alert_emg, LV_STATE_CHECKED);
-    _cfg.cycle_enabled = lv_obj_has_state(_sw_cycle, LV_STATE_CHECKED);
-    _cfg.cycle_interval_s = lv_slider_get_value(_slider_cycle_int);
 
     storage_save_config(_cfg);
     Serial.println("Config saved to NVS");
@@ -267,31 +262,6 @@ void settings_init(lv_obj_t *parent) {
     // consolidated in the status bar's VIEW chip popover
     // (status_bar.cpp -> view_menu.cpp) instead of living here.
 
-    // Auto-cycle -- shifted up into the space Home lat/lon used to occupy.
-    create_label(_panel, "Auto-Cycle Views", rx, 36);
-    _sw_cycle = create_switch(_panel, rx + 140, 34, _cfg.cycle_enabled);
-
-    create_label(_panel, "Cycle Interval", rx, 66);
-    _slider_cycle_int = lv_slider_create(_panel);
-    lv_obj_set_size(_slider_cycle_int, 180, 10);
-    lv_obj_set_pos(_slider_cycle_int, rx, 86);
-    lv_slider_set_range(_slider_cycle_int, 15, 120);
-    lv_slider_set_value(_slider_cycle_int, _cfg.cycle_interval_s, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(_slider_cycle_int, lv_color_hex(0x333366), 0);
-    lv_obj_set_style_bg_color(_slider_cycle_int, ACCENT_COLOR, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(_slider_cycle_int, ACCENT_COLOR, LV_PART_KNOB);
-
-    _cycle_int_label = lv_label_create(_panel);
-    lv_label_set_text_fmt(_cycle_int_label, "%ds", _cfg.cycle_interval_s);
-    lv_obj_set_style_text_color(_cycle_int_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(_cycle_int_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(_cycle_int_label, rx + 190, 82);
-
-    lv_obj_add_event_cb(_slider_cycle_int, [](lv_event_t *e) {
-        int val = lv_slider_get_value(lv_event_get_target_obj(e));
-        lv_label_set_text_fmt(_cycle_int_label, "%ds", val);
-    }, LV_EVENT_VALUE_CHANGED, nullptr);
-
     // Hide ground aircraft -- moved to a quick-access GND button in the
     // right-edge filter column (map/radar/arrivals), same control as this
     // used to be, just not buried in Settings anymore.
@@ -317,9 +287,10 @@ void settings_init(lv_obj_t *parent) {
     }, LV_EVENT_CLICKED, nullptr);
 #endif
 
-    // airportdb.io token — used by the location picker's "Add Airport" flow
-    create_label(_panel, "Airport DB Token (airportdb.io)", rx, 242);
-    _ta_airportdb_token = create_textarea(_panel, "token", _cfg.airportdb_token, rx, 260);
+    // airportdb.io token — used by the location picker's "Add Airport" flow.
+    // Shifted up into the space Auto-Cycle Views used to occupy (removed).
+    create_label(_panel, "Airport DB Token (airportdb.io)", rx, 36);
+    _ta_airportdb_token = create_textarea(_panel, "token", _cfg.airportdb_token, rx, 54);
 
     // === Save button (centered at bottom) ===
     lv_obj_t *save_btn = lv_button_create(_panel);
@@ -374,12 +345,6 @@ void settings_show() {
 
     if (_cfg.use_ethernet) lv_obj_add_state(_sw_ethernet, LV_STATE_CHECKED);
     else lv_obj_clear_state(_sw_ethernet, LV_STATE_CHECKED);
-
-    if (_cfg.cycle_enabled) lv_obj_add_state(_sw_cycle, LV_STATE_CHECKED);
-    else lv_obj_clear_state(_sw_cycle, LV_STATE_CHECKED);
-
-    lv_slider_set_value(_slider_cycle_int, _cfg.cycle_interval_s, LV_ANIM_OFF);
-    lv_label_set_text_fmt(_cycle_int_label, "%ds", _cfg.cycle_interval_s);
 
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
 }

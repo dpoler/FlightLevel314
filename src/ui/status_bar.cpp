@@ -14,7 +14,6 @@ static lv_obj_t *update_label;
 static lv_obj_t *nav_btns[NUM_VIEWS];
 static lv_obj_t *nav_labels[NUM_VIEWS];
 static lv_obj_t *gear_icon;
-static lv_obj_t *auto_label;
 static lv_obj_t *range_chip;
 static lv_obj_t *range_lbl;
 static lv_obj_t *view_chip;
@@ -78,9 +77,8 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     lv_obj_add_event_cb(range_chip, [](lv_event_t *e) {
         range_cycle();
         lv_label_set_text(range_lbl, range_label());
-        // Persist for resume-on-boot -- only this manual tap, not the
-        // auto-cycle timer's own range_cycle() call (views.cpp), which would
-        // mean a blocking NVS write roughly once a minute while auto-cycling.
+        // Persist for resume-on-boot -- a discrete human action, safe to
+        // write immediately.
         int idx = range_get_index();
         if (g_config.last_range_idx != idx) {
             g_config.last_range_idx = idx;
@@ -126,23 +124,16 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     lv_obj_set_style_border_opa(nav_btns[0], LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(nav_btns[0], STATUS_ACCENT_COLOR, 0);
 
-    // AUTO cycle indicator (right of nav buttons)
-    auto_label = lv_label_create(bar);
-    lv_label_set_text(auto_label, "AUTO");
-    lv_obj_set_style_text_font(auto_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(auto_label, STATUS_ACCENT_COLOR, 0);
-    lv_obj_set_pos(auto_label, nav_x0 + nav_total_w + 8, (STATUS_BAR_HEIGHT - 16) / 2);
-    lv_obj_clear_flag(auto_label, LV_OBJ_FLAG_CLICKABLE);
-
     // VIEW quick-settings chip -- Map/Radar only (Arrivals/Stats have
     // neither trails nor tags). Opens the view_menu.cpp popover (trails
     // on/off/amount/clear, per-field tag toggles, secondary-location
     // visibility) -- replaces the old separate TRAIL and TAG chips.
-    // status_bar_set_active_dot() shows/hides this chip per view. Starts
-    // one CHIP_W past the nav group as a buffer clearing the AUTO indicator.
+    // status_bar_set_active_dot() shows/hides this chip per view. Standard
+    // CHIP_GAP after the nav group (used to be a full CHIP_W, to clear the
+    // since-removed AUTO cycle indicator that sat in that gap).
     view_chip = lv_obj_create(bar);
     lv_obj_set_size(view_chip, CHIP_W, CHIP_H);
-    lv_obj_set_pos(view_chip, nav_x0 + nav_total_w + CHIP_W, (STATUS_BAR_HEIGHT - CHIP_H) / 2);
+    lv_obj_set_pos(view_chip, nav_x0 + nav_total_w + CHIP_GAP, (STATUS_BAR_HEIGHT - CHIP_H) / 2);
     lv_obj_set_style_bg_color(view_chip, lv_color_hex(0x0a0a1a), 0);
     lv_obj_set_style_bg_opa(view_chip, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(view_chip, STATUS_TEXT_COLOR, 0);
@@ -232,8 +223,8 @@ void status_bar_set_active_dot(int view_index) {
     // left it silently writing to the newly-active view's settings while
     // still showing the one you switched away from's). This is the one
     // choke point every view change already passes through -- manual nav
-    // tap, swipe, and the auto-cycle timer alike -- so closing here covers
-    // all of them without touching each call site individually.
+    // tap and swipe alike -- so closing here covers both without touching
+    // each call site individually.
     view_menu_close();
 
     for (int i = 0; i < NUM_VIEWS; i++) {
@@ -264,12 +255,4 @@ int status_bar_get_view_chip_x() {
 
 int status_bar_get_aircraft_count() {
     return _last_aircraft_count;
-}
-
-void status_bar_set_auto_indicator(bool visible) {
-    if (visible) {
-        lv_obj_clear_flag(auto_label, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(auto_label, LV_OBJ_FLAG_HIDDEN);
-    }
 }
