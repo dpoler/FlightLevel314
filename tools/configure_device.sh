@@ -43,19 +43,50 @@ send_line() {
     printf '%s\r\n' "$1" >&3
 }
 
-# Reads one line from fd 3 with a timeout, stripping any trailing \r.
-# Empty output means "no response" (timed out). The `|| true` matters under
-# `set -e`: `read -t` returns non-zero on timeout, and since every caller of
-# this function uses it as a plain `resp=$(read_response ...)` assignment
-# (not inside an `if`/`&&`), an unguarded timeout would silently kill the
-# entire script right there -- no error message, the menu just vanishes.
-# ADD_WAYPOINT's synchronous NVS write (slower the more locations are
-# already saved -- see the project backlog's cyan-flash-on-NVS-write entry)
-# was the one most likely to occasionally miss the window and trip this.
+# Reads lines from fd 3 until one is an actual protocol reply (starts with
+# "OK " or "ERR ") or the overall timeout budget runs out, discarding
+# anything else. Necessary because the device's serial line is shared with
+# incidental log output -- e.g. storage_save_config() (called by TOKEN=/
+# WIFI_SSID=/WIFI_PASS= right before each one's own OK line) unconditionally
+# prints "Storage: config saved to NVS" first. A naive "read one line, trust
+# it" reader grabs that debug line instead of the real reply, leaving the
+# real reply sitting unread in the buffer -- which then desyncs every
+# following read for the rest of the session (each one now returns the
+# *previous* command's real reply instead of its own), not just this one
+# command (reported: WIFI_SSID showed the debug line as if it were the
+# response, then the REBOOT reply after it never arrived). Same risk exists
+# for any other Serial.println() anywhere in the firmware that might fire
+# while a command is being handled -- filtering by prefix instead of
+# blindly trusting the first line handles all of those too, not just this
+# one instance.
+#
+# Empty output means "no response" (genuinely timed out, not just skipped a
+# log line). The `|| { resp=""; break; }` on the read matters under
+# `set -e`: `read -t` returns non-zero on timeout, and an unguarded timeout
+# inside this function would otherwise become the *function's* own exit
+# status -- and since every caller uses this as a plain
+# `resp=$(read_response ...)` assignment (not inside a tested `if`/`&&`),
+# that would silently kill the entire script right there under `set -e`,
+# no error message, the menu just vanishes.
 read_response() {
-    local timeout="$1" resp=""
-    IFS= read -r -t "$timeout" resp <&3 || true
-    printf '%s' "${resp%$'\r'}"
+    local budget="$1" resp="" deadline now remaining
+    deadline=$(( $(date +%s) + budget ))
+    while :; do
+        now=$(date +%s)
+        remaining=$(( deadline - now ))
+        (( remaining < 1 )) && remaining=1
+        if (( now >= deadline )); then
+            resp=""
+            break
+        fi
+        IFS= read -r -t "$remaining" resp <&3 || { resp=""; break; }
+        resp="${resp%$'\r'}"
+        case "$resp" in
+            OK*|ERR*) break ;;
+            *) resp=""; continue ;; # stray log line -- discard, keep waiting within budget
+        esac
+    done
+    printf '%s' "$resp"
 }
 
 # Reads and prints one response line, with a clear message if it timed out.
