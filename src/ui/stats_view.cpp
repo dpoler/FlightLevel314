@@ -373,10 +373,10 @@ static void refresh_stats(lv_timer_t *t) {
     // this is the only place left to confirm one actually landed.
     if (g_config.airportdb_token[0]) {
         lv_obj_set_style_text_color(_airportdb_val, SYS_COLOR, 0);
-        lv_label_set_text(_airportdb_val, "OK");
+        lv_label_set_text(_airportdb_val, "Configured");
     } else {
         lv_obj_set_style_text_color(_airportdb_val, WARN_COLOR, 0);
-        lv_label_set_text(_airportdb_val, "NOT SET");
+        lv_label_set_text(_airportdb_val, "Not configured");
     }
 
     // === ERROR LOG ===

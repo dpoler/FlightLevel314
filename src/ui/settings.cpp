@@ -35,7 +35,7 @@ static settings_changed_cb_t _on_change = nullptr;
 // -- this stays a centered modal since WiFi credential entry benefits
 // from more room for the on-screen keyboard than a 270px popover gives.
 #define PANEL_W 370
-#define PANEL_H 400
+#define PANEL_H 430
 #define FIELD_W 280
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
@@ -241,14 +241,18 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_font(net_hint, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(net_hint, 164, 160);
 
-    // Range Presets — 4 configurable text fields (nm, 1-500)
-    create_label(_panel, "Range Presets (nm, 1-500)", 0, 194);
+    // Range Presets — 4 configurable text fields (nm, 1-500). Deliberately
+    // more vertical room above this than between the tightly-grouped WiFi/
+    // Ethernet rows above -- those three are "how this thing gets online"
+    // and read as one group; this and Metric below are separate settings,
+    // not part of that group.
+    create_label(_panel, "Range Presets (nm, 1-500)", 0, 206);
     for (int i = 0; i < 4; i++) {
         char rbuf[8];
         snprintf(rbuf, sizeof(rbuf), "%d", _cfg.radius_presets[i]);
         _ta_radius[i] = lv_textarea_create(_panel);
         lv_obj_set_size(_ta_radius[i], 60, 36);
-        lv_obj_set_pos(_ta_radius[i], i * 66, 214);
+        lv_obj_set_pos(_ta_radius[i], i * 66, 226);
         lv_textarea_set_one_line(_ta_radius[i], true);
         lv_textarea_set_text(_ta_radius[i], rbuf);
         lv_obj_set_style_bg_color(_ta_radius[i], lv_color_hex(0x1a1a3a), 0);
@@ -261,9 +265,11 @@ void settings_init(lv_obj_t *parent) {
                             (void *)(intptr_t)LV_KEYBOARD_MODE_NUMBER);
     }
 
-    // Metric
-    create_label(_panel, "Metric Units", 0, 258);
-    _sw_metric = create_switch(_panel, 110, 256, _cfg.use_metric);
+    // Metric -- same extra breathing room above as Range Presets got, for
+    // the same reason (a standalone setting, not part of the WiFi/Ethernet
+    // group above).
+    create_label(_panel, "Metric Units", 0, 290);
+    _sw_metric = create_switch(_panel, 110, 288, _cfg.use_metric);
 
     // Display / Screensaver button -- deactivated 2026-07-23 along with the
     // rest of screensaver.cpp (see the #if 0 block there for why). Left
