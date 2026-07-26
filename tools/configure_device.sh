@@ -140,6 +140,7 @@ do_set_token() {
     echo ""
     send_line "TOKEN=$token"
     show_response
+    echo "Used automatically the next time you add an airport by ICAO on the device."
 }
 
 do_set_wifi() {
@@ -150,15 +151,34 @@ do_set_wifi() {
     echo ""
     send_line "WIFI_PASS=$pass"
     show_response
+    echo "The device only reads WiFi credentials at boot, so a restart is needed"
+    echo "before it connects with these -- this script will do that for you."
 }
 
+# Distinct from show_response -- needs the actual response text (not just
+# printed) to decide whether to show the follow-up explanation, since that
+# only makes sense if the add actually succeeded (an ERR here is usually
+# "location list full" or "name already used", not a connectivity problem).
 do_add_location() {
     read -r -p "Location name (short, no '|'): " loc_name
     read -r -p "Latitude: " loc_lat
     read -r -p "Longitude: " loc_lon
     read -r -p "Elevation (ft): " loc_elev
     send_line "ADD_WAYPOINT=${loc_name}|${loc_lat}|${loc_lon}|${loc_elev}"
-    show_response
+    local resp
+    resp=$(read_response "$CMD_TIMEOUT")
+    if [[ -z "$resp" ]]; then
+        echo "(no response from device -- check it's still connected)"
+        return
+    fi
+    echo "$resp"
+    if [[ "$resp" == OK* ]]; then
+        echo "Saved to the device's location list. This does NOT change what's"
+        echo "currently on screen and the new location is not auto-selected --"
+        echo "on the device, tap the location button (top of the screen) and"
+        echo "choose \"$loc_name\" from the list to actually view it. No reboot"
+        echo "needed for this to take effect."
+    fi
 }
 
 # ---- menu ---------------------------------------------------------------
@@ -192,7 +212,6 @@ while true; do
             ;;
         3)
             do_add_location
-            echo "Applied immediately -- no reboot needed."
             ;;
         4)
             read -r -p "This will ERASE ALL settings and saved locations. Type YES to confirm: " confirm

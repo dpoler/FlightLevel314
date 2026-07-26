@@ -195,7 +195,6 @@ void setup() {
         settings_show();
     });
 
-    bool first_boot = (g_config.wifi_ssid[0] == '\0');
     settings_set_change_callback([](const UserConfig *cfg) {
         bool presets_changed = (memcmp(cfg->radius_presets, g_config.radius_presets,
                                        sizeof(g_config.radius_presets)) != 0);
@@ -211,10 +210,13 @@ void setup() {
         }
     });
 
-    // On first boot (no credentials in NVS), open settings automatically
-    if (first_boot) {
-        settings_show();
-    }
+    // Settings used to auto-open on first boot (no WiFi credentials in NVS)
+    // to prompt setup -- removed now that the intended setup path is the
+    // USB-serial config scripts (tools/configure_device.{sh,ps1}), not the
+    // on-screen keyboard. Landing on a real view (Map by default, or
+    // whatever views_resume_last_view() below resumes to) instead of an
+    // unprompted Settings popover matters more once the device is meant to
+    // be configured before it is ever handed a touchscreen tap.
 
     // Periodic status bar update -- aircraft count computed directly here
     // (opacity/filter/hide_ground/radius, matching what a view would draw)
