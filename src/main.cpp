@@ -94,6 +94,19 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 
 void setup() {
     Serial.begin(115200);
+    // TRIED adding a guarded Serial0.begin(115200) here for BOARD_CROWPANEL,
+    // chasing a one-cable way to reach the WCH-bridge/UART0 port (see
+    // serial_config.cpp's comment on why that seemed necessary at the time).
+    // Real-hardware result: the board hung completely after the ROM banner --
+    // not even Preferences.cpp's unconditional log_e line got out anymore.
+    // Best explanation: ESP-IDF's own console already owns UART0 from boot
+    // (that's how the ROM banner and log_e/ESP_LOGE lines reach that port
+    // with zero init from us); Arduino's HardwareSerial ALSO calling
+    // uart_driver_install() on the same peripheral via .begin() likely
+    // conflicts with that. Turned out to be unnecessary anyway -- CrowPanel
+    // has a second, separate USB port (labeled USB2.0 on the board) that
+    // Serial/HWCDCSerial already reaches with no changes needed; connecting
+    // a cable there is the real fix. Do not re-add Serial0.begin() here.
     Serial.println("ADS-B Display starting...");
 
     Serial.printf("Heap free: %lu  PSRAM free: %lu\n",

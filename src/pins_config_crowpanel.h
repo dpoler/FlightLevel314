@@ -78,16 +78,13 @@
 // still show a switch that does nothing on this board's Settings screen,
 // worth hiding per-board eventually rather than leaving as a UI wart.
 
-// WiFi C6 (ESP-Hosted SDIO). The actual SDIO CMD/CLK/D0/D1/bus-width pins
-// are NOT set here -- unlike jc1060 (where they're the pioarduino board
-// variant's own defaults, this app never overrides them), this board
-// needs real overrides, done via sdkconfig.defaults.crowpanel + platformio.
-// ini's board_build.cmake_extra_args (see platformio.ini's [env:crowpanel]
-// comment) since ESP-Hosted's SDIO pins are an ESP-IDF Kconfig setting,
-// not something pins_config.h's plain #defines can reach. WIFI_C6_RST
-// below is listed for reference only, same as jc1060's -- the app itself
-// doesn't read it (reset_wifi_c6() in fetcher.cpp uses a jc1060-specific
-// GPIO write path that has not been checked for compatibility with this
-// board; CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE in sdkconfig.defaults.
-// crowpanel is what actually matters for the ESP-Hosted-managed reset).
+// WiFi C6 (ESP-Hosted SDIO). sdkconfig.defaults.crowpanel's Kconfig values
+// never actually reach the build -- confirmed on real hardware: arduino-esp32
+// links a precompiled P4 lib whose SDIO bus-width/reset are baked in at
+// library-build time (4-bit bus, GPIO54 reset), not read from this project's
+// sdkconfig.defaults.crowpanel. The app DOES read WIFI_C6_RST below, in two
+// places: reset_wifi_c6() (fetcher.cpp) for the app's own manual C6 reset,
+// and a hostedSetPins() call in fetcher_init() that overrides the ESP-Hosted
+// transport's OWN internal reset pin (see the comment there for the fuller
+// story, including the still-open 4-bit-vs-1-bit bus-width mismatch).
 #define WIFI_C6_RST 32

@@ -5,6 +5,19 @@
 #include <cstring>
 #include <cstdlib>
 
+// CrowPanel has two separate physical USB ports (confirmed on real
+// hardware): one labeled UART0 (the WCH USB-serial bridge -- flashing, ROM
+// banner, ESP-IDF log_e/ESP_LOGE lines all go there regardless of Serial's
+// configuration) and one labeled USB2.0 (the P4's native USB peripheral,
+// which is what Serial/HWCDCSerial actually outputs to here -- see
+// platformio.ini's [env:crowpanel] comment). This file's replies only reach
+// tools/configure_device.{sh,ps1} if a cable is plugged into the USB2.0
+// port too, alongside the usual UART0 one used for flashing. Two things
+// were tried and reverted here chasing a one-cable answer instead (routing
+// this file through Serial0, and a Serial0.begin() in main.cpp) -- neither
+// is needed once the right cable is connected, and the second one hung the
+// board outright (see main.cpp's comment). Plain Serial is correct.
+
 #define LINE_BUF_SIZE 200
 
 static char _line[LINE_BUF_SIZE];
