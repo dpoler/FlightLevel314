@@ -10,6 +10,7 @@
 #include "../data/fetcher.h"
 #include "../data/error_log.h"
 #include "../data/locations.h"
+#include "../data/storage.h" // g_config.airportdb_token -- see AIRPORTDB row below
 #include "geo.h" // altitude_color()
 
 #define STATS_W LCD_H_RES
@@ -87,6 +88,7 @@ static lv_obj_t *_fetch_val = nullptr;
 static lv_obj_t *_bytes_val = nullptr;
 static lv_obj_t *_latency_val = nullptr;
 static lv_obj_t *_rssi_val = nullptr;
+static lv_obj_t *_airportdb_val = nullptr; // never entered on-device (see settings.cpp) -- this is the only on-device confirmation a token is set
 
 // Error log
 static lv_obj_t *_err_count_lbl = nullptr;
@@ -366,6 +368,17 @@ static void refresh_stats(lv_timer_t *t) {
         lv_label_set_text(_rssi_val, "No link");
     }
 
+    // Token is only ever set via tools/configure_device.sh/.ps1's TOKEN=
+    // serial command now (settings.cpp dropped the on-device entry field) --
+    // this is the only place left to confirm one actually landed.
+    if (g_config.airportdb_token[0]) {
+        lv_obj_set_style_text_color(_airportdb_val, SYS_COLOR, 0);
+        lv_label_set_text(_airportdb_val, "OK");
+    } else {
+        lv_obj_set_style_text_color(_airportdb_val, WARN_COLOR, 0);
+        lv_label_set_text(_airportdb_val, "NOT SET");
+    }
+
     // === ERROR LOG ===
     // "ERRORS" itself is now a static section header (create_section_header
     // in stats_view_init()) -- this label is just the "(N)" count next to it.
@@ -619,8 +632,9 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     _fetch_val = create_inline_row(_container, "FETCHES", rx, net_y + ROW_H * 3, SYS_COLOR, 90);
     _bytes_val = create_inline_row(_container, "RX DATA", rx, net_y + ROW_H * 4, SYS_COLOR, 90);
     _latency_val = create_inline_row(_container, "LATENCY", rx, net_y + ROW_H * 5, SYS_COLOR, 90);
+    _airportdb_val = create_inline_row(_container, "AIRPORTDB", rx, net_y + ROW_H * 6, SYS_COLOR, 90);
 
-    int sy = net_y + 6 * ROW_H + SECTION_GAP;
+    int sy = net_y + 7 * ROW_H + SECTION_GAP;
     create_section_header(_container, "SYSTEM", rx, sy);
 
     _heap_val = create_stat_pair(_container, "HEAP", rx, sy + 18, SYS_COLOR);

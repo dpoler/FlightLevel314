@@ -13,7 +13,6 @@ static bool _visible = false;
 // Text areas
 static lv_obj_t *_ta_ssid = nullptr;
 static lv_obj_t *_ta_pass = nullptr;
-static lv_obj_t *_ta_airportdb_token = nullptr;
 
 // Controls
 static lv_obj_t *_ta_radius[4] = {nullptr, nullptr, nullptr, nullptr};
@@ -26,18 +25,17 @@ static UserConfig _cfg;
 // Callback for config changes (set by main)
 static settings_changed_cb_t _on_change = nullptr;
 
-// Single column now -- WiFi/range/metric/ethernet/token is all that is
-// left here (Home lat/lon, trails, GND, Military/Emergency alerts, and
+// Single column now -- WiFi/ethernet/range/metric is all that is left
+// here (Home lat/lon, trails, GND, Military/Emergency alerts, and
 // Auto-Cycle all moved out over time to the location picker/VIEW menu/
-// filter column), so the old wide two-column 820px layout was mostly
-// empty space by the end. Sized to fit exactly what remains, not to match
-// the VIEW-menu-style small anchored popovers (status_bar.cpp) -- this
-// stays a centered modal since WiFi credential entry benefits from more
-// room for the on-screen keyboard than a 270px popover gives, and this
-// panel is now an occasional fallback (configure_device.sh/.ps1 is the
-// primary path for WiFi/token) rather than something tapped often.
+// filter column; the airportdb.io token was dropped from this panel
+// entirely -- see below), so the old wide two-column 820px layout was
+// mostly empty space by the end. Sized to fit exactly what remains, not
+// to match the VIEW-menu-style small anchored popovers (status_bar.cpp)
+// -- this stays a centered modal since WiFi credential entry benefits
+// from more room for the on-screen keyboard than a 270px popover gives.
 #define PANEL_W 370
-#define PANEL_H 460
+#define PANEL_H 400
 #define FIELD_W 280
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
@@ -114,9 +112,9 @@ static void save_and_close(lv_event_t *e) {
     strncpy(_cfg.wifi_pass, lv_textarea_get_text(_ta_pass), sizeof(_cfg.wifi_pass) - 1);
     _cfg.wifi_pass[sizeof(_cfg.wifi_pass) - 1] = '\0';
     for (char *p = _cfg.wifi_pass; *p; p++) if (*p == '\r' || *p == '\n') *p = '\0';
-    strncpy(_cfg.airportdb_token, lv_textarea_get_text(_ta_airportdb_token), sizeof(_cfg.airportdb_token) - 1);
-    _cfg.airportdb_token[sizeof(_cfg.airportdb_token) - 1] = '\0';
-    for (char *p = _cfg.airportdb_token; *p; p++) if (*p == '\r' || *p == '\n') *p = '\0';
+    // airportdb_token is never edited here -- see the layout comment below --
+    // so _cfg's copy (freshly reloaded in settings_show()) is left untouched
+    // and just gets written back as-is.
     for (int i = 0; i < 4; i++) {
         int v = atoi(lv_textarea_get_text(_ta_radius[i]));
         if (v < 1) v = 1;
@@ -199,9 +197,14 @@ void settings_init(lv_obj_t *parent) {
     // moved: Home lat/lon and airport-by-ICAO entry to the location picker's
     // add-flow, Trails/Tags/Secondary-locations/Alerts to the status bar's
     // VIEW chip popover, GND to a quick-access filter-column button, and
-    // Auto-Cycle removed outright. What is left is genuinely everything
-    // this panel still owns: WiFi, range presets, units, network mode, and
-    // the airportdb.io token.
+    // Auto-Cycle removed outright. The airportdb.io token field was dropped
+    // entirely (not just moved) -- it's never typed in on the device itself,
+    // only via tools/configure_device.sh/.ps1's TOKEN= serial command; the
+    // STAT screen's DEVICE column shows whether one is currently set
+    // (stats_view.cpp) so there's still an on-device way to confirm it. What
+    // is left here is WiFi, network mode, range presets, and units, in that
+    // order (WiFi/Ethernet grouped together as "how this thing gets online",
+    // then the display-affecting settings after).
 
     // WiFi
     create_label(_panel, "WiFi SSID", 0, 36);
@@ -229,14 +232,23 @@ void settings_init(lv_obj_t *parent) {
         lv_label_set_text(lbl, pw ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
     }, LV_EVENT_CLICKED, nullptr);
 
+    // Network mode (Ethernet toggle — off=WiFi, on=Ethernet)
+    create_label(_panel, "Ethernet", 0, 158);
+    _sw_ethernet = create_switch(_panel, 110, 156, _cfg.use_ethernet);
+    lv_obj_t *net_hint = lv_label_create(_panel);
+    lv_label_set_text(net_hint, "(requires reboot)");
+    lv_obj_set_style_text_color(net_hint, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(net_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(net_hint, 164, 160);
+
     // Range Presets — 4 configurable text fields (nm, 1-500)
-    create_label(_panel, "Range Presets (nm, 1-500)", 0, 158);
+    create_label(_panel, "Range Presets (nm, 1-500)", 0, 194);
     for (int i = 0; i < 4; i++) {
         char rbuf[8];
         snprintf(rbuf, sizeof(rbuf), "%d", _cfg.radius_presets[i]);
         _ta_radius[i] = lv_textarea_create(_panel);
         lv_obj_set_size(_ta_radius[i], 60, 36);
-        lv_obj_set_pos(_ta_radius[i], i * 66, 178);
+        lv_obj_set_pos(_ta_radius[i], i * 66, 214);
         lv_textarea_set_one_line(_ta_radius[i], true);
         lv_textarea_set_text(_ta_radius[i], rbuf);
         lv_obj_set_style_bg_color(_ta_radius[i], lv_color_hex(0x1a1a3a), 0);
@@ -250,17 +262,8 @@ void settings_init(lv_obj_t *parent) {
     }
 
     // Metric
-    create_label(_panel, "Metric Units", 0, 222);
-    _sw_metric = create_switch(_panel, 110, 220, _cfg.use_metric);
-
-    // Network mode (Ethernet toggle — off=WiFi, on=Ethernet)
-    create_label(_panel, "Ethernet", 0, 258);
-    _sw_ethernet = create_switch(_panel, 110, 256, _cfg.use_ethernet);
-    lv_obj_t *net_hint = lv_label_create(_panel);
-    lv_label_set_text(net_hint, "(reboot)");
-    lv_obj_set_style_text_color(net_hint, lv_color_hex(0x666688), 0);
-    lv_obj_set_style_text_font(net_hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(net_hint, 164, 260);
+    create_label(_panel, "Metric Units", 0, 258);
+    _sw_metric = create_switch(_panel, 110, 256, _cfg.use_metric);
 
     // Display / Screensaver button -- deactivated 2026-07-23 along with the
     // rest of screensaver.cpp (see the #if 0 block there for why). Left
@@ -282,10 +285,6 @@ void settings_init(lv_obj_t *parent) {
         screensaver_show_settings();
     }, LV_EVENT_CLICKED, nullptr);
 #endif
-
-    // airportdb.io token — used by the location picker's "Add Airport" flow.
-    create_label(_panel, "Airport DB Token (airportdb.io)", 0, 300);
-    _ta_airportdb_token = create_textarea(_panel, "token", _cfg.airportdb_token, 0, 318);
 
     // === Save button (centered at bottom) ===
     lv_obj_t *save_btn = lv_button_create(_panel);
@@ -320,7 +319,6 @@ void settings_show() {
     lv_textarea_set_text(_ta_ssid, _cfg.wifi_ssid);
     lv_textarea_set_text(_ta_pass, _cfg.wifi_pass);
     lv_textarea_set_password_mode(_ta_pass, true);
-    lv_textarea_set_text(_ta_airportdb_token, _cfg.airportdb_token);
     lv_label_set_text(lv_obj_get_child(_btn_show_pass, 0), LV_SYMBOL_EYE_OPEN);
 
     for (int i = 0; i < 4; i++) {
