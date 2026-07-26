@@ -4,6 +4,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_heap_caps.h"
+#include "esp_ota_ops.h" // esp_ota_mark_app_valid_cancel_rollback() -- see setup()'s comment
 #include "pins_config.h"
 // Board-specific LCD panel driver -- both jd9165_lcd and ek79007_lcd expose
 // an identical method set (begin/lcd_draw_bitmap/example_bsp_set_lcd_
@@ -339,6 +340,20 @@ void setup() {
     // satisfied above) -- placed here, after fetcher_init(), simply so
     // resuming into Arrivals has live data to draw on the very first frame.
     views_resume_last_view();
+
+    // Confirms this boot as good, canceling ESP-IDF's automatic OTA
+    // rollback-on-failure (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y in the
+    // precompiled sdkconfig -- confirmed, not assumed). A freshly OTA'd
+    // image (data/ota.cpp) starts in a "pending verify" state; without this
+    // call, the *next* reset for any reason -- including this board's known
+    // occasional SDIO crash-reboot, unrelated to whether the update itself
+    // was good -- would make the bootloader silently revert to the
+    // previous firmware. Reaching this line means setup() completed
+    // end-to-end (display, touch, WiFi/Ethernet init, fetcher tasks all
+    // started) without crashing, which is a reasonable bar for "this build
+    // isn't fundamentally broken" -- a no-op on any boot that wasn't a
+    // pending OTA image.
+    esp_ota_mark_app_valid_cancel_rollback();
 }
 
 void loop() {

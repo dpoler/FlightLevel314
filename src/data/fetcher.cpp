@@ -6,6 +6,7 @@
 #include "../data/locations.h"
 #include "../data/airlines.h"
 #include "../data/enrichment.h"
+#include "../data/ota.h"
 #include "../ui/alerts.h"
 #if defined(USE_ETHERNET)
 #include <ETH.h>
@@ -674,6 +675,7 @@ static void location_poll_task(void *param) {
         locations_add_poll();
         locations_nearby_poll(); // nearby-large-airport runway cache -- one queued fetch per tick, same cadence as locations_add_poll()
         enrichment_poll(); // detail-card aircraft/photo lookups -- see enrichment.cpp
+        ota_poll(); // application-firmware update check/download -- see ota.cpp. Near-instant unless a check/update was actually requested (rare, user-triggered), in which case this tick runs long -- acceptable, see ota.h's comment.
         vTaskDelay(pdMS_TO_TICKS(1500));
     }
 }

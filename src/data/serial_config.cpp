@@ -1,6 +1,8 @@
 #include "serial_config.h"
 #include "storage.h"
 #include "locations.h"
+#include "ota.h"
+#include "../version.h"
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
@@ -88,6 +90,39 @@ static void handle_line(char *line) {
         Serial.flush();
         delay(200); // let the OK line actually flush over USB CDC before reset
         ESP.restart();
+    } else if (strcmp(line, "OTA_CHECK") == 0) {
+        // Application-firmware update check via GitHub Releases -- does NOT
+        // touch the ESP32-C6 co-processor's own firmware, see ota.h. Just
+        // requests the check; OTA_STATUS reports the result once
+        // ota_poll() (fetcher.cpp's location_poll_task) has actually run it.
+        ota_request_check();
+        Serial.printf("OK Checking for updates (currently running %s)...\n", FIRMWARE_VERSION_STR);
+    } else if (strcmp(line, "OTA_STATUS") == 0) {
+        const char *state =
+            ota_status == OTA_IDLE        ? "idle" :
+            ota_status == OTA_CHECKING    ? "checking" :
+            ota_status == OTA_UP_TO_DATE  ? "up to date" :
+            ota_status == OTA_AVAILABLE   ? "update available" :
+            ota_status == OTA_DOWNLOADING ? "downloading" :
+            ota_status == OTA_DONE        ? "done" : "error";
+        if (ota_status == OTA_DOWNLOADING) {
+            Serial.printf("OK %s (%d%%)\n", state, ota_progress);
+        } else if (ota_status == OTA_AVAILABLE || ota_status == OTA_UP_TO_DATE) {
+            Serial.printf("OK %s (latest=%s running=%s)\n", state, ota_latest_tag, FIRMWARE_VERSION_STR);
+        } else {
+            Serial.printf("OK %s\n", state);
+        }
+    } else if (strcmp(line, "OTA_UPDATE") == 0) {
+        // Only proceeds if a prior OTA_CHECK actually found a newer release
+        // -- ota_request_update() itself no-ops otherwise, matching the
+        // natural check-then-install flow rather than needing a separate
+        // confirm string like FACTORY_RESET does.
+        if (ota_status != OTA_AVAILABLE) {
+            Serial.println("ERR No update available -- run OTA_CHECK first");
+        } else {
+            ota_request_update();
+            Serial.printf("OK Downloading %s -- device will reboot automatically when done\n", ota_latest_tag);
+        }
     } else if (strcmp(line, "FACTORY_RESET=CONFIRM") == 0) {
         // Requires the exact confirm string, not just "FACTORY_RESET" --
         // this is destructive (wipes every saved setting and location) and
@@ -100,7 +135,7 @@ static void handle_line(char *line) {
         delay(200); // let the OK line actually flush over USB CDC before reset
         ESP.restart();
     } else {
-        Serial.println("ERR Unknown command. Supported: PING, TOKEN=, WIFI_SSID=, WIFI_PASS=, ADD_WAYPOINT=, REBOOT, FACTORY_RESET=CONFIRM");
+        Serial.println("ERR Unknown command. Supported: PING, TOKEN=, WIFI_SSID=, WIFI_PASS=, ADD_WAYPOINT=, OTA_CHECK, OTA_STATUS, OTA_UPDATE, REBOOT, FACTORY_RESET=CONFIRM");
     }
 }
 
