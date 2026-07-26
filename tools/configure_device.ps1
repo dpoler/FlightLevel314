@@ -12,9 +12,9 @@
 # operation, never append/increment -- so this script is safe to run more
 # than once, or to run the same menu option more than once in one session.
 #
-# Menu option 5 is intentionally stubbed -- OTA firmware updates aren't
-# built yet (see the project backlog). The menu structure and serial
-# plumbing here are already in place for when it is.
+# Menu option 5 checks for and installs application-firmware updates from
+# GitHub Releases (does not touch the ESP32-C6 co-processor's own firmware,
+# a deliberately separate problem -- see src/data/ota.cpp).
 
 $ErrorActionPreference = "Stop"
 $Baud = 115200
@@ -190,6 +190,69 @@ function Add-DeviceLocation {
     }
 }
 
+# Application-firmware update via GitHub Releases (data/ota.cpp) -- does NOT
+# touch the ESP32-C6 co-processor's own firmware, see that file's comment
+# for why. Checks, shows the result, and only downloads/installs with
+# explicit confirmation once an update is confirmed available.
+function Update-DeviceFirmware {
+    $resp = Send-AndRead $script:port "OTA_CHECK"
+    if ([string]::IsNullOrEmpty($resp)) {
+        Write-Host "(no response from device -- check it's still connected)"
+        return
+    }
+    Write-Host $resp
+
+    $tries = 0
+    while ($tries -lt 10) {
+        Start-Sleep -Seconds 1
+        $resp = Send-AndRead $script:port "OTA_STATUS"
+        $tries++
+        if ($resp -notlike "*checking*") { break }
+    }
+
+    if ([string]::IsNullOrEmpty($resp)) {
+        Write-Host "(no response checking status -- try again)"
+        return
+    }
+    Write-Host $resp
+
+    if ($resp -notlike "*update available*") {
+        return
+    }
+
+    $confirm = Read-Host "Download and install this update now? [y/N]"
+    if ($confirm -ne "y" -and $confirm -ne "Y") {
+        Write-Host "Cancelled."
+        return
+    }
+
+    $resp = Send-AndRead $script:port "OTA_UPDATE"
+    if ([string]::IsNullOrEmpty($resp)) {
+        Write-Host "(no response from device -- check it's still connected)"
+        return
+    }
+    Write-Host $resp
+
+    Write-Host "Downloading -- this can take a minute or two. The device reboots itself automatically once done."
+    $tries = 0
+    while ($tries -lt 90) {
+        Start-Sleep -Seconds 2
+        $resp = Send-AndRead $script:port "OTA_STATUS"
+        $tries++
+        if ($resp -like "*downloading*") {
+            Write-Host $resp
+            continue
+        }
+        break
+    }
+
+    if ($resp -like "*error*") {
+        Write-Host "Update failed -- device should still be running its previous firmware."
+    } elseif ([string]::IsNullOrEmpty($resp)) {
+        Write-Host "Device stopped responding -- if the download had finished, this is expected (it reboots itself into the new firmware). Re-run this script to confirm it came back up. If it doesn't, reflash over USB."
+    }
+}
+
 # ---- menu -----------------------------------------------------------------
 
 Write-Host "ADS-B Display -- device configuration"
@@ -207,7 +270,7 @@ try {
         Write-Host "2) Set WiFi credentials"
         Write-Host "3) Add a saved location (name/lat/lon/elevation)"
         Write-Host "4) Factory reset (erase all settings and saved locations)"
-        Write-Host "5) Update firmware  [not yet supported by this firmware]"
+        Write-Host "5) Check for / install a firmware update"
         Write-Host "6) First-time setup wizard (WiFi + token + one location)"
         Write-Host "0) Exit"
         $choice = Read-Host "Choose an option"
@@ -234,7 +297,7 @@ try {
                 }
             }
             "5" {
-                Write-Host "Not yet supported -- see the OTA-updates item in the project backlog."
+                Update-DeviceFirmware
             }
             "6" {
                 Write-Host ""
