@@ -6,6 +6,7 @@
 #include "driver/i2c_master.h"
 #include "esp_lcd_touch_gt911.h"
 #include "gt911_touch.h"
+#include <Arduino.h> // millis(), for the release-cooldown in getTouch()
 
 #ifndef CONFIG_LCD_HRES
 #define CONFIG_LCD_HRES 1024
@@ -86,21 +87,35 @@ bool gt911_touch::getTouch(uint16_t *x, uint16_t *y)
     uint16_t rx, ry;
     bool raw_pressed = esp_lcd_touch_get_coordinates(tp, &rx, &ry, touch_strength, &touch_cnt, 1);
 
-    // Debounce both edges. On the CrowPanel board this touch controller
-    // exhibits real contact chatter/bounce: a single, continuous physical
-    // tap gets reported as pressed / briefly released / pressed again for a
-    // sample or two, not just coordinate noise. Debouncing only the press
-    // side (as a first pass here did) doesn't fix that -- each mid-tap
-    // bounce was read as a genuine release, so LVGL saw a full press-
-    // release-press cycle and fired multiple clicks for one physical tap
-    // ("one tap, multiple hits", confirmed on real hardware, no particular
-    // screen-location pattern -- consistent with bounce, not e.g. edge
-    // coupling). Fix: once a press is confirmed, a raw "released" sample
-    // has to persist for RELEASE_DEBOUNCE_N consecutive reads before it's
-    // reported as a real release -- a bounce blip within that window is
-    // bridged over using the last known coordinates instead.
-    constexpr uint8_t PRESS_DEBOUNCE_N = 2;
+    // Debounce both edges, tuned twice now from real-hardware feedback. On
+    // the CrowPanel board this touch controller exhibits real contact
+    // chatter/bounce: a single, continuous physical tap gets reported as
+    // pressed / briefly released / pressed again for a sample or two, not
+    // just coordinate noise.
+    //
+    // V1 (press-debounce only) fixed nothing -- each mid-tap bounce was
+    // still read as a genuine release, so LVGL saw a full press-release-
+    // press cycle per physical tap ("one tap, multiple hits").
+    // V2 added release-side debouncing (bridging a raw "released" sample
+    // over RELEASE_DEBOUNCE_N reads before trusting it) to fix that, but
+    // kept a 2-consecutive-sample press debounce left over from V1 -- which
+    // then surfaced two NEW real-hardware symptoms: quick/light taps that
+    // only ever produce a single raw sample were being dropped entirely
+    // ("have to tap twice"), and a fresh press-candidate right after a just-
+    // confirmed release could still pass that same 2-sample check just as
+    // easily as a real second tap, i.e. post-release rebound was still
+    // getting through ("still occasional double-hits").
+    // V3 (here): press is accepted on the very first raw sample -- no delay,
+    // since release-side debouncing already absorbs mid-press chatter
+    // without needing help from the press side. Instead, a short cooldown
+    // after a *confirmed* release ignores any new contact for
+    // RELEASE_COOLDOWN_MS -- electrical rebound right at contact-lift
+    // settles far faster than a deliberate second human tap ever would, so
+    // this filters the bounce without making real double-taps feel delayed.
     constexpr uint8_t RELEASE_DEBOUNCE_N = 3;
+    constexpr uint32_t RELEASE_COOLDOWN_MS = 80;
+
+    uint32_t now = millis();
 
     if (_is_pressed) {
         if (raw_pressed) {
@@ -121,36 +136,23 @@ bool gt911_touch::getTouch(uint16_t *x, uint16_t *y)
             return true;
         }
         _is_pressed = false;
-        _press_streak = 0;
         _release_streak = 0;
+        _released_at_ms = now;
         return false;
     }
 
-    // Not currently pressed -- require PRESS_DEBOUNCE_N consecutive reads at
-    // consistent coordinates (within ~20px) before confirming a new press.
-    // A jump past the tolerance restarts the debounce window (rather than
-    // rejecting outright) so a genuine fast drag just costs one dropped
-    // sample, not a stuck touch.
-    if (!raw_pressed) {
-        _press_streak = 0;
+    if (!raw_pressed) return false;
+
+    if (now - _released_at_ms < RELEASE_COOLDOWN_MS) {
+        // Still inside the post-release cooldown -- almost certainly
+        // rebound from the touch that just ended, not a new tap.
         return false;
     }
-
-    int dx = (int)rx - (int)_cand_x, dy = (int)ry - (int)_cand_y;
-    if (_press_streak == 0 || dx * dx + dy * dy > 400) {
-        _press_streak = 1;
-        _cand_x = rx;
-        _cand_y = ry;
-        return false;
-    }
-
-    _press_streak++;
-    _cand_x = rx;
-    _cand_y = ry;
-    if (_press_streak < PRESS_DEBOUNCE_N) return false;
 
     _is_pressed = true;
     _release_streak = 0;
+    _cand_x = rx;
+    _cand_y = ry;
     *x = rx;
     *y = ry;
     return true;

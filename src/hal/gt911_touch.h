@@ -17,10 +17,10 @@ private:
     int8_t _sda, _scl, _rst, _int;
     bool _ready = false;
     // Debounce state for getTouch() -- see its .cpp comment.
-    uint8_t _press_streak = 0;
     uint16_t _cand_x = 0, _cand_y = 0;
     bool _is_pressed = false;
     uint8_t _release_streak = 0;
+    uint32_t _released_at_ms = 0;
 };
 
 #endif
