@@ -44,12 +44,18 @@ send_line() {
 }
 
 # Reads one line from fd 3 with a timeout, stripping any trailing \r.
-# Empty output means "no response" (timed out).
+# Empty output means "no response" (timed out). The `|| true` matters under
+# `set -e`: `read -t` returns non-zero on timeout, and since every caller of
+# this function uses it as a plain `resp=$(read_response ...)` assignment
+# (not inside an `if`/`&&`), an unguarded timeout would silently kill the
+# entire script right there -- no error message, the menu just vanishes.
+# ADD_WAYPOINT's synchronous NVS write (slower the more locations are
+# already saved -- see the project backlog's cyan-flash-on-NVS-write entry)
+# was the one most likely to occasionally miss the window and trip this.
 read_response() {
     local timeout="$1" resp=""
-    if IFS= read -r -t "$timeout" resp <&3; then
-        printf '%s' "${resp%$'\r'}"
-    fi
+    IFS= read -r -t "$timeout" resp <&3 || true
+    printf '%s' "${resp%$'\r'}"
 }
 
 # Reads and prints one response line, with a clear message if it timed out.
@@ -99,6 +105,62 @@ detect_port() {
     exit 1
 }
 
+# Sends REBOOT, closes the current connection, then reconnects on the same
+# port -- so the menu loop has a live fd again instead of one talking to a
+# device that's mid-boot or briefly gone. Retries the PING-probe for up to
+# ~15s (USB CDC re-enumeration timing varies) rather than assuming a single
+# fixed delay is always enough.
+reboot_and_reconnect() {
+    echo "Rebooting device to apply changes..."
+    send_line "REBOOT"
+    show_response
+    exec 3<&- 2>/dev/null; exec 3>&- 2>/dev/null
+
+    local tries=0
+    while (( tries < 15 )); do
+        sleep 1
+        tries=$((tries + 1))
+        if [[ -e "$PORT" ]] && probe_port "$PORT"; then
+            configure_stty "$PORT"
+            exec 3<>"$PORT"
+            echo "Reconnected."
+            return 0
+        fi
+    done
+
+    echo "Could not reconnect to $PORT after reboot -- if it re-enumerated" >&2
+    echo "under a different name, re-run this script." >&2
+    exit 1
+}
+
+# ---- setup steps, shared by the standalone menu items and the wizard ----
+
+do_set_token() {
+    read -r -s -p "Paste your airportdb.io token: " token
+    echo ""
+    send_line "TOKEN=$token"
+    show_response
+}
+
+do_set_wifi() {
+    read -r -p "WiFi SSID: " ssid
+    send_line "WIFI_SSID=$ssid"
+    show_response
+    read -r -s -p "WiFi password: " pass
+    echo ""
+    send_line "WIFI_PASS=$pass"
+    show_response
+}
+
+do_add_location() {
+    read -r -p "Location name (short, no '|'): " loc_name
+    read -r -p "Latitude: " loc_lat
+    read -r -p "Longitude: " loc_lon
+    read -r -p "Elevation (ft): " loc_elev
+    send_line "ADD_WAYPOINT=${loc_name}|${loc_lat}|${loc_lon}|${loc_elev}"
+    show_response
+}
+
 # ---- menu ---------------------------------------------------------------
 
 echo "ADS-B Display -- device configuration"
@@ -116,33 +178,21 @@ while true; do
     echo "3) Add a saved location (name/lat/lon/elevation)"
     echo "4) Factory reset (erase all settings and saved locations)"
     echo "5) Update firmware  [not yet supported by this firmware]"
+    echo "6) First-time setup wizard (WiFi + token + one location)"
     echo "0) Exit"
     read -r -p "Choose an option: " choice
 
     case "$choice" in
         1)
-            read -r -s -p "Paste your airportdb.io token: " token
-            echo ""
-            send_line "TOKEN=$token"
-            show_response
+            do_set_token
             ;;
         2)
-            read -r -p "WiFi SSID: " ssid
-            send_line "WIFI_SSID=$ssid"
-            show_response
-            read -r -s -p "WiFi password: " pass
-            echo ""
-            send_line "WIFI_PASS=$pass"
-            show_response
-            echo "Reboot the device (power cycle) to apply."
+            do_set_wifi
+            reboot_and_reconnect
             ;;
         3)
-            read -r -p "Location name (short, no '|'): " loc_name
-            read -r -p "Latitude: " loc_lat
-            read -r -p "Longitude: " loc_lon
-            read -r -p "Elevation (ft): " loc_elev
-            send_line "ADD_WAYPOINT=${loc_name}|${loc_lat}|${loc_lon}|${loc_elev}"
-            show_response
+            do_add_location
+            echo "Applied immediately -- no reboot needed."
             ;;
         4)
             read -r -p "This will ERASE ALL settings and saved locations. Type YES to confirm: " confirm
@@ -157,6 +207,24 @@ while true; do
             ;;
         5)
             echo "Not yet supported -- see the OTA-updates item in the project backlog."
+            ;;
+        6)
+            echo ""
+            echo "== First-time setup wizard =="
+            echo "Walks through WiFi, your airportdb.io token, and one saved"
+            echo "location, then reboots the device once at the end."
+            echo ""
+            echo "-- WiFi --"
+            do_set_wifi
+            echo ""
+            echo "-- airportdb.io token --"
+            do_set_token
+            echo ""
+            echo "-- First saved location --"
+            do_add_location
+            echo ""
+            reboot_and_reconnect
+            echo "Setup complete."
             ;;
         0)
             break

@@ -66,6 +66,15 @@ static void handle_line(char *line) {
                 Serial.printf("ERR %s\n", err);
             }
         }
+    } else if (strcmp(line, "REBOOT") == 0) {
+        // Non-destructive restart -- distinct from FACTORY_RESET=CONFIRM,
+        // which also wipes settings. Exists so config scripts can apply
+        // WiFi-credential changes (only read at boot) without asking the
+        // user to physically power-cycle the device.
+        Serial.println("OK Rebooting...");
+        Serial.flush();
+        delay(200); // let the OK line actually flush over USB CDC before reset
+        ESP.restart();
     } else if (strcmp(line, "FACTORY_RESET=CONFIRM") == 0) {
         // Requires the exact confirm string, not just "FACTORY_RESET" --
         // this is destructive (wipes every saved setting and location) and
@@ -78,7 +87,7 @@ static void handle_line(char *line) {
         delay(200); // let the OK line actually flush over USB CDC before reset
         ESP.restart();
     } else {
-        Serial.println("ERR Unknown command. Supported: PING, TOKEN=, WIFI_SSID=, WIFI_PASS=, ADD_WAYPOINT=, FACTORY_RESET=CONFIRM");
+        Serial.println("ERR Unknown command. Supported: PING, TOKEN=, WIFI_SSID=, WIFI_PASS=, ADD_WAYPOINT=, REBOOT, FACTORY_RESET=CONFIRM");
     }
 }
 
