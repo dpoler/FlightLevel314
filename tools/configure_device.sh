@@ -26,7 +26,12 @@ CMD_TIMEOUT=5
 # ---- serial helpers ---------------------------------------------------
 
 find_candidate_ports() {
-    ls /dev/cu.usbmodem* /dev/cu.usbserial* /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true
+    # /dev/cu.wchusbserial* covers the WCH CH34x-family USB-serial chip
+    # (e.g. CrowPanel's onboard bridge) -- macOS gives it a distinct port
+    # name from the usbserial/usbmodem patterns already here, so without it
+    # detect_port() reports "No serial devices found" on that hardware even
+    # with the board plugged in and fully working.
+    ls /dev/cu.usbmodem* /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true
 }
 
 configure_stty() {
@@ -103,13 +108,28 @@ show_response() {
 # Opens `port`, sends PING, checks for "OK PONG", closes. Used only during
 # auto-detection to find the right port among possibly several connected
 # USB-serial devices -- the main menu session opens its own long-lived fd.
+#
+# Retries PING for up to ~12s rather than one 2s attempt: opening a USB-
+# serial port wired the same way esptool expects (DTR/RTS -> EN/IO0, which
+# this board's WCH bridge is) typically resets the board right as the OS
+# opens the device, same as it does before flashing. A single 2s PING_TIMEOUT
+# window landed entirely inside that reboot -- LCD/touch/LVGL init alone
+# takes longer than that before loop()'s serial_config_poll() is even
+# running -- so probe_port() reported "no response" even though the board
+# was fine and would have answered a few seconds later. reboot_and_reconnect()
+# already handles this same situation (device reboots, needs time to come
+# back) with a multi-second retry loop; this just applies the same idea here.
 probe_port() {
     local port="$1"
     configure_stty "$port" 2>/dev/null || return 1
     exec 3<>"$port"
-    send_line "PING"
-    local resp
-    resp=$(read_response "$PING_TIMEOUT")
+    local resp="" tries=0
+    while (( tries < 6 )); do
+        send_line "PING"
+        resp=$(read_response "$PING_TIMEOUT")
+        [[ "$resp" == OK* ]] && break
+        tries=$((tries + 1))
+    done
     exec 3<&-; exec 3>&-
     [[ "$resp" == OK* ]]
 }

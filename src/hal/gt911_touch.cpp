@@ -83,9 +83,77 @@ bool gt911_touch::getTouch(uint16_t *x, uint16_t *y)
 {
     if (!_ready) return false;
     esp_lcd_touch_read_data(tp);
-    bool touchpad_pressed = esp_lcd_touch_get_coordinates(tp, x, y, touch_strength, &touch_cnt, 1);
+    uint16_t rx, ry;
+    bool raw_pressed = esp_lcd_touch_get_coordinates(tp, &rx, &ry, touch_strength, &touch_cnt, 1);
 
-    return touchpad_pressed;
+    // Debounce both edges. On the CrowPanel board this touch controller
+    // exhibits real contact chatter/bounce: a single, continuous physical
+    // tap gets reported as pressed / briefly released / pressed again for a
+    // sample or two, not just coordinate noise. Debouncing only the press
+    // side (as a first pass here did) doesn't fix that -- each mid-tap
+    // bounce was read as a genuine release, so LVGL saw a full press-
+    // release-press cycle and fired multiple clicks for one physical tap
+    // ("one tap, multiple hits", confirmed on real hardware, no particular
+    // screen-location pattern -- consistent with bounce, not e.g. edge
+    // coupling). Fix: once a press is confirmed, a raw "released" sample
+    // has to persist for RELEASE_DEBOUNCE_N consecutive reads before it's
+    // reported as a real release -- a bounce blip within that window is
+    // bridged over using the last known coordinates instead.
+    constexpr uint8_t PRESS_DEBOUNCE_N = 2;
+    constexpr uint8_t RELEASE_DEBOUNCE_N = 3;
+
+    if (_is_pressed) {
+        if (raw_pressed) {
+            _release_streak = 0;
+            _cand_x = rx;
+            _cand_y = ry;
+            *x = rx;
+            *y = ry;
+            return true;
+        }
+        // Raw release while we think we're pressed -- could be a real lift,
+        // could be bounce. Bridge over it with the last known coordinates
+        // until it's persisted long enough to trust.
+        _release_streak++;
+        if (_release_streak < RELEASE_DEBOUNCE_N) {
+            *x = _cand_x;
+            *y = _cand_y;
+            return true;
+        }
+        _is_pressed = false;
+        _press_streak = 0;
+        _release_streak = 0;
+        return false;
+    }
+
+    // Not currently pressed -- require PRESS_DEBOUNCE_N consecutive reads at
+    // consistent coordinates (within ~20px) before confirming a new press.
+    // A jump past the tolerance restarts the debounce window (rather than
+    // rejecting outright) so a genuine fast drag just costs one dropped
+    // sample, not a stuck touch.
+    if (!raw_pressed) {
+        _press_streak = 0;
+        return false;
+    }
+
+    int dx = (int)rx - (int)_cand_x, dy = (int)ry - (int)_cand_y;
+    if (_press_streak == 0 || dx * dx + dy * dy > 400) {
+        _press_streak = 1;
+        _cand_x = rx;
+        _cand_y = ry;
+        return false;
+    }
+
+    _press_streak++;
+    _cand_x = rx;
+    _cand_y = ry;
+    if (_press_streak < PRESS_DEBOUNCE_N) return false;
+
+    _is_pressed = true;
+    _release_streak = 0;
+    *x = rx;
+    *y = ry;
+    return true;
 }
 
 void gt911_touch::set_rotation(uint8_t r){

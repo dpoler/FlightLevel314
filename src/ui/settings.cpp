@@ -9,6 +9,7 @@ static lv_obj_t *_overlay = nullptr;
 static lv_obj_t *_panel = nullptr;
 static lv_obj_t *_keyboard = nullptr;
 static bool _visible = false;
+static uint32_t _shown_at_ms = 0;
 
 // Text areas
 static lv_obj_t *_ta_ssid = nullptr;
@@ -166,9 +167,14 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
 
-    // Tap overlay background to close
+    // Tap overlay background to close. The _shown_at_ms grace window guards
+    // against the panel closing on the same tap that opened it -- on the
+    // CrowPanel board's touch hardware, a single physical tap on the gear
+    // icon was sometimes producing a second, near-immediate CLICKED event
+    // that landed on the overlay once it appeared over the same screen
+    // location, closing the panel before it was ever visible to the user.
     lv_obj_add_event_cb(_overlay, [](lv_event_t *e) {
-        if (lv_event_get_target_obj(e) == _overlay) settings_hide();
+        if (lv_event_get_target_obj(e) == _overlay && millis() - _shown_at_ms > 400) settings_hide();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Settings panel (centered)
@@ -319,6 +325,7 @@ void settings_init(lv_obj_t *parent) {
 void settings_show() {
     if (_visible) return;
     _visible = true;
+    _shown_at_ms = millis();
 
     // Reload config in case it changed
     _cfg = storage_load_config();
