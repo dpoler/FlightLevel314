@@ -472,7 +472,6 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
 
     if (!icao || !icao[0]) return fail("no ICAO given");
     if (_count >= MAX_LOCATIONS) return fail("location list full");
-    if (!g_config.airportdb_token[0]) return fail("no airportdb.io token set");
 
     char icao_upper[LOC_ICAO_LEN] = {};
     strlcpy(icao_upper, icao, sizeof(icao_upper));
@@ -484,7 +483,34 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
     }
 
     Location loc;
-    if (!fetch_airport_data(icao_upper, loc, err, err_size)) return false;
+    if (!g_config.airportdb_token[0]) {
+        // No token set -- can't fetch runway geometry, but that shouldn't
+        // block adding the airport outright (runway_count == 0 is already a
+        // normal state elsewhere: a plain waypoint, or a fetch that hasn't
+        // completed yet). Fall back to the static large/medium glyph DB
+        // (tools/generate_airports_db.py, compiled in independently of any
+        // token) for coordinates -- it's the same DB the nearby-airports
+        // scan above already reads, just no runway data in it by design.
+#if HAS_AIRPORTS_DB
+        bool found = false;
+        for (int i = 0; i < AIRPORTS_DB_COUNT; i++) {
+            if (strcmp(airports_db[i].icao, icao_upper) == 0) {
+                loc = Location{};
+                strlcpy(loc.icao, icao_upper, sizeof(loc.icao));
+                strlcpy(loc.name, icao_upper, sizeof(loc.name));
+                loc.lat = airports_db[i].lat;
+                loc.lon = airports_db[i].lon;
+                found = true;
+                break;
+            }
+        }
+        if (!found) return fail("no airportdb.io token set, and this airport isn't in the static database");
+#else
+        return fail("no airportdb.io token set");
+#endif
+    } else if (!fetch_airport_data(icao_upper, loc, err, err_size)) {
+        return false;
+    }
 
     _locations[_count++] = loc;
     save_all();
