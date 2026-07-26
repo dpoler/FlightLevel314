@@ -20,7 +20,10 @@
 //   WIFI_PASS=<value>         -- WiFi password (takes effect after reboot)
 //   ADD_WAYPOINT=<name>|<lat>|<lon>|<elevation_ft>
 //                             -- adds a saved waypoint location (pipe-delimited,
-//                                not comma, so name can contain a comma)
+//                                not comma, so name can contain a comma).
+//                                Applies immediately -- no reboot needed.
+//   REBOOT                    -- non-destructive restart, e.g. to apply WiFi
+//                                credentials (only read at boot).
 //   FACTORY_RESET=CONFIRM     -- erases all settings + saved locations, reboots.
 //                                Exact confirm string required on purpose --
 //                                this is destructive and this protocol is

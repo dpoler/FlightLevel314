@@ -92,6 +92,56 @@ function Read-PlainText {
     }
 }
 
+# Sends REBOOT, closes the current connection, then reconnects on the same
+# port name -- so the menu loop has a live port object again instead of one
+# talking to a device that's mid-boot or briefly gone. Retries for up to
+# ~15s rather than assuming a single fixed delay is always enough. Writes
+# to $script:port so the caller's variable is updated in place.
+function Invoke-RebootAndReconnect {
+    param([string]$PortName)
+    Write-Host "Rebooting device to apply changes..."
+    Show-Response $script:port "REBOOT"
+    $script:port.Close()
+
+    $tries = 0
+    while ($tries -lt 15) {
+        Start-Sleep -Seconds 1
+        $tries++
+        if (Test-DevicePort $PortName) {
+            $newPort = New-DevicePort $PortName $CmdTimeoutMs
+            $newPort.Open()
+            $script:port = $newPort
+            Write-Host "Reconnected."
+            return
+        }
+    }
+
+    Write-Host "Could not reconnect to $PortName after reboot -- if it re-enumerated under a different name, re-run this script." -ForegroundColor Red
+    exit 1
+}
+
+# ---- setup steps, shared by the standalone menu items and the wizard ----
+
+function Set-DeviceToken {
+    $token = Read-PlainText "Paste your airportdb.io token"
+    Show-Response $script:port "TOKEN=$token"
+}
+
+function Set-DeviceWifi {
+    $ssid = Read-Host "WiFi SSID"
+    Show-Response $script:port "WIFI_SSID=$ssid"
+    $pass = Read-PlainText "WiFi password"
+    Show-Response $script:port "WIFI_PASS=$pass"
+}
+
+function Add-DeviceLocation {
+    $locName = Read-Host "Location name (short, no '|')"
+    $locLat = Read-Host "Latitude"
+    $locLon = Read-Host "Longitude"
+    $locElev = Read-Host "Elevation (ft)"
+    Show-Response $script:port "ADD_WAYPOINT=$locName|$locLat|$locLon|$locElev"
+}
+
 # ---- menu -----------------------------------------------------------------
 
 Write-Host "ADS-B Display -- device configuration"
@@ -110,27 +160,21 @@ try {
         Write-Host "3) Add a saved location (name/lat/lon/elevation)"
         Write-Host "4) Factory reset (erase all settings and saved locations)"
         Write-Host "5) Update firmware  [not yet supported by this firmware]"
+        Write-Host "6) First-time setup wizard (WiFi + token + one location)"
         Write-Host "0) Exit"
         $choice = Read-Host "Choose an option"
 
         switch ($choice) {
             "1" {
-                $token = Read-PlainText "Paste your airportdb.io token"
-                Show-Response $port "TOKEN=$token"
+                Set-DeviceToken
             }
             "2" {
-                $ssid = Read-Host "WiFi SSID"
-                Show-Response $port "WIFI_SSID=$ssid"
-                $pass = Read-PlainText "WiFi password"
-                Show-Response $port "WIFI_PASS=$pass"
-                Write-Host "Reboot the device (power cycle) to apply."
+                Set-DeviceWifi
+                Invoke-RebootAndReconnect $portName
             }
             "3" {
-                $locName = Read-Host "Location name (short, no '|')"
-                $locLat = Read-Host "Latitude"
-                $locLon = Read-Host "Longitude"
-                $locElev = Read-Host "Elevation (ft)"
-                Show-Response $port "ADD_WAYPOINT=$locName|$locLat|$locLon|$locElev"
+                Add-DeviceLocation
+                Write-Host "Applied immediately -- no reboot needed."
             }
             "4" {
                 $confirm = Read-Host "This will ERASE ALL settings and saved locations. Type YES to confirm"
@@ -144,6 +188,24 @@ try {
             }
             "5" {
                 Write-Host "Not yet supported -- see the OTA-updates item in the project backlog."
+            }
+            "6" {
+                Write-Host ""
+                Write-Host "== First-time setup wizard =="
+                Write-Host "Walks through WiFi, your airportdb.io token, and one saved"
+                Write-Host "location, then reboots the device once at the end."
+                Write-Host ""
+                Write-Host "-- WiFi --"
+                Set-DeviceWifi
+                Write-Host ""
+                Write-Host "-- airportdb.io token --"
+                Set-DeviceToken
+                Write-Host ""
+                Write-Host "-- First saved location --"
+                Add-DeviceLocation
+                Write-Host ""
+                Invoke-RebootAndReconnect $portName
+                Write-Host "Setup complete."
             }
             "0" {
                 break menu
