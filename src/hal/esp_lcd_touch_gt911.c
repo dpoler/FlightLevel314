@@ -138,6 +138,22 @@ static esp_err_t esp_lcd_touch_gt911_read_data(esp_lcd_touch_handle_t tp)
         touch_cnt = buf[0] & 0x0f;
         if (touch_cnt > 5 || touch_cnt == 0) {
             touch_gt911_i2c_write(tp, ESP_LCD_TOUCH_GT911_READ_XY_REG, clear);
+            // touch_cnt == 0 here means the chip flagged "ready" AND
+            // explicitly reported zero touches -- its real release signal,
+            // distinct from the (buf[0] & 0x80) == 0x00 "nothing new to
+            // report" case above, which correctly leaves tp->data.points
+            // alone. Missing this the first time (see get_xy()'s comment
+            // for the full story) meant NOTHING ever cleared a stale
+            // touches-in-progress count back to 0 after a real release --
+            // esp_lcd_touch_get_coordinates() would report the touch as
+            // permanently held at its last real position forever, freezing
+            // touch entirely and (via main.cpp's touch_active, which views
+            // read to skip heavy per-frame rendering while a touch is in
+            // progress) any animation gated on "not currently touched," e.g.
+            // Radar's sweep arm.
+            portENTER_CRITICAL(&tp->data.lock);
+            tp->data.points = 0;
+            portEXIT_CRITICAL(&tp->data.lock);
             return ESP_OK;
         }
 
@@ -168,6 +184,22 @@ static esp_err_t esp_lcd_touch_gt911_read_data(esp_lcd_touch_handle_t tp)
     return ESP_OK;
 }
 
+// Upstream bug (espressif/esp-bsp#501, fixed in commit d0b7610): this used to
+// unconditionally zero tp->data.points at the end of every call, "invalidate"
+// meaning "consumed." But esp_lcd_touch_gt911_read_data() only touches
+// tp->data.points when the GT911's own data-ready flag is set -- the chip
+// doesn't necessarily re-flag "ready" on every single poll during a
+// sustained, unchanged touch. Combined, a real continuous physical touch
+// could get reported as released for one or more polls purely because the
+// chip's ready-flag cadence didn't line up with ours, nothing to do with
+// actual contact/bounce. That's a very plausible driver-level explanation
+// for the "one tap, multiple hits" chatter this board's touch showed
+// (gt911_touch.cpp's software debounce was written to work around exactly
+// that symptom, before this root cause was found upstream). Matches the
+// merged fix exactly: read_data() already unconditionally overwrites
+// tp->data.points with the real count whenever it does see fresh data, so
+// simply not zeroing it here means stale-but-still-valid state survives
+// polls where the chip had nothing new to report.
 static bool esp_lcd_touch_gt911_get_xy(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y, uint16_t *strength, uint8_t *point_num, uint8_t max_point_num)
 {
     assert(tp != NULL);
@@ -188,9 +220,6 @@ static bool esp_lcd_touch_gt911_get_xy(esp_lcd_touch_handle_t tp, uint16_t *x, u
             strength[i] = tp->data.coords[i].strength;
         }
     }
-
-    /* Invalidate */
-    tp->data.points = 0;
 
     portEXIT_CRITICAL(&tp->data.lock);
 
