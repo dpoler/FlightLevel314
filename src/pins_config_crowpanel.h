@@ -67,6 +67,17 @@
 #define SD_CLK 43
 #define SD_D0  39
 
+// No Ethernet on this board (Elecrow's spec sheet lists no PHY) -- see
+// platformio.ini's [env:crowpanel] comment for why -DUSE_ETHERNET stays
+// undefined there. That alone keeps fetcher.cpp's actual Ethernet code
+// path compiled out safely, but settings.cpp's "Ethernet" switch itself
+// is unconditional (not gated on USE_ETHERNET) -- confirmed harmless to
+// leave as-is for now (toggling it just sets an inert g_config bool with
+// zero runtime effect once USE_ETHERNET is undefined, verified by reading
+// fetcher.cpp's #if defined(USE_ETHERNET)/#else structure), but it'll
+// still show a switch that does nothing on this board's Settings screen,
+// worth hiding per-board eventually rather than leaving as a UI wart.
+
 // WiFi C6 (ESP-Hosted SDIO). The actual SDIO CMD/CLK/D0/D1/bus-width pins
 // are NOT set here -- unlike jc1060 (where they're the pioarduino board
 // variant's own defaults, this app never overrides them), this board
