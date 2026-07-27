@@ -44,6 +44,7 @@ typedef bsp_lcd_handles_t board_lcd_handles_t;
 #include "data/enrichment.h"
 #include "data/locations.h"
 #include "data/serial_config.h"
+#include "data/ota.h"
 
 // Global touch state — read by view timers to defer heavy rendering during interaction
 volatile bool touch_active = false;
@@ -67,6 +68,18 @@ static uint16_t *buf1;
 // file's existing `touch_active`.
 static volatile bool _flush_pending = false;
 static volatile uint32_t _flush_started_at_ms = 0;
+
+// Full-screen static message shown while an OTA download is in progress --
+// see loop()'s ota_status handling below. Map/Radar/Stats etc. all keep
+// redrawing via their own LVGL timers throughout a download unless
+// something stops them, and that concurrent redraw/flush traffic racing
+// the flash write is the leading suspect for the bad visual glitching seen
+// during a real update (this board's known PSRAM/DMA cache-coherency
+// erratum, see README's Known Issues -- same root cause as the no-photos
+// limitation). Freezing everything to one static frame removes that
+// traffic instead of just living with it.
+static lv_obj_t *_ota_overlay = nullptr;
+static OtaStatus _last_ota_status = OTA_IDLE;
 
 // Display flush callback
 static void disp_flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *color_map) {
@@ -246,6 +259,34 @@ void setup() {
     settings_init(screen);
     Serial.println("settings OK");
 
+    // OTA-in-progress overlay -- see loop()'s freeze/unfreeze handling and
+    // the comment by _ota_overlay's declaration above. Created hidden,
+    // fully opaque (unlike Settings' own semi-transparent overlay), and
+    // moved to the very front so it's guaranteed to cover whatever view or
+    // panel happens to be open when a download starts.
+    _ota_overlay = lv_obj_create(screen);
+    lv_obj_set_size(_ota_overlay, LCD_H_RES, LCD_V_RES);
+    lv_obj_set_pos(_ota_overlay, 0, 0);
+    lv_obj_set_style_bg_color(_ota_overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(_ota_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_ota_overlay, 0, 0);
+    lv_obj_set_style_radius(_ota_overlay, 0, 0);
+    lv_obj_clear_flag(_ota_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(_ota_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(_ota_overlay, LV_OBJ_FLAG_HIDDEN);
+    {
+        lv_obj_t *lbl = lv_label_create(_ota_overlay);
+        lv_label_set_text(lbl,
+            "Updating Firmware\n\n"
+            "The screen will stay like this until it's done.\n"
+            "Do not unplug the device.\n\n"
+            "It will restart automatically when finished.");
+        lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_center(lbl);
+    }
+
     status_bar_set_gear_callback([](lv_event_t *e) {
         settings_show();
     });
@@ -357,6 +398,29 @@ void setup() {
 }
 
 void loop() {
+    // OTA freeze/unfreeze -- plain loop() code, not an LVGL timer, so this
+    // keeps running (and can detect the download ending) even while
+    // lv_timer_enable(false) below has paused everything else. OTA_DONE
+    // isn't handled as an "unfreeze" case -- ota.cpp calls ESP.restart()
+    // itself right after reaching it, so the device reboots into the new
+    // image before this would ever need to recover from that state.
+    OtaStatus cur_ota_status = ota_status;
+    if (cur_ota_status != _last_ota_status) {
+        if (cur_ota_status == OTA_DOWNLOADING) {
+            Serial.println("[OTA] Freezing UI for firmware download");
+            lv_obj_move_foreground(_ota_overlay);
+            lv_obj_clear_flag(_ota_overlay, LV_OBJ_FLAG_HIDDEN);
+            lv_refr_now(NULL); // flush the message once before freezing
+            lv_timer_enable(false);
+        } else if (_last_ota_status == OTA_DOWNLOADING) {
+            Serial.println("[OTA] Update failed -- unfreezing UI");
+            lv_timer_enable(true);
+            lv_obj_add_flag(_ota_overlay, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_invalidate(lv_screen_active());
+        }
+        _last_ota_status = cur_ota_status;
+    }
+
     lv_timer_handler();
     serial_config_poll();
 
