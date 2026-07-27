@@ -42,7 +42,7 @@ static settings_changed_cb_t _on_change = nullptr;
 // -- this stays a centered modal since WiFi credential entry benefits
 // from more room for the on-screen keyboard than a 270px popover gives.
 #define PANEL_W 370
-#define PANEL_H 500
+#define PANEL_H 560
 #define FIELD_W 280
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
