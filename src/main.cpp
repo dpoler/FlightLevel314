@@ -69,17 +69,23 @@ static uint16_t *buf1;
 static volatile bool _flush_pending = false;
 static volatile uint32_t _flush_started_at_ms = 0;
 
-// Full-screen static message shown while an OTA download is in progress --
-// see loop()'s ota_status handling below. Map/Radar/Stats etc. all keep
-// redrawing via their own LVGL timers throughout a download unless
-// something stops them, and that concurrent redraw/flush traffic racing
-// the flash write is the leading suspect for the bad visual glitching seen
-// during a real update (this board's known PSRAM/DMA cache-coherency
-// erratum, see README's Known Issues -- same root cause as the no-photos
-// limitation). Freezing everything to one static frame removes that
-// traffic instead of just living with it.
+// Full-screen message + progress bar shown while an OTA download is in
+// progress -- see loop()'s ota_status handling below. Map/Radar/Stats etc.
+// all keep redrawing via their own LVGL timers throughout a download
+// unless something stops them, and that concurrent redraw/flush traffic
+// racing the flash write is the leading suspect for the bad visual
+// glitching seen during a real update (this board's known PSRAM/DMA
+// cache-coherency erratum, see README's Known Issues -- same root cause as
+// the no-photos limitation). Freezing every *other* timer still cuts that
+// traffic down a lot, but the progress bar itself needs its own periodic
+// flush to actually move -- see the _last_shown_progress handling in
+// loop() -- so some flashing during the update is expected and called out
+// in the message itself rather than chasing a fully flash-free update.
 static lv_obj_t *_ota_overlay = nullptr;
+static lv_obj_t *_ota_bar = nullptr;
+static lv_obj_t *_ota_pct_lbl = nullptr;
 static OtaStatus _last_ota_status = OTA_IDLE;
+static int _last_shown_progress = -1;
 
 // Display flush callback
 static void disp_flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *color_map) {
@@ -278,13 +284,29 @@ void setup() {
         lv_obj_t *lbl = lv_label_create(_ota_overlay);
         lv_label_set_text(lbl,
             "Updating Firmware\n\n"
-            "The screen will stay like this until it's done.\n"
-            "Do not unplug the device.\n\n"
+            "The screen may flash rapidly and unpredictably --\n"
+            "this is expected and harmless. Do not unplug.\n\n"
             "It will restart automatically when finished.");
         lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(lbl);
+        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -60);
+
+        _ota_bar = lv_bar_create(_ota_overlay);
+        lv_obj_set_size(_ota_bar, 400, 24);
+        lv_obj_align(_ota_bar, LV_ALIGN_CENTER, 0, 30);
+        lv_obj_set_style_bg_color(_ota_bar, lv_color_hex(0x1a1a3a), 0);
+        lv_obj_set_style_bg_opa(_ota_bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(_ota_bar, lv_color_hex(0x00cc66), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_opa(_ota_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+        lv_bar_set_range(_ota_bar, 0, 100);
+        lv_bar_set_value(_ota_bar, 0, LV_ANIM_OFF);
+
+        _ota_pct_lbl = lv_label_create(_ota_overlay);
+        lv_label_set_text(_ota_pct_lbl, "0%");
+        lv_obj_set_style_text_color(_ota_pct_lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(_ota_pct_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_align(_ota_pct_lbl, LV_ALIGN_CENTER, 0, 64);
     }
 
     status_bar_set_gear_callback([](lv_event_t *e) {
@@ -408,10 +430,13 @@ void loop() {
     if (cur_ota_status != _last_ota_status) {
         if (cur_ota_status == OTA_DOWNLOADING) {
             Serial.println("[OTA] Freezing UI for firmware download");
+            lv_bar_set_value(_ota_bar, 0, LV_ANIM_OFF);
+            lv_label_set_text(_ota_pct_lbl, "0%");
             lv_obj_move_foreground(_ota_overlay);
             lv_obj_clear_flag(_ota_overlay, LV_OBJ_FLAG_HIDDEN);
             lv_refr_now(NULL); // flush the message once before freezing
             lv_timer_enable(false);
+            _last_shown_progress = 0;
         } else if (_last_ota_status == OTA_DOWNLOADING) {
             Serial.println("[OTA] Update failed -- unfreezing UI");
             lv_timer_enable(true);
@@ -419,6 +444,21 @@ void loop() {
             lv_obj_invalidate(lv_screen_active());
         }
         _last_ota_status = cur_ota_status;
+    }
+
+    // Progress bar -- lv_timer_enable(false) above stops LVGL's own
+    // periodic refresh along with everything else, so a bar update needs
+    // its own explicit lv_refr_now() to actually reach the panel. This is
+    // the one deliberate exception to "freeze everything": it's real,
+    // wanted redraw traffic (see the message text warning about flashing),
+    // just throttled to once per percentage point instead of every frame.
+    if (cur_ota_status == OTA_DOWNLOADING && ota_progress != _last_shown_progress) {
+        _last_shown_progress = ota_progress;
+        lv_bar_set_value(_ota_bar, ota_progress, LV_ANIM_OFF);
+        char pct[8];
+        snprintf(pct, sizeof(pct), "%d%%", ota_progress);
+        lv_label_set_text(_ota_pct_lbl, pct);
+        lv_refr_now(NULL);
     }
 
     lv_timer_handler();
