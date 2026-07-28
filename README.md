@@ -108,16 +108,15 @@ PlatformIO will detect the project and download libraries/toolchains automatical
 
 ### Step 3: Build
 
-In VS Code with PlatformIO: click the PlatformIO icon (alien head) in the sidebar → **PROJECT TASKS > jc1060 (or crowpanel) > Build**.
+In VS Code with PlatformIO: click the PlatformIO icon (alien head) in the sidebar → **PROJECT TASKS > jc1060 > Build**.
 
 Or from the command line:
 
 ```bash
-pio run -e jc1060       # JC1060P470C, 7" — the primary, daily-use target
-pio run -e crowpanel     # Elecrow CrowPanel Advanced 10.1" — see the CrowPanel note under Known Issues
+pio run -e jc1060       # JC1060P470C, 7" — the only supported target
 ```
 
-Both are real, maintained board targets — see [Known Issues](#known-issues--limitations) for CrowPanel-specific setup, or [Adapting to Other Boards](#adapting-to-other-boards) if you're bringing up something else entirely.
+See [Adapting to Other Boards](#adapting-to-other-boards) if you're bringing up something else entirely.
 
 ### Step 4: Flash
 
@@ -260,22 +259,13 @@ This board's WiFi runs through an ESP32-C6 co-processor talking to the ESP32-P4 
 - **Even at the confirmed-good pairing, an intermittent `assert failed: sdio_rx_get_buffer` crash can still occur.** This is a confirmed **open upstream bug** in `espressif/esp-hosted-mcu` (issues [#144](https://github.com/espressif/esp-hosted-mcu/issues/144)/[#167](https://github.com/espressif/esp-hosted-mcu/issues/167)), root-caused by an Espressif engineer as DMA-capable memory fragmentation (plenty of total free heap, but no single contiguous block big enough for the SDIO driver's allocation) — not a bug in this app, and not currently fixable from application code or this project's build setup. Expect occasional unprompted reboots. If it becomes frequent, check the boot log's host/C6 version line first — a mismatch is the one contributing factor actually within reach to fix.
 - **WiFi connect-after-boot behavior**: the app fast-fails a connect attempt the moment the driver reports a terminal failure (`WL_CONNECT_FAILED`/`WL_NO_SSID_AVAIL`) instead of waiting out a fixed timeout, and paces retries with a short delay rather than hammering `WiFi.begin()` back-to-back. If WiFi seems to take unusually long after a fresh boot or a `c6_updater` run, check the serial log's `[WiFi] status -> N at Nms` lines — they show exactly what the driver reported and when.
 
-### CrowPanel (Elecrow Advanced 10.1") — read this before flashing this board
-
-`[env:crowpanel]` is a real, working second board target, but this hardware has a few real quirks worth knowing up front (full technical trail, including every dead end tried, in the project's own notes if you're modifying this port further — ask whoever maintains it):
-
-- **This board needs two USB cables, not one.** It has two physical USB connectors, labeled on the board itself: **UART0** (flashing, and the only place the ROM boot banner/low-level error logs ever show up) and **USB2.0** (this app's own Serial output and the `tools/configure_device.sh` protocol). Connect both — UART0 to flash and to see raw boot logs, USB2.0 for everything else, including `pio device monitor --port /dev/cu.usbmodemXXXX` (note the explicit `--port`; the default auto-detected port is UART0, which will never show this app's own log lines). This was investigated in depth and is a deliberate, accepted trade-off, not an oversight — collapsing to one cable hit real, hard constraints in both directions.
-- **On macOS, the USB driver needs manual approval** the first time: **System Settings → General → Login Items & Extensions → Driver Extensions**, enable `cn.wch.CH34xVCPDriver`. It won't show up in the usual "blocked software" Privacy & Security banner — this driver installs as a modern system extension, not a legacy kext, so it's easy to assume it silently failed.
-- **Upload speed is capped at 230400 baud**, not the platform default — this chip's USB-serial bridge doesn't reliably ack faster speeds once flashing starts (confirmed both here and independently by another CrowPanel project on the same chip). If uploads start failing, drop to 115200 rather than trying something faster.
-- **Host/co-processor firmware version mismatch is present but not (currently) causing crashes** — same ESP-Hosted SDIO co-processor setup as the WiFi section above, and this board's onboard C6 ships from the factory on a newer firmware version than the host expects. Watch the boot log's version line the same way; if this starts causing problems, it's a known, expected risk, not a new bug.
-
 ### Other known limitations
 
 - **No aircraft photos rendered** — PSRAM-sourced images corrupt on this board's ESP32-P4 due to a cache-coherency issue. Photo *credit* text (from planespotters.net) is shown in the detail card instead of an image.
 - **Screen may flash/glitch briefly during an OTA update** — the same ESP32-P4 cache-coherency issue behind the photo limitation above, showing up as visual tearing while `Update.write()` streams the new firmware to flash. Cosmetic only: the flash write itself isn't affected, and the device reboots normally into the new version once the download completes. Nothing to do here — let it finish.
 - **Tile cache disabled** — `lv_draw_image` has rendering issues on this board's PPA. Static pre-rendered map backgrounds are used instead (see Step 6 above).
 - **Small airports aren't in the static glyph database** — only `large_airport`/`medium_airport` (OurAirports classification, ~5,300 worldwide) are compiled in; adding ~42,700 more small airports was evaluated and deliberately declined (size/scan-cost vs. completeness). Save it explicitly by ICAO if you need one that's missing.
-- **Screensaver — and brightness control along with it — is currently dormant on both boards.** Built, then disabled pending a redesign (the original burn-in rationale doesn't apply to LCD panels; brightness/dim/blank still have standalone value but need a different design, e.g. time-of-day scheduling, which isn't implemented). The brightness backend exists and works, but its only UI is the disabled screensaver popover — there is no working brightness control today.
+- **Screensaver — and brightness control along with it — is currently dormant.** Built, then disabled pending a redesign (the original burn-in rationale doesn't apply to LCD panels; brightness/dim/blank still have standalone value but need a different design, e.g. time-of-day scheduling, which isn't implemented). The brightness backend exists and works, but its only UI is the disabled screensaver popover — there is no working brightness control today.
 - **USB CDC serial** can be unreliable on some units. Doesn't affect the display.
 
 ---

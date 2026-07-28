@@ -711,25 +711,6 @@ void fetcher_init(AircraftList *list) {
     } else
 #endif
     {
-#if defined(BOARD_CROWPANEL) && defined(CONFIG_IDF_TARGET_ESP32P4)
-        // First attempt at this (rst=32 only, D0-D3 left at arduino-esp32's
-        // precompiled default order) still hit the same sdmmc_io
-        // "sdmmc_send_cmd ... failed to read registers" timeout on real
-        // hardware. Root cause per Elecrow-RD/CrowPanel-Advanced-10.1inch-
-        // ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen GitHub issue #9
-        // (someone hit this exact "H_SDIO_DRV fault" bringing up WiFi on
-        // MicroPython for this same V1.1/V1.2 hardware, and reverse-
-        // engineered a working config): Elecrow changed the SDIO pinout
-        // between hardware revisions, and D0-D3 on V1.1/V1.2 boards are
-        // wired in REVERSE order from arduino-esp32's precompiled default
-        // (D0=14/D1=15/D2=16/D3=17) -- confirmed working values from that
-        // issue are D0=17/D1=16/D2=15/D3=14. Bus width is 4-bit (matching
-        // the precompiled default after all -- the BUS_WIDTH=1 in
-        // sdkconfig.defaults.crowpanel came from a different, apparently
-        // stale/mislabeled Elecrow example and was a red herring). Reset
-        // stays GPIO32, active-high (matches precompiled default already).
-        hostedSetPins(/*clk*/18, /*cmd*/19, /*d0*/17, /*d1*/16, /*d2*/15, /*d3*/14, /*rst*/WIFI_C6_RST);
-#endif
         // Reset C6 module on every boot to ensure clean WiFi state
         // (ESP.restart() only resets the P4, leaving C6 in a potentially bad state)
         reset_wifi_c6();

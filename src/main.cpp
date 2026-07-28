@@ -6,21 +6,9 @@
 #include "esp_heap_caps.h"
 #include "esp_ota_ops.h" // esp_ota_mark_app_valid_cancel_rollback() -- see setup()'s comment
 #include "pins_config.h"
-// Board-specific LCD panel driver -- both jd9165_lcd and ek79007_lcd expose
-// an identical method set (begin/lcd_draw_bitmap/example_bsp_set_lcd_
-// backlight/get_handle/etc, see hal/ek79007_lcd.h's header comment), so
-// aliasing the type/handle-struct names here is enough to keep every other
-// `lcd.`/`bsp_lcd_handles_t` call site below unconditional -- nothing past
-// this block needs to know which board it's building for.
-#ifdef BOARD_CROWPANEL
-#include "hal/ek79007_lcd.h"
-typedef ek79007_lcd board_lcd_t;
-typedef bsp_lcd_handles_ek79007_t board_lcd_handles_t;
-#else
 #include "hal/jd9165_lcd.h"
 typedef jd9165_lcd board_lcd_t;
 typedef bsp_lcd_handles_t board_lcd_handles_t;
-#endif
 #include "hal/gt911_touch.h"
 #include "data/aircraft.h"
 #include "data/fetcher.h"
@@ -141,19 +129,6 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 
 void setup() {
     Serial.begin(115200);
-    // TRIED adding a guarded Serial0.begin(115200) here for BOARD_CROWPANEL,
-    // chasing a one-cable way to reach the WCH-bridge/UART0 port (see
-    // serial_config.cpp's comment on why that seemed necessary at the time).
-    // Real-hardware result: the board hung completely after the ROM banner --
-    // not even Preferences.cpp's unconditional log_e line got out anymore.
-    // Best explanation: ESP-IDF's own console already owns UART0 from boot
-    // (that's how the ROM banner and log_e/ESP_LOGE lines reach that port
-    // with zero init from us); Arduino's HardwareSerial ALSO calling
-    // uart_driver_install() on the same peripheral via .begin() likely
-    // conflicts with that. Turned out to be unnecessary anyway -- CrowPanel
-    // has a second, separate USB port (labeled USB2.0 on the board) that
-    // Serial/HWCDCSerial already reaches with no changes needed; connecting
-    // a cable there is the real fix. Do not re-add Serial0.begin() here.
     Serial.println("ADS-B Display starting...");
 
     Serial.printf("Heap free: %lu  PSRAM free: %lu\n",

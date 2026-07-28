@@ -12,12 +12,7 @@
 #define GITHUB_OWNER "dpoler"
 #define GITHUB_REPO  "adsb"
 
-// Two board targets, one release -- each release must attach both assets.
-#ifdef BOARD_CROWPANEL
-#define OTA_ASSET_NAME "firmware-crowpanel.bin"
-#else
 #define OTA_ASSET_NAME "firmware-jc1060.bin"
-#endif
 
 // Same reasoning as fetcher.cpp/enrichment.cpp: NetworkClientSecure's
 // default TLS handshake timeout (120s) isn't bounded by
