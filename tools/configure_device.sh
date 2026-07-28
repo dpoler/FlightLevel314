@@ -26,12 +26,7 @@ CMD_TIMEOUT=5
 # ---- serial helpers ---------------------------------------------------
 
 find_candidate_ports() {
-    # /dev/cu.wchusbserial* covers the WCH CH34x-family USB-serial chip
-    # (e.g. CrowPanel's onboard bridge) -- macOS gives it a distinct port
-    # name from the usbserial/usbmodem patterns already here, so without it
-    # detect_port() reports "No serial devices found" on that hardware even
-    # with the board plugged in and fully working.
-    ls /dev/cu.usbmodem* /dev/cu.usbserial* /dev/cu.wchusbserial* /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true
+    ls /dev/cu.usbmodem* /dev/cu.usbserial* /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || true
 }
 
 configure_stty() {
