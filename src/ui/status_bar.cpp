@@ -18,7 +18,7 @@ static lv_obj_t *range_chip;
 static lv_obj_t *range_lbl;
 static lv_obj_t *view_chip;
 
-static const char *NAV_NAMES[] = {"MAP", "RADAR", "LIST", "STAT"};
+static const char *NAV_NAMES[] = {"MAP", "RADAR", "LIST", "INFO"};
 
 #define STATUS_BG_COLOR lv_color_hex(0x0d0d1a)
 #define STATUS_TEXT_COLOR lv_color_hex(0x888899)
