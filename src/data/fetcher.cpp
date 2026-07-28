@@ -7,6 +7,7 @@
 #include "../data/airlines.h"
 #include "../data/enrichment.h"
 #include "../data/ota.h"
+#include "../data/metar.h"
 #include "../ui/alerts.h"
 #if defined(USE_ETHERNET)
 #include <ETH.h>
@@ -662,9 +663,9 @@ static void fetch_task(void *param) {
 // Standing Data source already documented as unreliable/stale (crowd-
 // sourced, callsign-keyed, no versioning — see project_route_data memory).
 // Kept as a lightweight task purely to drive locations_add_poll()/
-// locations_nearby_poll()/enrichment_poll() on their own existing cadence,
-// rather than spawning a new task for them — see project_p4_heap_constraints
-// memory for why that matters on this board.
+// locations_nearby_poll()/enrichment_poll()/ota_poll()/metar_poll() on their
+// own existing cadence, rather than spawning a new task for them — see
+// project_p4_heap_constraints memory for why that matters on this board.
 static void location_poll_task(void *param) {
     while (!network_connected()) {
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -676,6 +677,7 @@ static void location_poll_task(void *param) {
         locations_nearby_poll(); // nearby-large-airport runway cache -- one queued fetch per tick, same cadence as locations_add_poll()
         enrichment_poll(); // detail-card aircraft/photo lookups -- see enrichment.cpp
         ota_poll(); // application-firmware update check/download -- see ota.cpp. Near-instant unless a check/update was actually requested (rare, user-triggered), in which case this tick runs long -- acceptable, see ota.h's comment.
+        metar_poll(); // nearest-station weather readout -- see metar.h. Internally rate-limited (active-location change or every 10min), near-instant otherwise.
         vTaskDelay(pdMS_TO_TICKS(1500));
     }
 }
