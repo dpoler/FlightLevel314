@@ -16,6 +16,16 @@ public:
 private:
     int8_t _sda, _scl, _rst, _int;
     bool _ready = false;
+    // Debounce state for getTouch() -- see its .cpp comment.
+    uint16_t _cand_x = 0, _cand_y = 0;
+    bool _is_pressed = false;
+    uint8_t _release_streak = 0;
+    uint32_t _released_at_ms = 0;
+    // I2C-failure recovery state for getTouch() -- see its .cpp comment.
+    uint32_t _i2c_fail_since_ms = 0;
+    bool _i2c_failing = false;
+    uint32_t _last_recover_attempt_ms = 0;
+    void reset_and_reinit();
 };
 
 #endif

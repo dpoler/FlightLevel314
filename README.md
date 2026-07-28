@@ -113,10 +113,10 @@ In VS Code with PlatformIO: click the PlatformIO icon (alien head) in the sideba
 Or from the command line:
 
 ```bash
-pio run -e jc1060
+pio run -e jc1060       # JC1060P470C, 7" — the only supported target
 ```
 
-`jc1060` is the only board target in this repo — see [Adapting to Other Boards](#adapting-to-other-boards) if you're bringing up different hardware.
+See [Adapting to Other Boards](#adapting-to-other-boards) if you're bringing up something else entirely.
 
 ### Step 4: Flash
 
@@ -262,9 +262,10 @@ This board's WiFi runs through an ESP32-C6 co-processor talking to the ESP32-P4 
 ### Other known limitations
 
 - **No aircraft photos rendered** — PSRAM-sourced images corrupt on this board's ESP32-P4 due to a cache-coherency issue. Photo *credit* text (from planespotters.net) is shown in the detail card instead of an image.
+- **Screen may flash/glitch briefly during an OTA update** — the same ESP32-P4 cache-coherency issue behind the photo limitation above, showing up as visual tearing while `Update.write()` streams the new firmware to flash. Cosmetic only: the flash write itself isn't affected, and the device reboots normally into the new version once the download completes. Nothing to do here — let it finish.
 - **Tile cache disabled** — `lv_draw_image` has rendering issues on this board's PPA. Static pre-rendered map backgrounds are used instead (see Step 6 above).
 - **Small airports aren't in the static glyph database** — only `large_airport`/`medium_airport` (OurAirports classification, ~5,300 worldwide) are compiled in; adding ~42,700 more small airports was evaluated and deliberately declined (size/scan-cost vs. completeness). Save it explicitly by ICAO if you need one that's missing.
-- **Screensaver is currently dormant** — built, then disabled pending a redesign (the original burn-in rationale doesn't apply to this board's LCD panel; brightness/dim/blank still have standalone value but need a different design, e.g. time-of-day scheduling, which isn't implemented).
+- **Screensaver — and brightness control along with it — is currently dormant.** Built, then disabled pending a redesign (the original burn-in rationale doesn't apply to LCD panels; brightness/dim/blank still have standalone value but need a different design, e.g. time-of-day scheduling, which isn't implemented). The brightness backend exists and works, but its only UI is the disabled screensaver popover — there is no working brightness control today.
 - **USB CDC serial** can be unreliable on some units. Doesn't affect the display.
 
 ---

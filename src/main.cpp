@@ -4,8 +4,11 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_heap_caps.h"
+#include "esp_ota_ops.h" // esp_ota_mark_app_valid_cancel_rollback() -- see setup()'s comment
 #include "pins_config.h"
 #include "hal/jd9165_lcd.h"
+typedef jd9165_lcd board_lcd_t;
+typedef bsp_lcd_handles_t board_lcd_handles_t;
 #include "hal/gt911_touch.h"
 #include "data/aircraft.h"
 #include "data/fetcher.h"
@@ -29,12 +32,13 @@
 #include "data/enrichment.h"
 #include "data/locations.h"
 #include "data/serial_config.h"
+#include "data/ota.h"
 
 // Global touch state — read by view timers to defer heavy rendering during interaction
 volatile bool touch_active = false;
 
 // Hardware drivers
-static jd9165_lcd lcd(LCD_RST);
+static board_lcd_t lcd(LCD_RST);
 static gt911_touch touch(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT);
 
 // Aircraft data
@@ -45,14 +49,59 @@ static lv_display_t *disp;
 static uint16_t *buf0;
 static uint16_t *buf1;
 
+// Watchdog for a dropped flush-complete event -- see flush_ready_cb's
+// comment. Plain volatiles, not a mutex: disp_flush_cb runs on the main
+// task, flush_ready_cb runs in the DPI panel's ISR context, and both only
+// ever do a single aligned write/read of these -- same pattern as this
+// file's existing `touch_active`.
+static volatile bool _flush_pending = false;
+static volatile uint32_t _flush_started_at_ms = 0;
+
+// Full-screen message + progress bar shown while an OTA download is in
+// progress -- see loop()'s ota_status handling below. Map/Radar/Stats etc.
+// all keep redrawing via their own LVGL timers throughout a download
+// unless something stops them, and that concurrent redraw/flush traffic
+// racing the flash write is the leading suspect for the bad visual
+// glitching seen during a real update (this board's known PSRAM/DMA
+// cache-coherency erratum, see README's Known Issues -- same root cause as
+// the no-photos limitation). Freezing every *other* timer still cuts that
+// traffic down a lot, but the progress bar itself needs its own periodic
+// flush to actually move -- see the _last_shown_progress handling in
+// loop() -- so some flashing during the update is expected and called out
+// in the message itself rather than chasing a fully flash-free update.
+static lv_obj_t *_ota_overlay = nullptr;
+static lv_obj_t *_ota_bar = nullptr;
+static lv_obj_t *_ota_pct_lbl = nullptr;
+static OtaStatus _last_ota_status = OTA_IDLE;
+static int _last_shown_progress = -1;
+
 // Display flush callback
 static void disp_flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *color_map) {
+    _flush_pending = true;
+    _flush_started_at_ms = millis();
     lcd.lcd_draw_bitmap(area->x1, area->y1, area->x2 + 1, area->y2 + 1, (uint16_t *)color_map);
 }
 
-// Vsync callback — signals LVGL that flush is complete
+// Vsync callback — signals LVGL that flush is complete. If this ISR is ever
+// missed (a dropped hardware event -- this exact chip already has a known
+// PSRAM cache-coherency erratum, see the "no aircraft photos" known issue --
+// or any other transient DMA/panel hiccup), lv_display_flush_ready() never
+// fires, LVGL's flush state machine waits forever, and no future frame ever
+// renders again -- silently, with nothing else in the app affected (same
+// architectural gap as the touch driver's I2C-failure case: a single missed
+// hardware completion event with no timeout anywhere). Confirmed on real
+// hardware: display goes fully blank/black after some period of otherwise-
+// normal runtime (well under an hour), independent of the touch issue.
+// loop()'s watchdog (see below) detects a flush that's been pending too
+// long and force-reboots rather than leaving the screen dead indefinitely --
+// full restart, not an attempted in-place re-init, since safely tearing
+// down and recreating the DSI bus/panel/LVGL association mid-session is far
+// riskier than the touch driver's comparatively simple I2C reinit, and this
+// project already uses a full ESP.restart() as the recovery path for other
+// confirmed-stuck subsystems (see fetcher.cpp's SDIO crash handling).
 static bool flush_ready_cb(esp_lcd_panel_handle_t panel,
     esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx) {
+    _flush_pending = false;
     lv_display_flush_ready((lv_display_t *)user_ctx);
     return false;
 }
@@ -125,7 +174,7 @@ void setup() {
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     // Register vsync callback for proper flush synchronization
-    bsp_lcd_handles_t lcd_handles;
+    board_lcd_handles_t lcd_handles;
     lcd.get_handle(&lcd_handles);
     esp_lcd_dpi_panel_event_callbacks_t cbs = {};
     cbs.on_color_trans_done = flush_ready_cb;
@@ -190,6 +239,50 @@ void setup() {
     Serial.println("settings_init...");
     settings_init(screen);
     Serial.println("settings OK");
+
+    // OTA-in-progress overlay -- see loop()'s freeze/unfreeze handling and
+    // the comment by _ota_overlay's declaration above. Created hidden,
+    // fully opaque (unlike Settings' own semi-transparent overlay), and
+    // moved to the very front so it's guaranteed to cover whatever view or
+    // panel happens to be open when a download starts.
+    _ota_overlay = lv_obj_create(screen);
+    lv_obj_set_size(_ota_overlay, LCD_H_RES, LCD_V_RES);
+    lv_obj_set_pos(_ota_overlay, 0, 0);
+    lv_obj_set_style_bg_color(_ota_overlay, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(_ota_overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_ota_overlay, 0, 0);
+    lv_obj_set_style_radius(_ota_overlay, 0, 0);
+    lv_obj_clear_flag(_ota_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(_ota_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(_ota_overlay, LV_OBJ_FLAG_HIDDEN);
+    {
+        lv_obj_t *lbl = lv_label_create(_ota_overlay);
+        lv_label_set_text(lbl,
+            "Updating Firmware\n\n"
+            "The screen may flash rapidly and unpredictably --\n"
+            "this is expected and harmless. Do not unplug.\n\n"
+            "It will restart automatically when finished.");
+        lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(lbl, LV_ALIGN_CENTER, 0, -60);
+
+        _ota_bar = lv_bar_create(_ota_overlay);
+        lv_obj_set_size(_ota_bar, 400, 24);
+        lv_obj_align(_ota_bar, LV_ALIGN_CENTER, 0, 30);
+        lv_obj_set_style_bg_color(_ota_bar, lv_color_hex(0x1a1a3a), 0);
+        lv_obj_set_style_bg_opa(_ota_bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(_ota_bar, lv_color_hex(0x00cc66), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_opa(_ota_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+        lv_bar_set_range(_ota_bar, 0, 100);
+        lv_bar_set_value(_ota_bar, 0, LV_ANIM_OFF);
+
+        _ota_pct_lbl = lv_label_create(_ota_overlay);
+        lv_label_set_text(_ota_pct_lbl, "0%");
+        lv_obj_set_style_text_color(_ota_pct_lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(_ota_pct_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_align(_ota_pct_lbl, LV_ALIGN_CENTER, 0, 64);
+    }
 
     status_bar_set_gear_callback([](lv_event_t *e) {
         settings_show();
@@ -285,11 +378,76 @@ void setup() {
     // satisfied above) -- placed here, after fetcher_init(), simply so
     // resuming into Arrivals has live data to draw on the very first frame.
     views_resume_last_view();
+
+    // Confirms this boot as good, canceling ESP-IDF's automatic OTA
+    // rollback-on-failure (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y in the
+    // precompiled sdkconfig -- confirmed, not assumed). A freshly OTA'd
+    // image (data/ota.cpp) starts in a "pending verify" state; without this
+    // call, the *next* reset for any reason -- including this board's known
+    // occasional SDIO crash-reboot, unrelated to whether the update itself
+    // was good -- would make the bootloader silently revert to the
+    // previous firmware. Reaching this line means setup() completed
+    // end-to-end (display, touch, WiFi/Ethernet init, fetcher tasks all
+    // started) without crashing, which is a reasonable bar for "this build
+    // isn't fundamentally broken" -- a no-op on any boot that wasn't a
+    // pending OTA image.
+    esp_ota_mark_app_valid_cancel_rollback();
 }
 
 void loop() {
+    // OTA freeze/unfreeze -- plain loop() code, not an LVGL timer, so this
+    // keeps running (and can detect the download ending) even while
+    // lv_timer_enable(false) below has paused everything else. OTA_DONE
+    // isn't handled as an "unfreeze" case -- ota.cpp calls ESP.restart()
+    // itself right after reaching it, so the device reboots into the new
+    // image before this would ever need to recover from that state.
+    OtaStatus cur_ota_status = ota_status;
+    if (cur_ota_status != _last_ota_status) {
+        if (cur_ota_status == OTA_DOWNLOADING) {
+            Serial.println("[OTA] Freezing UI for firmware download");
+            lv_bar_set_value(_ota_bar, 0, LV_ANIM_OFF);
+            lv_label_set_text(_ota_pct_lbl, "0%");
+            lv_obj_move_foreground(_ota_overlay);
+            lv_obj_clear_flag(_ota_overlay, LV_OBJ_FLAG_HIDDEN);
+            lv_refr_now(NULL); // flush the message once before freezing
+            lv_timer_enable(false);
+            _last_shown_progress = 0;
+        } else if (_last_ota_status == OTA_DOWNLOADING) {
+            Serial.println("[OTA] Update failed -- unfreezing UI");
+            lv_timer_enable(true);
+            lv_obj_add_flag(_ota_overlay, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_invalidate(lv_screen_active());
+        }
+        _last_ota_status = cur_ota_status;
+    }
+
+    // Progress bar -- lv_timer_enable(false) above stops LVGL's own
+    // periodic refresh along with everything else, so a bar update needs
+    // its own explicit lv_refr_now() to actually reach the panel. This is
+    // the one deliberate exception to "freeze everything": it's real,
+    // wanted redraw traffic (see the message text warning about flashing),
+    // just throttled to once per percentage point instead of every frame.
+    if (cur_ota_status == OTA_DOWNLOADING && ota_progress != _last_shown_progress) {
+        _last_shown_progress = ota_progress;
+        lv_bar_set_value(_ota_bar, ota_progress, LV_ANIM_OFF);
+        char pct[8];
+        snprintf(pct, sizeof(pct), "%d%%", ota_progress);
+        lv_label_set_text(_ota_pct_lbl, pct);
+        lv_refr_now(NULL);
+    }
+
     lv_timer_handler();
     serial_config_poll();
+
+    // Flush watchdog -- see flush_ready_cb's comment. 3000ms is generous
+    // (a real frame completes in low tens of ms even under load) but still
+    // catches a genuinely dead flush well before a user would sit staring
+    // at a blank screen wondering if it's ever coming back.
+    if (_flush_pending && (millis() - _flush_started_at_ms > 3000)) {
+        Serial.println("Display flush stuck >3s (missed panel event?) -- rebooting");
+        Serial.flush();
+        ESP.restart();
+    }
 
     // Heap monitor — log every 10s for crash diagnosis
     static uint32_t last_heap_log = 0;

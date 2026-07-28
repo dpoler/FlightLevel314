@@ -13,9 +13,9 @@
 # operation, never append/increment -- so this script is safe to run more
 # than once, or to run the same menu option more than once in one session.
 #
-# Menu option 5 is intentionally stubbed -- OTA firmware updates aren't
-# built yet (see the project backlog). The menu structure and serial
-# plumbing here are already in place for when it is.
+# Menu option 5 checks for and installs application-firmware updates from
+# GitHub Releases (does not touch the ESP32-C6 co-processor's own firmware,
+# a deliberately separate problem -- see src/data/ota.cpp).
 
 set -euo pipefail
 
@@ -103,13 +103,28 @@ show_response() {
 # Opens `port`, sends PING, checks for "OK PONG", closes. Used only during
 # auto-detection to find the right port among possibly several connected
 # USB-serial devices -- the main menu session opens its own long-lived fd.
+#
+# Retries PING for up to ~12s rather than one 2s attempt: opening a USB-
+# serial port wired the same way esptool expects (DTR/RTS -> EN/IO0, which
+# this board's WCH bridge is) typically resets the board right as the OS
+# opens the device, same as it does before flashing. A single 2s PING_TIMEOUT
+# window landed entirely inside that reboot -- LCD/touch/LVGL init alone
+# takes longer than that before loop()'s serial_config_poll() is even
+# running -- so probe_port() reported "no response" even though the board
+# was fine and would have answered a few seconds later. reboot_and_reconnect()
+# already handles this same situation (device reboots, needs time to come
+# back) with a multi-second retry loop; this just applies the same idea here.
 probe_port() {
     local port="$1"
     configure_stty "$port" 2>/dev/null || return 1
     exec 3<>"$port"
-    send_line "PING"
-    local resp
-    resp=$(read_response "$PING_TIMEOUT")
+    local resp="" tries=0
+    while (( tries < 6 )); do
+        send_line "PING"
+        resp=$(read_response "$PING_TIMEOUT")
+        [[ "$resp" == OK* ]] && break
+        tries=$((tries + 1))
+    done
     exec 3<&-; exec 3>&-
     [[ "$resp" == OK* ]]
 }
@@ -165,6 +180,74 @@ reboot_and_reconnect() {
 }
 
 # ---- setup steps, shared by the standalone menu items and the wizard ----
+
+# Application-firmware update via GitHub Releases (data/ota.cpp) -- does
+# NOT touch the ESP32-C6 co-processor's own firmware, see that file's
+# comment for why. Checks, shows the result, and only downloads/installs
+# with explicit confirmation once an update is confirmed available.
+do_ota_update() {
+    send_line "OTA_CHECK"
+    local resp
+    resp=$(read_response "$CMD_TIMEOUT")
+    if [[ -z "$resp" ]]; then
+        echo "(no response from device -- check it's still connected)"
+        return
+    fi
+    echo "$resp"
+
+    local tries=0
+    while (( tries < 10 )); do
+        sleep 1
+        send_line "OTA_STATUS"
+        resp=$(read_response "$CMD_TIMEOUT")
+        tries=$((tries + 1))
+        [[ "$resp" == *"checking"* ]] || break
+    done
+
+    if [[ -z "$resp" ]]; then
+        echo "(no response checking status -- try again)"
+        return
+    fi
+    echo "$resp"
+
+    if [[ "$resp" != *"update available"* ]]; then
+        return
+    fi
+
+    read -r -p "Download and install this update now? [y/N]: " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo "Cancelled."
+        return
+    fi
+
+    send_line "OTA_UPDATE"
+    resp=$(read_response "$CMD_TIMEOUT")
+    if [[ -z "$resp" ]]; then
+        echo "(no response from device -- check it's still connected)"
+        return
+    fi
+    echo "$resp"
+
+    echo "Downloading -- this can take a minute or two. The device reboots itself automatically once done."
+    tries=0
+    while (( tries < 90 )); do
+        sleep 2
+        send_line "OTA_STATUS"
+        resp=$(read_response "$CMD_TIMEOUT")
+        tries=$((tries + 1))
+        if [[ "$resp" == *"downloading"* ]]; then
+            echo "$resp"
+            continue
+        fi
+        break
+    done
+
+    if [[ "$resp" == *"error"* ]]; then
+        echo "Update failed -- device should still be running its previous firmware."
+    elif [[ -z "$resp" ]]; then
+        echo "Device stopped responding -- if the download had finished, this is expected (it reboots itself into the new firmware). Re-run this script to confirm it came back up. If it doesn't, reflash over USB."
+    fi
+}
 
 do_set_token() {
     read -r -s -p "Paste your airportdb.io token: " token
@@ -228,7 +311,7 @@ while true; do
     echo "2) Set WiFi credentials"
     echo "3) Add a saved location (name/lat/lon/elevation)"
     echo "4) Factory reset (erase all settings and saved locations)"
-    echo "5) Update firmware  [not yet supported by this firmware]"
+    echo "5) Check for / install a firmware update"
     echo "6) First-time setup wizard (WiFi + token + one location)"
     echo "0) Exit"
     read -r -p "Choose an option: " choice
@@ -256,7 +339,7 @@ while true; do
             fi
             ;;
         5)
-            echo "Not yet supported -- see the OTA-updates item in the project backlog."
+            do_ota_update
             ;;
         6)
             echo ""
