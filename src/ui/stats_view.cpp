@@ -5,6 +5,7 @@
 #include "status_bar.h"
 #include "../pins_config.h"
 #include "../data/locations.h"
+#include "../data/metar.h"
 #include "geo.h" // altitude_color()
 
 #define STATS_W LCD_H_RES
@@ -21,6 +22,7 @@
 static AircraftList *_list = nullptr;      // the one aircraft list -- fetch_task always fetches for whichever location is currently active
 static lv_obj_t *_container = nullptr;
 static lv_obj_t *_traffic_total_lbl = nullptr; // "Total: N" caption under CURRENT TRAFFIC
+static lv_obj_t *_metar_lbl = nullptr; // nearest-station METAR readout, top band (see metar.h)
 
 // Category rows
 struct BarRow {
@@ -148,6 +150,51 @@ static void refresh_stats(lv_timer_t *t) {
     stats_update(_list);
     const SessionStats *s = stats_get();
 
+    // METAR readout, top band -- metar_poll() (fetcher.cpp's location_poll_task)
+    // updates the shared metar_status/metar_raw globals on its own slow
+    // cadence (metar.h); this just reflects whatever they currently say.
+    //
+    // Blank the label immediately on a location change, in lockstep with
+    // stats_update() resetting everything else above -- rather than trust
+    // metar_poll() (a different task, own timer) to have already cleared
+    // metar_raw by the time this runs. Without this, the OLD location's
+    // METAR stayed on screen for however long the new fetch took after
+    // switching (reported: switching away from KJFK left it showing for a
+    // bit, reading as a stale/wrong value rather than "still loading").
+    // metar.cpp clears its own globals synchronously the instant *it*
+    // notices the same change too, so once this tick's forced blank passes,
+    // later ticks reading METAR_FETCHING here are showing a real "nothing
+    // yet" state, not stale data -- not a race between the two, just two
+    // independent belt-and-suspenders blanks of the same underlying switch.
+    static int _metar_last_loc = -2; // sentinel so the very first call syncs
+    int metar_loc = locations_active_index();
+    if (metar_loc != _metar_last_loc) {
+        _metar_last_loc = metar_loc;
+        lv_label_set_text(_metar_lbl, "");
+    } else {
+        // FETCHING/ERROR are otherwise left alone rather than overwriting
+        // the label -- both are transient (a routine fetch every ~10min,
+        // self-healing on the next poll) *for the same location*, so
+        // keeping the last good reading up while one's in flight reads
+        // better than flashing a special state for it.
+        switch (metar_status) {
+            case METAR_OK:
+                lv_label_set_text(_metar_lbl, metar_raw);
+                lv_obj_set_style_text_color(_metar_lbl, DIM_COLOR, 0);
+                break;
+            case METAR_NO_STATION:
+                lv_label_set_text(_metar_lbl, "NO STATIONS IN RANGE");
+                lv_obj_set_style_text_color(_metar_lbl, lv_color_hex(0x666688), 0);
+                break;
+            case METAR_IDLE:
+                lv_label_set_text(_metar_lbl, "");
+                break;
+            case METAR_FETCHING:
+            case METAR_ERROR:
+                break;
+        }
+    }
+
     lv_label_set_text_fmt(_traffic_total_lbl, "Total: %d", s->current_count);
 
     // Category bars
@@ -257,14 +304,28 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_clear_flag(_container, LV_OBJ_FLAG_SCROLL_CHAIN);
     views_attach_swipe(_container);
 
+    // METAR readout, top band -- the 80px top_y reserved below was left for
+    // exactly this. Centered, full-width single line -- a raw METAR string
+    // ("METAR KDEN 281453Z 25005KT 10SM FEW100 FEW150 SCT220 26/15 A3014
+    // RMK AO2 SLP112 T02610150 51000") comfortably fits one line at this
+    // width/font. See metar.h/metar.cpp for the fetch side (nearest
+    // reporting station within 20nm of the active location, via
+    // aviationweather.gov's public Data API) and refresh_stats() above for
+    // how this label's text/color get set from metar_status.
+    _metar_lbl = lv_label_create(_container);
+    lv_label_set_text(_metar_lbl, "");
+    lv_obj_set_style_text_font(_metar_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(_metar_lbl, DIM_COLOR, 0);
+    lv_obj_set_style_text_align(_metar_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(_metar_lbl, STATS_W - 80);
+    lv_obj_set_pos(_metar_lbl, 40, 40);
+    lv_obj_clear_flag(_metar_lbl, LV_OBJ_FLAG_CLICKABLE);
+
     // Both columns share one vertical rhythm: column header at top_y, first
     // subsection header at top_y+COL_HEADER_GAP(+ROW_H to clear a caption
     // line), subsections spaced SECTION_GAP(14) apart thereafter.
     //
-    // top_y reserves 80px above the columns (was 8) -- deliberate headroom
-    // for a possible METAR/ATIS readout band across the top of this screen;
-    // not built yet, this just leaves the room so adding it later doesn't
-    // require another layout pass through everything below.
+    // top_y reserves 80px above the columns for the METAR band above.
     int top_y = 88;
 
     // ============================================================
