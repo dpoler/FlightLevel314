@@ -101,6 +101,14 @@ static bool _add_result_ready = false;
 static bool _add_result_ok = false;
 static char _add_result_err[48] = {};
 
+// "Verify token" request/response -- same shape/reason as "add by ICAO"
+// above, reusing _add_mutex rather than a second semaphore for one more
+// small flag. See locations_verify_token_poll() for the actual check.
+static bool _verify_pending = false;
+static bool _verify_result_ready = false;
+static bool _verify_result_ok = false;
+static char _verify_result_err[48] = {};
+
 // On-disk format: for each saved location, a fixed-size header (icao, name,
 // lat, lon, elevation_ft, runway_count) followed by exactly runway_count
 // LocRunway entries -- NOT a fixed MAX_RUNWAYS reservation. A location's
@@ -451,7 +459,12 @@ static bool fetch_airport_data(const char *icao_upper, Location &out, char *err,
         }
     } else if (code == 404) {
         fail("airport not found");
-    } else if (code == 401 || code == 403) {
+    } else if (code == 400 || code == 401 || code == 403) {
+        // Confirmed on real hardware with a genuinely bad token: airportdb.io
+        // returns 400, not 401/403 as originally assumed -- all three folded
+        // into the same "invalid token" message rather than 400 falling
+        // through to the generic "HTTP error 400" below, which gave no hint
+        // at the actual cause.
         fail("invalid airportdb.io token");
     } else {
         char msg[32];
@@ -596,6 +609,61 @@ bool locations_add_result(bool *ok, char *err, size_t err_size) {
         if (ok) *ok = _add_result_ok;
         if (err && err_size) strlcpy(err, _add_result_err, err_size);
         _add_result_ready = false;
+    }
+    xSemaphoreGive(_add_mutex);
+    return ready;
+}
+
+// Well-known, permanent airportdb.io entry used purely to test whether the
+// currently-saved token authenticates -- never actually saved, the fetched
+// Location is discarded. Real airports get renamed to their own ICAO on
+// save (see fetch_airport_data() above), so reusing that same function here
+// costs nothing extra beyond the one HTTPS round trip itself.
+#define TOKEN_VERIFY_TEST_ICAO "KJFK"
+
+void locations_request_verify_token() {
+    xSemaphoreTake(_add_mutex, portMAX_DELAY);
+    _verify_pending = true;
+    _verify_result_ready = false;
+    xSemaphoreGive(_add_mutex);
+}
+
+void locations_verify_token_poll() {
+    bool has_request = false;
+    xSemaphoreTake(_add_mutex, portMAX_DELAY);
+    if (_verify_pending) {
+        _verify_pending = false;
+        has_request = true;
+    }
+    xSemaphoreGive(_add_mutex);
+
+    if (!has_request) return;
+
+    char err[48] = {};
+    bool ok;
+    if (!g_config.airportdb_token[0]) {
+        ok = false;
+        strlcpy(err, "no token set", sizeof(err));
+    } else {
+        Location discard;
+        ok = fetch_airport_data(TOKEN_VERIFY_TEST_ICAO, discard, err, sizeof(err));
+    }
+
+    xSemaphoreTake(_add_mutex, portMAX_DELAY);
+    _verify_result_ok = ok;
+    strlcpy(_verify_result_err, err, sizeof(_verify_result_err));
+    _verify_result_ready = true;
+    xSemaphoreGive(_add_mutex);
+}
+
+bool locations_verify_token_result(bool *ok, char *err, size_t err_size) {
+    bool ready;
+    xSemaphoreTake(_add_mutex, portMAX_DELAY);
+    ready = _verify_result_ready;
+    if (ready) {
+        if (ok) *ok = _verify_result_ok;
+        if (err && err_size) strlcpy(err, _verify_result_err, err_size);
+        _verify_result_ready = false;
     }
     xSemaphoreGive(_add_mutex);
     return ready;

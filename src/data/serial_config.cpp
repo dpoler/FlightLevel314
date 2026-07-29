@@ -2,6 +2,7 @@
 #include "storage.h"
 #include "locations.h"
 #include "ota.h"
+#include "fetcher.h" // fetcher_wifi_connected()/fetcher_connection_type() -- WIFI_STATUS
 #include "../version.h"
 #include <Arduino.h>
 #include <cstring>
@@ -35,11 +36,54 @@ static void handle_line(char *line) {
     // anything real.
     if (strcmp(line, "PING") == 0) {
         Serial.println("OK PONG");
+    } else if (strcmp(line, "STATUS") == 0) {
+        // Lets tools/configure_device.{sh,ps1} tell an unconfigured device
+        // (fresh flash/factory reset) from an already-set-up one, so it can
+        // decide whether to run the guided first-time setup automatically
+        // or go straight to the menu. wifi is the deciding signal for
+        // "configured" -- token/locations are optional/incremental even on
+        // a fully set-up device, but a device that's never had WiFi
+        // credentials saved has never been touched at all.
+        Serial.printf("OK wifi=%d token=%d locations=%d\n",
+            g_config.wifi_ssid[0] ? 1 : 0,
+            g_config.airportdb_token[0] ? 1 : 0,
+            locations_count());
     } else if (strncmp(line, "TOKEN=", 6) == 0) {
+        // Deliberately does NOT validate against airportdb.io here -- saving
+        // always succeeds regardless of whether the token actually works
+        // (matches every other command's "set to X" idempotent-and-safe
+        // contract, see the file header comment). A token typed before WiFi
+        // credentials have ever taken effect (the common case during
+        // first-time setup, which sets WiFi before this) couldn't be
+        // validated here anyway -- there's no network yet. TOKEN_VERIFY
+        // below is the explicit, separate way to actually test it once
+        // online.
         const char *token = line + 6;
         strlcpy(g_config.airportdb_token, token, sizeof(g_config.airportdb_token));
         storage_save_config(g_config);
         Serial.printf("OK Saved airportdb.io token (%d chars)\n", (int)strlen(g_config.airportdb_token));
+    } else if (strcmp(line, "TOKEN_VERIFY") == 0) {
+        // Real validation, unlike the plain presence-check STATUS reports --
+        // does a live fetch against a known-good ICAO using the saved token
+        // and reports whether it actually authenticates. Same async
+        // request/poll split as OTA_CHECK/OTA_STATUS: the real HTTPS round
+        // trip happens on location_poll_task (locations_verify_token_poll(),
+        // fetcher.cpp), not here -- this handler runs on the main render
+        // loop (see serial_config_poll()'s call site in main.cpp), so
+        // blocking here for however long that request takes would freeze
+        // the display the whole time.
+        locations_request_verify_token();
+        Serial.println("OK Verifying token...");
+    } else if (strcmp(line, "TOKEN_VERIFY_STATUS") == 0) {
+        bool ok;
+        char err[48];
+        if (!locations_verify_token_result(&ok, err, sizeof(err))) {
+            Serial.println("OK pending");
+        } else if (ok) {
+            Serial.println("OK valid");
+        } else {
+            Serial.printf("OK invalid (%s)\n", err);
+        }
     } else if (strncmp(line, "WIFI_SSID=", 10) == 0) {
         strlcpy(g_config.wifi_ssid, line + 10, sizeof(g_config.wifi_ssid));
         storage_save_config(g_config);
@@ -48,6 +92,15 @@ static void handle_line(char *line) {
         strlcpy(g_config.wifi_pass, line + 10, sizeof(g_config.wifi_pass));
         storage_save_config(g_config);
         Serial.printf("OK WiFi password saved (%d chars) -- reboot to apply\n", (int)strlen(g_config.wifi_pass));
+    } else if (strcmp(line, "WIFI_STATUS") == 0) {
+        // Instant, unlike TOKEN_VERIFY -- just reads already-computed
+        // connection state (fetcher.cpp), no new network activity, so no
+        // request/poll split needed here.
+        if (fetcher_wifi_connected()) {
+            Serial.println("OK connected");
+        } else {
+            Serial.println("OK disconnected");
+        }
     } else if (strncmp(line, "ADD_WAYPOINT=", 13) == 0) {
         // <name>|<lat>|<lon>|<elevation_ft> -- pipe-delimited (not comma) so
         // a name can contain a comma if a user wants one. locations_add_waypoint()
@@ -125,7 +178,7 @@ static void handle_line(char *line) {
         delay(200); // let the OK line actually flush over USB CDC before reset
         ESP.restart();
     } else {
-        Serial.println("ERR Unknown command. Supported: PING, TOKEN=, WIFI_SSID=, WIFI_PASS=, ADD_WAYPOINT=, OTA_CHECK, OTA_STATUS, OTA_UPDATE, REBOOT, FACTORY_RESET=CONFIRM");
+        Serial.println("ERR Unknown command. Supported: PING, STATUS, TOKEN=, TOKEN_VERIFY, TOKEN_VERIFY_STATUS, WIFI_SSID=, WIFI_PASS=, WIFI_STATUS, ADD_WAYPOINT=, OTA_CHECK, OTA_STATUS, OTA_UPDATE, REBOOT, FACTORY_RESET=CONFIRM");
     }
 }
 

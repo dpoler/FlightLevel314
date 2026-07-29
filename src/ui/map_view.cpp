@@ -167,6 +167,26 @@ static void overlay_update() {
         return;
     }
 
+    // No WiFi credentials at all (factory reset, or never configured) --
+    // fetcher.cpp deliberately never attempts a connection in this state
+    // (see fetch_task()'s comment: retrying against an empty SSID doesn't
+    // just fail, it's what previously drove the WiFi/C6-reset loop hard
+    // enough to crash the SDIO transport). Distinct from the net==NET_NONE
+    // "still connecting" case below -- this device isn't going to connect
+    // on its own no matter how long you wait, so showing an indefinite
+    // "Connecting..." spinner here read as a stuck/broken device rather
+    // than one that's correctly waiting for input (reported after a
+    // factory reset). Same "point at what to actually do" pattern as the
+    // no-location-selected case further down.
+    if (!g_config.use_ethernet && !g_config.wifi_ssid[0]) {
+        lv_obj_add_flag(_overlay_spinner, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(_overlay_net, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(_overlay_stats, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(_overlay_error, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(_overlay_status, "No WiFi configured\n\nTap the gear icon to set it up");
+        return;
+    }
+
     // Network isn't up yet -- show the normal acquiring-IP sequence
     // regardless of whether a location is selected, so first boot still
     // looks like it's doing something before landing on either state below.

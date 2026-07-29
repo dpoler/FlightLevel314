@@ -462,6 +462,38 @@ static void fetch_task(void *param) {
         }
     } else
 #endif
+    if (!g_config.wifi_ssid[0]) {
+        // Nothing to connect to -- a factory-reset or never-configured
+        // device has an empty SSID here, and no amount of retrying (or
+        // resetting the C6) will ever change that. Falling into the retry
+        // loop below unconditionally used to fast-fail almost instantly
+        // against a blank SSID and hit its "reset the C6 every
+        // WIFI_MAX_RETRIES failures" branch within seconds, over and over
+        // (reported: a factory-reset device visibly spinning through
+        // repeated connect-fail-reset cycles with no way to stop it) --
+        // exactly the tight WiFi.begin()-retry-with-no-gap pattern that's
+        // already crashed the SDIO transport once before (see
+        // reset_wifi_c6()'s comment for that history). WiFi credentials are
+        // only ever read at boot (settings.cpp/serial_config.cpp), so the
+        // only way out of this state is setting them and rebooting -- there
+        // is nothing productive to retry in the meantime.
+        //
+        // Still calling WiFi.mode(WIFI_STA) here, even though nothing will
+        // actually connect -- skipping it entirely crashed on real hardware
+        // ("assert failed: tcpip_send_msg_wait_sem ... Invalid mbox"):
+        // network_connected()'s WiFi.status() and update_ip_addr()'s
+        // WiFi.localIP() just below both go through esp-idf's lwIP/netif
+        // layer, which doesn't exist until WiFi.mode() brings it up --
+        // calling into it beforehand hits an uninitialized task mailbox and
+        // panics. WiFi.mode(WIFI_STA) alone doesn't attempt a connection or
+        // touch the C6 beyond the already-completed reset in fetcher_init(),
+        // so it doesn't reopen the retry/reset risk this branch exists to
+        // avoid -- it's the same first line wifi_connect_with_timeout()
+        // always calls anyway, just without the WiFi.begin() after it.
+        WiFi.mode(WIFI_STA);
+        Serial.println("Fetcher: no WiFi SSID configured -- skipping connection attempts. Set one in Settings (gear icon) or via tools/configure_device.sh, then reboot.");
+        error_log_add("No WiFi configured -- set it in Settings");
+    } else
     {
         int retries = 0;
         while (!network_connected()) {
@@ -499,8 +531,21 @@ static void fetch_task(void *param) {
     // the main loop below).
     network_connected();
     update_ip_addr();
-    const char *net_name = (_active_net == NET_ETHERNET) ? "Ethernet" : "WiFi";
-    Serial.printf("\n%s connected, IP: %s\n", net_name, _fstats.ip_addr);
+    // Previously unconditional -- safe when every path above this point
+    // only ever fell through after a real connection succeeded (Ethernet's
+    // loop has no other exit; the old WiFi loop only broke out on success).
+    // The empty-SSID branch above changed that: it deliberately falls
+    // through without connecting, and this line printing "WiFi connected,
+    // IP: N/A" right after "no WiFi SSID configured" on a real boot is what
+    // first made the crash below it obvious in the log -- fixing the
+    // message alone doesn't fix the crash (see the empty-SSID branch's own
+    // comment for that), but it should still say the true thing.
+    if (_active_net != NET_NONE) {
+        const char *net_name = (_active_net == NET_ETHERNET) ? "Ethernet" : "WiFi";
+        Serial.printf("\n%s connected, IP: %s\n", net_name, _fstats.ip_addr);
+    } else {
+        Serial.println("\nNo network connection");
+    }
 
     // One-time load of the airline code->name lookup table (see airlines.h) —
     // done here, once, on this task's existing stack rather than a new task.
@@ -637,7 +682,15 @@ static void fetch_task(void *param) {
         // Watchdog: restart only when WiFi itself is down.
         // API outages (WiFi up, server unreachable) just keep retrying — restarting won't help.
         // Resetting only the C6 mid-session corrupts the SDIO bus, so we do a full P4 restart.
-        if (!g_config.use_ethernet && consecutive_fails >= FETCH_FAIL_RESET_THRESHOLD) {
+        //
+        // wifi_ssid[0] guard added alongside the empty-SSID skip above --
+        // without it, a factory-reset/never-configured device (no WiFi
+        // attempted at all, network_connected() permanently false) would
+        // hit this threshold every ~200s and restart itself in an endless
+        // loop. Same reasoning as the API-outage case just above: restarting
+        // doesn't fix "nothing to connect to" any more than it fixes a
+        // server-side outage, so there's nothing to gain by trying.
+        if (!g_config.use_ethernet && g_config.wifi_ssid[0] && consecutive_fails >= FETCH_FAIL_RESET_THRESHOLD) {
             if (!network_connected()) {
                 Serial.printf("Watchdog: %d fails, WiFi down — restarting\n", consecutive_fails);
                 error_log_add("Watchdog: %d fails, restarting", consecutive_fails);
@@ -663,9 +716,10 @@ static void fetch_task(void *param) {
 // Standing Data source already documented as unreliable/stale (crowd-
 // sourced, callsign-keyed, no versioning — see project_route_data memory).
 // Kept as a lightweight task purely to drive locations_add_poll()/
-// locations_nearby_poll()/enrichment_poll()/ota_poll()/metar_poll() on their
-// own existing cadence, rather than spawning a new task for them — see
-// project_p4_heap_constraints memory for why that matters on this board.
+// locations_nearby_poll()/enrichment_poll()/ota_poll()/metar_poll()/
+// locations_verify_token_poll() on their own existing cadence, rather than
+// spawning a new task for them — see project_p4_heap_constraints memory for
+// why that matters on this board.
 static void location_poll_task(void *param) {
     while (!network_connected()) {
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -675,6 +729,7 @@ static void location_poll_task(void *param) {
     while (true) {
         locations_add_poll();
         locations_nearby_poll(); // nearby-large-airport runway cache -- one queued fetch per tick, same cadence as locations_add_poll()
+        locations_verify_token_poll(); // TOKEN_VERIFY (serial_config.cpp) -- idle unless a check was actually requested
         enrichment_poll(); // detail-card aircraft/photo lookups -- see enrichment.cpp
         ota_poll(); // application-firmware update check/download -- see ota.cpp. Near-instant unless a check/update was actually requested (rare, user-triggered), in which case this tick runs long -- acceptable, see ota.h's comment.
         metar_poll(); // nearest-station weather readout -- see metar.h. Internally rate-limited (active-location change or every 10min), near-instant otherwise.

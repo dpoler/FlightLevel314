@@ -266,13 +266,20 @@ static void status_tab_refresh(lv_timer_t *t) {
     }
 
     // Token is only ever set via tools/configure_device.sh/.ps1's TOKEN=
-    // serial command -- this is the only place left to confirm one landed.
+    // serial command -- this is the only on-device confirmation a value
+    // landed. "Set", not "Configured"/"Valid" -- this only checks the field
+    // is non-empty, it does NOT mean the token actually authenticates (that
+    // needs a live fetch, see TOKEN_VERIFY in serial_config.cpp, which this
+    // row deliberately doesn't trigger automatically -- reported: an
+    // invalid token still showed as "Configured" here, which read as "this
+    // is fine" when it very much wasn't -- confirmed only by a real add-
+    // airport attempt failing).
     if (g_config.airportdb_token[0]) {
         lv_obj_set_style_text_color(_airportdb_val, SYS_COLOR, 0);
-        lv_label_set_text(_airportdb_val, "Configured");
+        lv_label_set_text(_airportdb_val, "Set");
     } else {
         lv_obj_set_style_text_color(_airportdb_val, WARN_COLOR, 0);
-        lv_label_set_text(_airportdb_val, "Not configured");
+        lv_label_set_text(_airportdb_val, "Not set");
     }
 
     // === SYSTEM ===
@@ -403,6 +410,10 @@ static void ota_btn_clicked(lv_event_t *e) {
 
 static void save_and_close(lv_event_t *e) {
     bool old_use_ethernet = _cfg.use_ethernet;
+    char old_wifi_ssid[sizeof(_cfg.wifi_ssid)];
+    char old_wifi_pass[sizeof(_cfg.wifi_pass)];
+    strlcpy(old_wifi_ssid, _cfg.wifi_ssid, sizeof(old_wifi_ssid));
+    strlcpy(old_wifi_pass, _cfg.wifi_pass, sizeof(old_wifi_pass));
 
     // Read values from text areas
     strncpy(_cfg.wifi_ssid, lv_textarea_get_text(_ta_ssid), sizeof(_cfg.wifi_ssid) - 1);
@@ -445,9 +456,19 @@ static void save_and_close(lv_event_t *e) {
 
     settings_hide();
 
-    // Network mode change requires reboot (can't switch ETH/WiFi at runtime)
-    if (_cfg.use_ethernet != old_use_ethernet) {
-        Serial.println("Network mode changed, rebooting...");
+    // Network mode change, or a new SSID/password, requires a reboot --
+    // WiFi credentials are only ever read at boot (fetcher.cpp), same as
+    // every other path that sets them (tools/configure_device.sh/.ps1's
+    // WIFI_SSID=/WIFI_PASS= always reboots after too). This save previously
+    // only checked the ETH/WiFi mode switch, silently saving new
+    // credentials to NVS without ever applying them until some *other*
+    // reboot happened to come along -- reported after a factory reset: the
+    // on-screen keyboard looked like the way to fix a missing WiFi setup,
+    // but Save alone did nothing.
+    bool wifi_changed = strcmp(_cfg.wifi_ssid, old_wifi_ssid) != 0 ||
+                         strcmp(_cfg.wifi_pass, old_wifi_pass) != 0;
+    if (_cfg.use_ethernet != old_use_ethernet || wifi_changed) {
+        Serial.println("Network settings changed, rebooting...");
         vTaskDelay(pdMS_TO_TICKS(500));
         ESP.restart();
     }

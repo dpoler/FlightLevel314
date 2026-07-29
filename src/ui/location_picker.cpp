@@ -1,6 +1,7 @@
 #include "location_picker.h"
 #include "../data/locations.h"
 #include "../data/storage.h"
+#include "../data/error_log.h"
 #include "../pins_config.h"
 #include "status_bar.h"
 #include "view_menu.h"
@@ -623,6 +624,12 @@ void location_picker_init(lv_obj_t *screen) {
         } else {
             lv_label_set_text(_add_status_lbl, err);
             lv_obj_set_style_text_color(_add_status_lbl, COLOR_ERR, 0);
+            // Previously only shown here, inline in the popover -- invisible
+            // again the moment the popover closes, and absent from the
+            // STATUS tab's ERRORS section even though it's exactly the kind
+            // of thing that section exists for (reported: a bad-token
+            // failure left no trace to look back at afterward).
+            error_log_add("Add %s: %s", lv_textarea_get_text(_add_ta), err);
         }
     }, 300, nullptr);
 }
