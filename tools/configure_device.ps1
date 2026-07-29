@@ -12,6 +12,14 @@
 # operation, never append/increment -- so this script is safe to run more
 # than once, or to run the same menu option more than once in one session.
 #
+# On connect, this queries the device's STATUS (added alongside this script
+# revision -- requires firmware new enough to understand it, see
+# Get-DeviceStatus's comment for the fallback) and, if it looks
+# never-configured (no WiFi credentials saved), runs the guided first-time
+# setup automatically instead of showing the menu. An already-configured
+# device goes straight to the menu, which also offers to re-run that same
+# guided setup on demand.
+#
 # Menu option 5 checks for and installs application-firmware updates from
 # GitHub Releases (does not touch the ESP32-C6 co-processor's own firmware,
 # a deliberately separate problem -- see src/data/ota.cpp).
@@ -20,6 +28,31 @@ $ErrorActionPreference = "Stop"
 $Baud = 115200
 $PingTimeoutMs = 2000
 $CmdTimeoutMs = 5000
+
+# ---- colors ---------------------------------------------------------------
+# Write-Host's -ForegroundColor already no-ops sensibly when output isn't a
+# real console (redirected to a file, etc.), unlike raw ANSI escapes, so no
+# extra "is this a terminal" check is needed here the way the bash version
+# needs one.
+function Write-Heading {
+    param([string]$Text)
+    Write-Host ""
+    Write-Host "== $Text ==" -ForegroundColor Cyan
+}
+
+# Colors a device reply by its own OK/ERR prefix rather than needing every
+# call site to know which it got -- one place to keep the convention in
+# sync with serial_config.cpp's own "every reply starts with OK or ERR" rule.
+function Write-DeviceResponse {
+    param([string]$Text)
+    if ($Text -like "OK*") {
+        Write-Host $Text -ForegroundColor Green
+    } elseif ($Text -like "ERR*") {
+        Write-Host $Text -ForegroundColor Red
+    } else {
+        Write-Host $Text
+    }
+}
 
 function New-DevicePort {
     param([string]$PortName, [int]$TimeoutMs)
@@ -73,9 +106,9 @@ function Show-Response {
     param($Port, [string]$Line)
     $resp = Send-AndRead $Port $Line
     if ([string]::IsNullOrEmpty($resp)) {
-        Write-Host "(no response from device -- check it's still connected)"
+        Write-Host "(no response from device -- check it's still connected)" -ForegroundColor Red
     } else {
-        Write-Host $resp
+        Write-DeviceResponse $resp
     }
 }
 
@@ -125,7 +158,12 @@ function Read-PlainText {
 # port name -- so the menu loop has a live port object again instead of one
 # talking to a device that's mid-boot or briefly gone. Retries for up to
 # ~15s rather than assuming a single fixed delay is always enough. Writes
-# to $script:port so the caller's variable is updated in place.
+# to $script:port so the caller's variable is updated in place. Reconnecting
+# over USB only confirms the *device* came back, not that WiFi did -- both
+# current callers only ever reboot to apply new WiFi credentials, so this
+# also polls WIFI_STATUS afterward and reports plainly whether they
+# actually connected (a typo'd SSID/password otherwise looks identical to
+# success here -- USB comes back fine either way).
 function Invoke-RebootAndReconnect {
     param([string]$PortName)
     Write-Host "Rebooting device to apply changes..."
@@ -140,7 +178,8 @@ function Invoke-RebootAndReconnect {
             $newPort = New-DevicePort $PortName $CmdTimeoutMs
             $newPort.Open()
             $script:port = $newPort
-            Write-Host "Reconnected."
+            Write-Host "Reconnected." -ForegroundColor Green
+            Test-WifiConnected | Out-Null
             return
         }
     }
@@ -149,12 +188,114 @@ function Invoke-RebootAndReconnect {
     exit 1
 }
 
+# Polls WIFI_STATUS for up to ~10s -- association after a fresh boot isn't
+# instant, so a single immediate check can catch it still connecting and
+# wrongly report failure. Prints a clear result either way and returns
+# whether it connected, for callers (e.g. Set-DeviceToken's live
+# verification) that need to decide whether it's worth attempting something
+# network-dependent right now.
+function Test-WifiConnected {
+    $resp = ""
+    $tries = 0
+    while ($tries -lt 10) {
+        $resp = Send-AndRead $script:port "WIFI_STATUS"
+        if ($resp -eq "OK connected") { break }
+        Start-Sleep -Seconds 1
+        $tries++
+    }
+    if ($resp -eq "OK connected") {
+        Write-Host "WiFi connected." -ForegroundColor Green
+        return $true
+    } else {
+        Write-Host "WiFi did not connect -- double-check the SSID/password (menu option 2, or re-run first-time setup)." -ForegroundColor Red
+        return $false
+    }
+}
+
+# Requests a live token check against airportdb.io and polls for the result
+# -- a real HTTPS round trip (locations_verify_token_poll(), locations.cpp),
+# so this can take several seconds, same as Update-DeviceFirmware's check.
+# Only call this once WiFi is confirmed connected -- with no network it'll
+# just report "no response" indefinitely, which reads as a token problem
+# when it isn't one.
+function Test-DeviceToken {
+    $resp = Send-AndRead $script:port "TOKEN_VERIFY"
+    if ([string]::IsNullOrEmpty($resp)) {
+        Write-Host "(no response from device -- check it's still connected)" -ForegroundColor Red
+        return
+    }
+    $tries = 0
+    while ($tries -lt 15) {
+        Start-Sleep -Seconds 1
+        $resp = Send-AndRead $script:port "TOKEN_VERIFY_STATUS"
+        $tries++
+        if ($resp -ne "OK pending") { break }
+    }
+    if ($resp -eq "OK valid") {
+        Write-Host "Token verified -- it works." -ForegroundColor Green
+    } elseif ($resp -like "OK invalid*") {
+        Write-Host "Token did NOT verify: $($resp.Substring(11))" -ForegroundColor Red
+        Write-Host "Double-check what you pasted (menu option 1) -- airportdb.io rejected it." -ForegroundColor Yellow
+    } else {
+        Write-Host "Could not verify right now -- it'll be checked again the next time it's used." -ForegroundColor Yellow
+    }
+}
+
+# Queries device configuration state (added to serial_config.cpp alongside
+# this script revision). Returns a hashtable @{Wifi=0/1; Token=0/1;
+# Locations=N} on success, or $null if the device didn't answer (offline)
+# or doesn't understand STATUS yet (older firmware, predating this command)
+# -- either way, callers treat that as "can't tell, don't guess" and fall
+# back to showing the normal menu rather than assuming unconfigured.
+function Get-DeviceStatus {
+    $resp = Send-AndRead $script:port "STATUS"
+    if ($resp -notlike "OK wifi=*") {
+        return $null
+    }
+    $result = @{ Wifi = 0; Token = 0; Locations = 0 }
+    foreach ($pair in $resp.Substring(3).Split(" ")) {
+        $kv = $pair.Split("=")
+        if ($kv.Length -ne 2) { continue }
+        switch ($kv[0]) {
+            "wifi"      { $result.Wifi = [int]$kv[1] }
+            "token"     { $result.Token = [int]$kv[1] }
+            "locations" { $result.Locations = [int]$kv[1] }
+        }
+    }
+    return $result
+}
+
 # ---- setup steps, shared by the standalone menu items and the wizard ----
 
+# Empty input skips rather than sending TOKEN= with an empty value -- makes
+# this safe to back out of both standalone (menu option 1: pressing Enter
+# won't accidentally clear an already-set token) and inside the wizard
+# below (where it's explicitly optional -- "offer", not require). Live-
+# verifies afterward when possible -- a plain "OK Saved" here previously
+# looked identical whether the token was right or a typo, and the actual
+# rejection only ever surfaced later, on-device, while trying to add a real
+# airport (reported: an invalid token still read as "Configured" everywhere
+# until that point).
 function Set-DeviceToken {
     $token = Read-PlainText "Paste your airportdb.io token"
+    if ([string]::IsNullOrEmpty($token)) {
+        Write-Host "Skipped -- you can set this anytime from the menu." -ForegroundColor DarkGray
+        return
+    }
     Show-Response $script:port "TOKEN=$token"
     Write-Host "Used automatically the next time you add an airport by ICAO on the device."
+
+    # Quick, no-retry check -- unlike Invoke-RebootAndReconnect's use of
+    # Test-WifiConnected, there's no reason to expect a connection to still
+    # be settling right here, so a single read is enough to decide whether
+    # it's worth attempting live verification at all.
+    $wifiResp = Send-AndRead $script:port "WIFI_STATUS"
+    if ($wifiResp -eq "OK connected") {
+        Write-Host "Verifying against airportdb.io..."
+        Test-DeviceToken
+    } else {
+        Write-Host "Not connected to WiFi right now -- skipping live verification. It'll be caught the first time you actually add an airport if it's wrong." -ForegroundColor DarkGray
+    }
 }
 
 function Set-DeviceWifi {
@@ -177,10 +318,10 @@ function Add-DeviceLocation {
     $locElev = Read-Host "Elevation (ft)"
     $resp = Send-AndRead $script:port "ADD_WAYPOINT=$locName|$locLat|$locLon|$locElev"
     if ([string]::IsNullOrEmpty($resp)) {
-        Write-Host "(no response from device -- check it's still connected)"
+        Write-Host "(no response from device -- check it's still connected)" -ForegroundColor Red
         return
     }
-    Write-Host $resp
+    Write-DeviceResponse $resp
     if ($resp -like "OK*") {
         Write-Host "Saved to the device's location list. This does NOT change what's"
         Write-Host "currently on screen and the new location is not auto-selected --"
@@ -197,10 +338,10 @@ function Add-DeviceLocation {
 function Update-DeviceFirmware {
     $resp = Send-AndRead $script:port "OTA_CHECK"
     if ([string]::IsNullOrEmpty($resp)) {
-        Write-Host "(no response from device -- check it's still connected)"
+        Write-Host "(no response from device -- check it's still connected)" -ForegroundColor Red
         return
     }
-    Write-Host $resp
+    Write-DeviceResponse $resp
 
     $tries = 0
     while ($tries -lt 10) {
@@ -211,10 +352,10 @@ function Update-DeviceFirmware {
     }
 
     if ([string]::IsNullOrEmpty($resp)) {
-        Write-Host "(no response checking status -- try again)"
+        Write-Host "(no response checking status -- try again)" -ForegroundColor Red
         return
     }
-    Write-Host $resp
+    Write-DeviceResponse $resp
 
     if ($resp -notlike "*update available*") {
         return
@@ -228,10 +369,10 @@ function Update-DeviceFirmware {
 
     $resp = Send-AndRead $script:port "OTA_UPDATE"
     if ([string]::IsNullOrEmpty($resp)) {
-        Write-Host "(no response from device -- check it's still connected)"
+        Write-Host "(no response from device -- check it's still connected)" -ForegroundColor Red
         return
     }
-    Write-Host $resp
+    Write-DeviceResponse $resp
 
     Write-Host "Downloading -- this can take a minute or two. The device reboots itself automatically once done."
     $tries = 0
@@ -240,20 +381,73 @@ function Update-DeviceFirmware {
         $resp = Send-AndRead $script:port "OTA_STATUS"
         $tries++
         if ($resp -like "*downloading*") {
-            Write-Host $resp
+            Write-Host $resp -ForegroundColor DarkGray
             continue
         }
         break
     }
 
     if ($resp -like "*error*") {
-        Write-Host "Update failed -- device should still be running its previous firmware."
+        Write-Host "Update failed -- device should still be running its previous firmware." -ForegroundColor Red
     } elseif ([string]::IsNullOrEmpty($resp)) {
-        Write-Host "Device stopped responding -- if the download had finished, this is expected (it reboots itself into the new firmware). Re-run this script to confirm it came back up. If it doesn't, reflash over USB."
+        Write-Host "Device stopped responding -- if the download had finished, this is expected (it reboots itself into the new firmware). Re-run this script to confirm it came back up. If it doesn't, reflash over USB." -ForegroundColor Yellow
     }
 }
 
-# ---- menu -----------------------------------------------------------------
+# Guided first-time setup -- runs automatically on an unconfigured device
+# (see the Get-DeviceStatus check in the main script body below) or on
+# demand from the menu ("re-run the initial setup"). WiFi first, then an
+# immediate reboot to actually apply it and confirm it connected --
+# deliberately *before* the token step, not after (like the original
+# version of this wizard had it), so airportdb.io token entry can
+# live-verify against a real connection instead of just trusting whatever
+# was typed. Location is offered/optional after that; the update check
+# comes last since it also needs real connectivity, which by then it
+# already has.
+function Invoke-FirstTimeSetup {
+    Write-Heading "First-time setup"
+    Write-Host "Walks through WiFi, your airportdb.io token, and one saved location,"
+    Write-Host "then checks for a firmware update."
+
+    Write-Heading "WiFi"
+    Set-DeviceWifi
+    Invoke-RebootAndReconnect $portName
+
+    Write-Heading "airportdb.io token"
+    Write-Host "This is a free token that lets the device fetch runway geometry when"
+    Write-Host "you save an airport by ICAO code (not needed for Home or plain"
+    Write-Host "lat/lon waypoints). Get one at:"
+    Write-Host ""
+    Write-Host "  https://airportdb.io" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Sign up, then paste the token below -- or just press Enter to skip"
+    Write-Host "this for now and set it later from the menu."
+    Set-DeviceToken
+
+    Write-Heading "First saved location"
+    $addedLocation = $false
+    $locConfirm = Read-Host "Save a location now? [Y/n]"
+    if ([string]::IsNullOrEmpty($locConfirm) -or $locConfirm -eq "y" -or $locConfirm -eq "Y") {
+        Add-DeviceLocation
+        $addedLocation = $true
+    } else {
+        Write-Host "Skipped -- you can add locations anytime from the menu, or on the device itself." -ForegroundColor DarkGray
+    }
+
+    Write-Heading "Checking for updates"
+    Update-DeviceFirmware
+
+    Write-Host ""
+    Write-Host "ok, good to go!" -ForegroundColor Green
+    if ($addedLocation) {
+        Write-Host "One more step:" -ForegroundColor Yellow -NoNewline
+        Write-Host " on the device, tap the location button"
+        Write-Host "(top of the screen) and select the location you just added -- it"
+        Write-Host "won't show any traffic until you do, since nothing is selected yet."
+    }
+}
+
+# ---- entry point ------------------------------------------------------------
 
 Write-Host "ADS-B Display -- device configuration"
 Write-Host "Looking for the device..."
@@ -264,64 +458,57 @@ $port = New-DevicePort $portName $CmdTimeoutMs
 $port.Open()
 
 try {
-    :menu while ($true) {
-        Write-Host ""
-        Write-Host "1) Set airportdb.io API token"
-        Write-Host "2) Set WiFi credentials"
-        Write-Host "3) Add a saved location (name/lat/lon/elevation)"
-        Write-Host "4) Factory reset (erase all settings and saved locations)"
-        Write-Host "5) Check for / install a firmware update"
-        Write-Host "6) First-time setup wizard (WiFi + token + one location)"
-        Write-Host "0) Exit"
-        $choice = Read-Host "Choose an option"
+    $status = Get-DeviceStatus
+    if ($status -ne $null -and $status.Wifi -eq 0) {
+        Invoke-FirstTimeSetup
+    } else {
+        # $status.Wifi -eq 1 (already configured) or $status -eq $null
+        # (offline reply / older firmware predating STATUS -- can't tell
+        # either way, fall through to the same menu rather than guessing).
+        :menu while ($true) {
+            Write-Host ""
+            Write-Host "1) Set airportdb.io API token" -ForegroundColor Cyan
+            Write-Host "2) Set WiFi credentials" -ForegroundColor Cyan
+            Write-Host "3) Add a saved location (name/lat/lon/elevation)" -ForegroundColor Cyan
+            Write-Host "4) Factory reset (erase all settings and saved locations)" -ForegroundColor Cyan
+            Write-Host "5) Check for / install a firmware update" -ForegroundColor Cyan
+            Write-Host "6) Re-run first-time setup (WiFi + token + one location)" -ForegroundColor Cyan
+            Write-Host "0) Exit" -ForegroundColor Cyan
+            $choice = Read-Host "Choose an option"
 
-        switch ($choice) {
-            "1" {
-                Set-DeviceToken
-            }
-            "2" {
-                Set-DeviceWifi
-                Invoke-RebootAndReconnect $portName
-            }
-            "3" {
-                Add-DeviceLocation
-            }
-            "4" {
-                $confirm = Read-Host "This will ERASE ALL settings and saved locations. Type YES to confirm"
-                if ($confirm -eq "YES") {
-                    Show-Response $port "FACTORY_RESET=CONFIRM"
-                    Write-Host "Device is rebooting. Re-run this script if you want to configure it again."
-                    break menu
-                } else {
-                    Write-Host "Cancelled."
+            switch ($choice) {
+                "1" {
+                    Set-DeviceToken
                 }
-            }
-            "5" {
-                Update-DeviceFirmware
-            }
-            "6" {
-                Write-Host ""
-                Write-Host "== First-time setup wizard =="
-                Write-Host "Walks through WiFi, your airportdb.io token, and one saved"
-                Write-Host "location, then reboots the device once at the end."
-                Write-Host ""
-                Write-Host "-- WiFi --"
-                Set-DeviceWifi
-                Write-Host ""
-                Write-Host "-- airportdb.io token --"
-                Set-DeviceToken
-                Write-Host ""
-                Write-Host "-- First saved location --"
-                Add-DeviceLocation
-                Write-Host ""
-                Invoke-RebootAndReconnect $portName
-                Write-Host "Setup complete."
-            }
-            "0" {
-                break menu
-            }
-            default {
-                Write-Host "Not a valid option."
+                "2" {
+                    Set-DeviceWifi
+                    Invoke-RebootAndReconnect $portName
+                }
+                "3" {
+                    Add-DeviceLocation
+                }
+                "4" {
+                    $confirm = Read-Host "This will ERASE ALL settings and saved locations. Type YES to confirm"
+                    if ($confirm -eq "YES") {
+                        Show-Response $port "FACTORY_RESET=CONFIRM"
+                        Write-Host "Device is rebooting. Re-run this script if you want to configure it again."
+                        break menu
+                    } else {
+                        Write-Host "Cancelled."
+                    }
+                }
+                "5" {
+                    Update-DeviceFirmware
+                }
+                "6" {
+                    Invoke-FirstTimeSetup
+                }
+                "0" {
+                    break menu
+                }
+                default {
+                    Write-Host "Not a valid option." -ForegroundColor Red
+                }
             }
         }
     }

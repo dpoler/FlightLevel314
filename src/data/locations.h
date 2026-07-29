@@ -82,6 +82,20 @@ void locations_add_poll();
 // completed since the last call. *ok/err are only valid when this returns true.
 bool locations_add_result(bool *ok, char *err, size_t err_size);
 
+// Live token check -- same request/poll/result shape and same reason as the
+// "add by ICAO" trio above (a real fetch_airport_data() call blocks on an
+// HTTPS round trip; serial_config_poll() runs on the main render loop, not
+// location_poll_task, so this can't be called directly from a serial
+// command handler without freezing the display for however long the
+// request takes). Tests the currently-saved token against a fixed,
+// always-present ICAO and discards the result -- this only tells you
+// whether the token *authenticates*, not anything about the test airport
+// itself. ok=false with "no token set" if the field is empty; doesn't
+// attempt a network call in that case.
+void locations_request_verify_token();
+void locations_verify_token_poll();
+bool locations_verify_token_result(bool *ok, char *err, size_t err_size);
+
 void locations_remove(int idx);
 
 // Moves the location at `from` to position `to`, shifting everything between
