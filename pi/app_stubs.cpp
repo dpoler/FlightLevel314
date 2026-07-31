@@ -1,18 +1,17 @@
 // Temporary placeholders for subsystems that haven't been ported to Linux
 // yet. locations/metar/airlines/enrichment are real network-backed
 // features on ESP32 -- see project_pi_port memory for the migration
-// order. alerts.cpp (toast queue) and status_bar.cpp (nav tabs/gear icon)
-// aren't ported this round either -- Map/Radar/Arrivals/Stats are wired
-// directly via src/ui/views.cpp's tileview, without a status bar above
-// them yet. Everything here gets replaced/deleted as the real thing gets
-// ported.
+// order. alerts.cpp (toast queue) and view_menu.cpp (the VIEW chip's
+// trails/tags/secondary-locations popover) aren't ported this round --
+// status_bar.cpp itself is real now (see pi/main.cpp). Everything here
+// gets replaced/deleted as the real thing gets ported.
 
 #include "../src/data/locations.h"
 #include "../src/data/metar.h"
 #include "../src/data/airlines.h"
 #include "../src/data/enrichment.h"
 #include "../src/ui/alerts.h"
-#include "../src/ui/status_bar.h"
+#include "../src/ui/view_menu.h"
 
 // Fixed fake coordinates (Seattle-Tacoma Intl) -- fine for now since
 // locations.cpp (Home + saved airports, airportdb.io runway fetch) isn't
@@ -47,4 +46,9 @@ const AirlineEntry *airline_lookup(const char *) { return nullptr; }
 void enrichment_fetch(const char *, const char *, void (*)(AircraftEnrichment *)) {}
 
 void alerts_dismiss() {}
-void status_bar_set_active_dot(int) {}
+
+// VIEW chip popover -- trails on/off/amount, per-field tag toggles,
+// secondary-location visibility. Chip itself is real (status_bar.cpp) and
+// correctly shows/hides on Map/Radar, it just doesn't open anything yet.
+void view_menu_toggle() {}
+void view_menu_close() {}

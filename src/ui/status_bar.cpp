@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include "../platform/platform.h" // millis()/strlcpy compatibility shims on non-Arduino builds
 #include "status_bar.h"
 #include "views.h"
 #include "range.h"
