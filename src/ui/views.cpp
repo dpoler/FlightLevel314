@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include <cstdlib> // abs() -- only Arduino-flavored symbol this file used
 #include "views.h"
 #include "status_bar.h"
 #include "map_view.h"
