@@ -150,7 +150,16 @@ void views_attach_swipe(lv_obj_t *obj) {
         if (abs(dx) >= SWIPE_THRESHOLD && abs(dx) > abs(dy) * 2) {
             _swipe_active = true;
             int v = views_get_active_index();
-            views_switch_to((dx < 0) ? (v + 1) % NUM_VIEWS : (v + NUM_VIEWS - 1) % NUM_VIEWS);
+            // Clamp at the ends rather than wrapping -- the tileview is a
+            // straight line (Map/Radar/Arrivals/Stats, in that order), not
+            // a loop, so wrapping (the old (v +/- 1) % NUM_VIEWS) jumped
+            // straight from one end to the other with no animation
+            // (LV_ANIM_OFF in views_switch_to()) since there's no sensible
+            // transition to animate between two tiles that aren't actually
+            // adjacent. Swiping past the first/last view now does nothing,
+            // matching the layout instead of fighting it.
+            int target = (dx < 0) ? v + 1 : v - 1;
+            if (target >= 0 && target < NUM_VIEWS) views_switch_to(target);
         }
     }, LV_EVENT_PRESSING, nullptr);
 }
