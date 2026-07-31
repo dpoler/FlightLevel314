@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include "../platform/platform.h" // millis()/strlcpy compatibility shims on non-Arduino builds
 #include "map_view.h"
 #include "detail_card.h"
 #include "views.h"
