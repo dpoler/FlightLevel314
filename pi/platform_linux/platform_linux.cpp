@@ -20,6 +20,7 @@ void platform_log(const char *fmt, ...) {
     va_start(args, fmt);
     vprintf(fmt, args);
     va_end(args);
+    fflush(stdout); // stdout is fully-buffered when not a TTY (journald, redirected files) -- flush so log lines show up promptly
 }
 
 namespace {

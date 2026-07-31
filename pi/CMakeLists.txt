@@ -45,18 +45,22 @@ set(SHARED_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/data/http_mutex.cpp
 )
 
+find_package(CURL REQUIRED)
+
 add_executable(adsb_pi
     main.cpp
     app_stubs.cpp
     platform_linux/platform_linux.cpp
     platform_linux/storage_linux.cpp
+    platform_linux/http_linux.cpp
+    platform_linux/datasource_remote.cpp
     ${SHARED_SOURCES}
 )
 target_include_directories(adsb_pi PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
-target_link_libraries(adsb_pi PRIVATE lvgl ArduinoJson)
+target_link_libraries(adsb_pi PRIVATE lvgl ArduinoJson CURL::libcurl)
 
 if(PI_DISPLAY_BACKEND STREQUAL "SDL")
     find_package(SDL2 REQUIRED)

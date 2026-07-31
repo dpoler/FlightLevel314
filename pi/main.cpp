@@ -3,54 +3,31 @@
 #include "../src/platform/platform.h"
 #include "../src/data/aircraft.h"
 #include "../src/data/storage.h"
+#include "../src/data/datasource.h"
 #include "../src/ui/stats.h"
 #include "../src/ui/stats_view.h"
 #include <chrono>
 #include <thread>
-#include <cstring>
 
-// Milestone 3 of the Pi port (see project_pi_port memory / pi-port
-// branch's plan): render one real, shared view -- Stats -- against fake
-// aircraft data, proving src/data + src/ui code genuinely compiles and
-// runs on Linux, not just the placeholder scene from milestone 2. Bypasses
-// src/ui/views.cpp's tileview manager for now (that needs all four views
-// ported -- see pi/app_stubs.cpp's comment) and calls stats_view_init()
-// directly on a plain full-screen container instead.
+// Milestone 4 of the Pi port (see project_pi_port memory / pi-port
+// branch's plan): real adsb.lol traffic via RemoteApiDataSource
+// (pi/platform_linux/datasource_remote.cpp), replacing milestone 3's fake
+// aircraft. Still bypasses src/ui/views.cpp's tileview manager (see
+// pi/app_stubs.cpp's comment) -- Stats is stood up directly on a
+// full-screen container. Active location is still the fixed KSEA stub in
+// pi/app_stubs.cpp (locations.cpp itself isn't ported yet), so real
+// traffic shows up centered there.
 
 AircraftList aircraft_list;
 
-static void add_fake_aircraft(const char *icao, const char *callsign, const char *type,
-                               float lat, float lon, int32_t alt, int16_t speed,
-                               int16_t heading, bool military = false) {
-    if (aircraft_list.count >= MAX_AIRCRAFT) return;
-    Aircraft &ac = aircraft_list.aircraft[aircraft_list.count++];
-    ac.clear();
-    strncpy(ac.icao_hex, icao, sizeof(ac.icao_hex) - 1);
-    strncpy(ac.callsign, callsign, sizeof(ac.callsign) - 1);
-    strncpy(ac.type_code, type, sizeof(ac.type_code) - 1);
-    ac.category[0] = 'A';
-    ac.category[1] = military ? '7' : '3';
-    ac.lat = lat;
-    ac.lon = lon;
-    ac.altitude = alt;
-    ac.speed = speed;
-    ac.heading = heading;
-    ac.vert_rate_valid = true;
-    ac.is_military = military;
-    ac.last_seen = platform_millis();
-    ac.stale_since = 0;
-}
-
-static void populate_fake_aircraft() {
-    if (!aircraft_list.lock()) return;
-    // Scattered around KSEA (pi/app_stubs.cpp's fake active-location coords).
-    add_fake_aircraft("A0B1C2", "UAL123",  "B738", 47.55f, -122.30f, 8000,  250, 90);
-    add_fake_aircraft("A0B1C3", "DAL456",  "A320", 47.40f, -122.20f, 15000, 320, 180);
-    add_fake_aircraft("A0B1C4", "N12345",  "C172", 47.48f, -122.35f, 2500,  110, 270);
-    add_fake_aircraft("A0B1C5", "SWA789",  "B737", 47.60f, -122.40f, 35000, 480, 45);
-    add_fake_aircraft("A0B1C6", "ASA1000", "E75L", 47.35f, -122.25f, 500,   140, 0);
-    add_fake_aircraft("AE1234", "REACH12", "C17",  47.30f, -122.45f, 22000, 350, 200, /*military=*/true);
-    aircraft_list.unlock();
+static void fetch_loop() {
+    RemoteApiDataSource src;
+    while (true) {
+        bool ok = src.fetch(&aircraft_list);
+        platform_log("Fetch (%s): %s, %d aircraft tracked\n",
+                      src.name(), ok ? "OK" : "FAILED", aircraft_list.count);
+        std::this_thread::sleep_for(std::chrono::seconds(20));
+    }
 }
 
 static uint32_t pi_tick_cb() {
@@ -59,12 +36,14 @@ static uint32_t pi_tick_cb() {
 
 int main() {
     aircraft_list.init();
-    populate_fake_aircraft();
 
     // Real round-trip through pi/platform_linux/storage_linux.cpp --
     // proves the JSON-file config storage actually works, not just links.
     g_config = storage_load_config();
     storage_save_config(g_config);
+
+    std::thread fetch_thread(fetch_loop);
+    fetch_thread.detach();
 
     lv_init();
     lv_tick_set_cb(pi_tick_cb);
