@@ -1,25 +1,22 @@
 // Temporary placeholders for subsystems that haven't been ported to Linux
-// yet (locations/metar are real network-backed features on ESP32 -- see
-// project_pi_port memory for the migration order; storage is real now,
-// see pi/platform_linux/storage_linux.cpp). Also link-satisfying no-op
-// stubs for the other three views' *_init() calls that src/ui/views.cpp
-// references -- this milestone stands up Stats directly, without the full
-// tileview manager, so those are never actually called, just linked.
-// Everything here gets replaced/deleted as the real thing gets ported
-// (locations.cpp in a later phase; the other views in task #7).
+// yet. locations/metar/airlines/enrichment are real network-backed
+// features on ESP32 -- see project_pi_port memory for the migration
+// order. alerts.cpp (toast queue) and status_bar.cpp (nav tabs/gear icon)
+// aren't ported this round either -- Map/Radar/Arrivals/Stats are wired
+// directly via src/ui/views.cpp's tileview, without a status bar above
+// them yet. Everything here gets replaced/deleted as the real thing gets
+// ported.
 
 #include "../src/data/locations.h"
 #include "../src/data/metar.h"
-#include "../src/ui/map_view.h"
-#include "../src/ui/radar_view.h"
-#include "../src/ui/arrivals_view.h"
-#include "../src/ui/detail_card.h"
+#include "../src/data/airlines.h"
+#include "../src/data/enrichment.h"
 #include "../src/ui/alerts.h"
 #include "../src/ui/status_bar.h"
 
-// Fixed fake coordinates (Seattle-Tacoma Intl) -- fine for this milestone
-// since nothing here actually renders a map/runways against them, only
-// Stats' CLOSEST-aircraft distance calc reads these.
+// Fixed fake coordinates (Seattle-Tacoma Intl) -- fine for now since
+// locations.cpp (Home + saved airports, airportdb.io runway fetch) isn't
+// ported yet. Real traffic shows up centered here until it is.
 int locations_active_index() { return 0; }
 bool locations_get_active_coords(float *lat, float *lon, int *elevation_ft) {
     if (lat) *lat = 47.4502f;
@@ -28,15 +25,26 @@ bool locations_get_active_coords(float *lat, float *lon, int *elevation_ft) {
     return true;
 }
 
+// No saved locations yet -- Map/Radar's "other saved airports" runway
+// overlay (locations_get/locations_count/locations_nearby_get_active) has
+// nothing to draw beyond the one active-location marker above.
+int locations_count() { return 0; }
+const Location *locations_get(int) { return nullptr; }
+const Location *locations_nearby_get_active(int *count) {
+    if (count) *count = 0;
+    return nullptr;
+}
+
 volatile MetarStatus metar_status = METAR_IDLE;
 char metar_raw[128] = {0};
 char metar_station[8] = {0};
 
-void map_view_init(lv_obj_t *, AircraftList *) {}
-void map_view_on_show() {}
-void radar_view_init(lv_obj_t *, AircraftList *) {}
-void arrivals_view_init(lv_obj_t *, AircraftList *) {}
-void arrivals_view_on_show() {}
-void detail_card_hide() {}
+// airlines.cpp/enrichment.cpp both do their own adsbdb.com/planespotters.net
+// HTTP fetches via Arduino's HTTPClient -- not ported. detail_card.cpp
+// falls back to the aircraft's own desc/owner_op fields when these return
+// nothing, so the detail card still shows useful info without them.
+const AirlineEntry *airline_lookup(const char *) { return nullptr; }
+void enrichment_fetch(const char *, const char *, void (*)(AircraftEnrichment *)) {}
+
 void alerts_dismiss() {}
 void status_bar_set_active_dot(int) {}
