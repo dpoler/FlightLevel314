@@ -73,6 +73,7 @@ find_package(CURL REQUIRED)
 add_executable(adsb_pi
     main.cpp
     app_stubs.cpp
+    settings_pi.cpp
     platform_linux/platform_linux.cpp
     platform_linux/storage_linux.cpp
     platform_linux/http_linux.cpp

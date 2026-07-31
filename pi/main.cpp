@@ -7,6 +7,7 @@
 #include "../src/ui/views.h"
 #include "../src/ui/detail_card.h"
 #include "../src/ui/range.h"
+#include "../src/ui/settings.h"
 #include <chrono>
 #include <thread>
 
@@ -77,6 +78,22 @@ int main() {
     views_init(screen, &aircraft_list);
     detail_card_init(screen, &aircraft_list);
     views_resume_last_view();
+
+    // Minimal stand-in for status_bar.cpp's gear icon (not ported this
+    // round -- see this file's top comment): a small always-on-top button
+    // so Settings is actually reachable without a real status bar yet.
+    settings_init(screen);
+    lv_obj_t *gear_btn = lv_button_create(screen);
+    lv_obj_set_size(gear_btn, 40, 40);
+    lv_obj_align(gear_btn, LV_ALIGN_TOP_RIGHT, -6, 4);
+    lv_obj_set_style_bg_color(gear_btn, lv_color_hex(0x1a1a3a), 0);
+    lv_obj_set_style_bg_opa(gear_btn, LV_OPA_70, 0);
+    lv_obj_set_style_radius(gear_btn, 20, 0);
+    lv_obj_t *gear_lbl = lv_label_create(gear_btn);
+    lv_label_set_text(gear_lbl, LV_SYMBOL_SETTINGS);
+    lv_obj_center(gear_lbl);
+    lv_obj_add_event_cb(gear_btn, [](lv_event_t *) { settings_show(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_move_foreground(gear_btn);
 
     while (true) {
         uint32_t sleep_ms = lv_timer_handler();
