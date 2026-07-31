@@ -65,6 +65,7 @@ set(SHARED_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/display_prefs.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/range.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/status_bar.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/view_menu.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/data/http_mutex.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/data/error_log.cpp
 )
