@@ -2,6 +2,7 @@
 #include "display.h"
 #include "../src/platform/platform.h"
 #include "../src/data/aircraft.h"
+#include "../src/data/storage.h"
 #include "../src/ui/stats.h"
 #include "../src/ui/stats_view.h"
 #include <chrono>
@@ -59,6 +60,11 @@ static uint32_t pi_tick_cb() {
 int main() {
     aircraft_list.init();
     populate_fake_aircraft();
+
+    // Real round-trip through pi/platform_linux/storage_linux.cpp --
+    // proves the JSON-file config storage actually works, not just links.
+    g_config = storage_load_config();
+    storage_save_config(g_config);
 
     lv_init();
     lv_tick_set_cb(pi_tick_cb);

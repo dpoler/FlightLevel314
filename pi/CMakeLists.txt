@@ -22,6 +22,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(lvgl)
 
+FetchContent_Declare(
+    ArduinoJson
+    GIT_REPOSITORY https://github.com/bblanchon/ArduinoJson.git
+    GIT_TAG v7.4.3
+)
+FetchContent_MakeAvailable(ArduinoJson)
+
 # lv_conf.h lives here (pi/), not at the repo root -- the ESP32 side's root
 # lv_conf.h uses a custom PSRAM allocator that doesn't apply on Linux. See
 # pi/lv_conf.h's own comment.
@@ -35,19 +42,21 @@ set(SHARED_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/views.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/stats.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/stats_view.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/data/http_mutex.cpp
 )
 
 add_executable(adsb_pi
     main.cpp
     app_stubs.cpp
     platform_linux/platform_linux.cpp
+    platform_linux/storage_linux.cpp
     ${SHARED_SOURCES}
 )
 target_include_directories(adsb_pi PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
-target_link_libraries(adsb_pi PRIVATE lvgl)
+target_link_libraries(adsb_pi PRIVATE lvgl ArduinoJson)
 
 if(PI_DISPLAY_BACKEND STREQUAL "SDL")
     find_package(SDL2 REQUIRED)
