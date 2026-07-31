@@ -6,6 +6,10 @@ Real-time aircraft tracker on an ESP32-P4 with a 1024x600 touchscreen. Pulls liv
 ![Platform](https://img.shields.io/badge/platform-ESP32--P4-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
+> Also in progress: a parallel Raspberry Pi port (branch `pi-port`) sharing
+> most of `src/data`/`src/ui` with this ESP32 build — see
+> [`pi/README.md`](pi/README.md).
+
 ## Screenshots
 
 *(placeholders — swap in current screenshots)*

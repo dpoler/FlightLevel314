@@ -1,0 +1,16 @@
+[Unit]
+Description=ADS-B Radar Display (Raspberry Pi kiosk)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/adsb-pi/adsb_pi
+Restart=always
+RestartSec=2
+User=adsb
+# DRM (/dev/dri/*) and touch input (/dev/input/*) access -- see
+# pi/README.md for the udev/group setup this expects.
+SupplementaryGroups=video input render
+
+[Install]
+WantedBy=multi-user.target
