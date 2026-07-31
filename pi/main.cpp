@@ -110,8 +110,23 @@ int main() {
     lv_obj_add_event_cb(gear_btn, [](lv_event_t *) { settings_show(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_move_foreground(gear_btn);
 
+    // A fixed ~1ms cadence, NOT lv_timer_handler()'s own returned "next
+    // timer due" hint -- that value can be large (hundreds of ms) when
+    // nothing's animating, and sleeping for it starves SDL's event pump
+    // (lv_sdl_window.c's internal sdl_event_handler() timer, which drains
+    // the OS mouse-motion queue via SDL_PollEvent() -- only serviced when
+    // lv_timer_handler() actually runs). Real-world symptom this caused:
+    // a slow drag across the whole session would queue many motion
+    // events during one long sleep, then get drained in one burst with
+    // near-zero elapsed time between them once the loop finally woke --
+    // LVGL's scroll/gesture code reads that as a huge instantaneous
+    // velocity and flings straight to the tileview's edge, so dragging
+    // could only ever land on the first or last tile, never one in
+    // between. ESP32's main.cpp loop() never hits this: it already
+    // ignores lv_timer_handler()'s return value and just runs a fixed
+    // 1ms vTaskDelay every iteration, unconditionally -- matched here.
     while (true) {
-        uint32_t sleep_ms = lv_timer_handler();
-        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms ? sleep_ms : 5));
+        lv_timer_handler();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
