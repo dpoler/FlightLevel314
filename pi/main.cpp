@@ -79,6 +79,21 @@ int main() {
     detail_card_init(screen, &aircraft_list);
     views_resume_last_view();
 
+    // Force LVGL to resolve the tileview's 4 tiles' lv_pct()-based
+    // positions into real pixel coordinates right now. Without this, the
+    // 4th tile (Stats) was found sitting at (0,0) -- on top of Map --
+    // until *something* eventually triggered a layout pass; the
+    // tileview's own scrollable-content width got computed (and
+    // effectively cached) against that wrong position first, capping
+    // real scrolling at 3 tiles' worth (confirmed via lv_obj_get_scroll_right()
+    // reading 2560 instead of 3840 before this call, 3840 after). The
+    // ESP32 main.cpp never hits this: it creates a lot more (status bar,
+    // location picker, alerts, settings, OTA overlay) between views_init()
+    // and its first real frame, incidentally forcing enough layout work
+    // to resolve this as a side effect. This main.cpp doesn't do enough
+    // of that on its own, so it needs an explicit nudge.
+    lv_obj_update_layout(views_get_tileview());
+
     // Minimal stand-in for status_bar.cpp's gear icon (not ported this
     // round -- see this file's top comment): a small always-on-top button
     // so Settings is actually reachable without a real status bar yet.
