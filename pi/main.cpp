@@ -4,22 +4,29 @@
 #include "../src/data/aircraft.h"
 #include "../src/data/storage.h"
 #include "../src/data/datasource.h"
+#include "../src/data/fetcher.h"
+#include "../src/data/locations.h"
 #include "../src/ui/views.h"
 #include "../src/ui/detail_card.h"
 #include "../src/ui/range.h"
 #include "../src/ui/settings.h"
+#include "../src/ui/status_bar.h"
+#include "../src/ui/filters.h"
+#include "../src/ui/map_view.h"
+#include "../src/ui/stats.h"
+#include "../src/ui/geo.h"
 #include <chrono>
 #include <thread>
 
-// Milestone 5 of the Pi port (see project_pi_port memory / pi-port
-// branch's plan): the real 4-view tileview (Map/Radar/Arrivals/Stats,
-// swipeable via LVGL's native tileview scrolling) fed by real adsb.lol
-// traffic, replacing milestone 4's Stats-only screen. No status bar yet
-// (gear icon, nav dots, location/range chips) -- that's status_bar.cpp,
-// not ported this round, see pi/app_stubs.cpp's comment -- so there's a
-// blank ~48px strip at the top where it will eventually go. Active
-// location is still the fixed KSEA stub in pi/app_stubs.cpp
-// (locations.cpp isn't ported yet).
+// Milestone 6 of the Pi port (see project_pi_port memory / pi-port
+// branch's plan): the real status bar (nav tabs, gear icon, range chip),
+// replacing milestone 5's ad-hoc floating gear button. Nav tabs give real
+// tap-to-navigate, a welcome alternative to swipe after the whole
+// scroll/swipe debugging saga. No location chip yet (location_picker.cpp
+// isn't ported -- see pi/app_stubs.cpp's comment), so there's a small gap
+// at LOCATION_CHIP_X where it would normally sit. VIEW chip is present and
+// correctly shows/hides on Map/Radar but doesn't open anything yet
+// (view_menu.cpp not ported, see pi/app_stubs.cpp).
 
 AircraftList aircraft_list;
 
@@ -75,6 +82,7 @@ int main() {
     range_set_levels(g_config.radius_presets, 4);
     range_set_index(g_config.last_range_idx);
 
+    status_bar_create(screen);
     views_init(screen, &aircraft_list);
     detail_card_init(screen, &aircraft_list);
     views_resume_last_view();
@@ -94,37 +102,47 @@ int main() {
     // of that on its own, so it needs an explicit nudge.
     lv_obj_update_layout(views_get_tileview());
 
-    // Minimal stand-in for status_bar.cpp's gear icon (not ported this
-    // round -- see this file's top comment): a small always-on-top button
-    // so Settings is actually reachable without a real status bar yet.
     settings_init(screen);
-    lv_obj_t *gear_btn = lv_button_create(screen);
-    lv_obj_set_size(gear_btn, 40, 40);
-    lv_obj_align(gear_btn, LV_ALIGN_TOP_RIGHT, -6, 4);
-    lv_obj_set_style_bg_color(gear_btn, lv_color_hex(0x1a1a3a), 0);
-    lv_obj_set_style_bg_opa(gear_btn, LV_OPA_70, 0);
-    lv_obj_set_style_radius(gear_btn, 20, 0);
-    lv_obj_t *gear_lbl = lv_label_create(gear_btn);
-    lv_label_set_text(gear_lbl, LV_SYMBOL_SETTINGS);
-    lv_obj_center(gear_lbl);
-    lv_obj_add_event_cb(gear_btn, [](lv_event_t *) { settings_show(); }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_move_foreground(gear_btn);
+    status_bar_set_gear_callback([](lv_event_t *) { settings_show(); });
+
+    // Periodic status bar update -- same aircraft-count logic as ESP32's
+    // main.cpp (opacity/filter/hide_ground/radius, matching what a view
+    // would actually draw), so the count agrees with what's on screen
+    // rather than being sourced from any one view's own drawn-count cache.
+    lv_timer_create([](lv_timer_t *) {
+        int count = 0;
+        float center_lat, center_lon;
+        locations_get_active_coords(&center_lat, &center_lon, nullptr);
+        float radius_nm = range_get_nm();
+        bool is_map = (views_filterable_index() == VIEW_MAP);
+        if (aircraft_list.lock(5)) {
+            uint32_t now = platform_millis();
+            for (int i = 0; i < aircraft_list.count; i++) {
+                Aircraft &ac = aircraft_list.aircraft[i];
+                if (compute_aircraft_opacity(ac.stale_since, now) == 0) continue;
+                if (!aircraft_passes_filter(ac)) continue;
+                if (g_config.view_hide_ground[views_filterable_index()] && ac.on_ground) continue;
+                if (is_map) {
+                    if (!map_view_aircraft_visible(ac.lat, ac.lon)) continue;
+                } else {
+                    if (MapProjection::distance_nm(center_lat, center_lon, ac.lat, ac.lon) > radius_nm) continue;
+                }
+                count++;
+            }
+            aircraft_list.unlock();
+        }
+        status_bar_update(fetcher_wifi_connected(), count, stats_get()->current_count, fetcher_last_update());
+    }, 1000, nullptr);
 
     // A fixed ~1ms cadence, NOT lv_timer_handler()'s own returned "next
     // timer due" hint -- that value can be large (hundreds of ms) when
     // nothing's animating, and sleeping for it starves SDL's event pump
     // (lv_sdl_window.c's internal sdl_event_handler() timer, which drains
     // the OS mouse-motion queue via SDL_PollEvent() -- only serviced when
-    // lv_timer_handler() actually runs). Real-world symptom this caused:
-    // a slow drag across the whole session would queue many motion
-    // events during one long sleep, then get drained in one burst with
-    // near-zero elapsed time between them once the loop finally woke --
-    // LVGL's scroll/gesture code reads that as a huge instantaneous
-    // velocity and flings straight to the tileview's edge, so dragging
-    // could only ever land on the first or last tile, never one in
-    // between. ESP32's main.cpp loop() never hits this: it already
-    // ignores lv_timer_handler()'s return value and just runs a fixed
-    // 1ms vTaskDelay every iteration, unconditionally -- matched here.
+    // lv_timer_handler() actually runs). ESP32's main.cpp loop() never
+    // needs to think about this: it already ignores lv_timer_handler()'s
+    // return value and just runs a fixed 1ms vTaskDelay every iteration,
+    // unconditionally -- matched here.
     while (true) {
         lv_timer_handler();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
