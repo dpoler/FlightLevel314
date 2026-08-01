@@ -15,6 +15,7 @@
 #include "../src/ui/map_view.h"
 #include "../src/ui/stats.h"
 #include "../src/ui/geo.h"
+#include "../src/ui/alerts.h"
 #include <chrono>
 #include <thread>
 
@@ -85,6 +86,7 @@ int main() {
     status_bar_create(screen);
     views_init(screen, &aircraft_list);
     detail_card_init(screen, &aircraft_list);
+    alerts_init(screen);
     views_resume_last_view();
 
     // Force LVGL to resolve the tileview's 4 tiles' lv_pct()-based
