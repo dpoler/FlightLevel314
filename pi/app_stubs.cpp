@@ -1,15 +1,14 @@
 // Temporary placeholders for subsystems that haven't been ported to Linux
 // yet. locations/metar/airlines/enrichment are real network-backed
 // features on ESP32 -- see project_pi_port memory for the migration
-// order. alerts.cpp (toast queue) and location_picker.cpp (Home/saved-
-// airport picker chip) aren't ported this round either. Everything here
-// gets replaced/deleted as the real thing gets ported.
+// order. location_picker.cpp (Home/saved-airport picker chip) isn't
+// ported this round either. Everything here gets replaced/deleted as the
+// real thing gets ported.
 
 #include "../src/data/locations.h"
 #include "../src/data/metar.h"
 #include "../src/data/airlines.h"
 #include "../src/data/enrichment.h"
-#include "../src/ui/alerts.h"
 #include "../src/ui/location_picker.h"
 
 // Fixed fake coordinates (Seattle-Tacoma Intl) -- fine for now since
@@ -43,8 +42,6 @@ char metar_station[8] = {0};
 // nothing, so the detail card still shows useful info without them.
 const AirlineEntry *airline_lookup(const char *) { return nullptr; }
 void enrichment_fetch(const char *, const char *, void (*)(AircraftEnrichment *)) {}
-
-void alerts_dismiss() {}
 
 // Called by view_menu.cpp (now real) so only one status-bar popover is
 // open at a time -- no-op until location_picker.cpp itself exists to

@@ -6,15 +6,18 @@
 // project_platform_pin memories) and not worth risking a shared-code
 // refactor on for this port. Known duplication of the adsb.lol JSON schema
 // knowledge between this file and fetcher.cpp -- worth revisiting once the
-// Pi side is hardware-validated, see project_pi_port memory. Also skips
-// fetcher.cpp's alert-queueing (military/emergency toasts) -- alerts.cpp
-// isn't ported yet (task #7); is_military/is_emergency are still set on
-// each Aircraft so that's ready whenever alerts.cpp lands.
+// Pi side is hardware-validated, see project_pi_port memory.
+//
+// Alert-queueing (military/emergency toasts) below mirrors fetcher.cpp's
+// do_alerts block, including its military-alert dedup ring buffer -- now
+// that alerts.cpp is ported for real (task #10), nothing else calls
+// alerts_queue() on Pi, so this is the one place it needs to happen.
 
 #include "../../src/data/datasource.h"
 #include "../../src/data/storage.h"
 #include "../../src/data/locations.h"
 #include "../../src/platform/platform.h"
+#include "../../src/ui/alerts.h"
 #include <ArduinoJson.h>
 #include <cstdio>
 #include <cstdlib>
@@ -51,6 +54,27 @@ int find_aircraft(AircraftList *list, const char *hex) {
     for (int i = 0; i < list->count; i++)
         if (strcmp(list->aircraft[i].icao_hex, hex) == 0) return i;
     return -1;
+}
+
+// Military alert dedup -- circular buffer of already-alerted ICAO hexes,
+// same as fetcher.cpp's, so the same military aircraft sitting in view
+// across multiple fetch cycles doesn't re-toast every ~20s. Emergency
+// alerts deliberately have no dedup, matching fetcher.cpp.
+#define ALERTED_MAX 64
+char _alerted_hexes[ALERTED_MAX][7];
+int _alerted_count = 0;
+int _alerted_write = 0;
+
+bool already_alerted(const char *hex) {
+    for (int i = 0; i < _alerted_count; i++)
+        if (strcmp(_alerted_hexes[i], hex) == 0) return true;
+    return false;
+}
+
+void mark_alerted(const char *hex) {
+    strlcpy(_alerted_hexes[_alerted_write], hex, 7);
+    _alerted_write = (_alerted_write + 1) % ALERTED_MAX;
+    if (_alerted_count < ALERTED_MAX) _alerted_count++;
 }
 
 void apply_json_entry(Aircraft &a, JsonObject obj, bool is_new) {
@@ -154,6 +178,21 @@ bool RemoteApiDataSource::fetch(AircraftList *list) {
         write++;
     }
     list->count = write;
+
+    for (int i = 0; i < list->count; i++) {
+        Aircraft &a = list->aircraft[i];
+        if (a.stale_since != 0) continue;
+        if (a.is_emergency && g_config.alert_emergency) {
+            char msg[48];
+            snprintf(msg, sizeof(msg), "Squawk %04d - %s", a.squawk,
+                     a.squawk == 7500 ? "HIJACK" : a.squawk == 7600 ? "COMMS FAIL" : "EMERGENCY");
+            alerts_queue(ALERT_EMERGENCY, a.callsign[0] ? a.callsign : a.icao_hex, msg, a.icao_hex);
+        } else if (a.is_military && g_config.alert_military && !already_alerted(a.icao_hex)) {
+            mark_alerted(a.icao_hex);
+            alerts_queue(ALERT_MILITARY, a.callsign[0] ? a.callsign : a.icao_hex, a.type_code, a.icao_hex);
+        }
+    }
+
     list->unlock();
     return true;
 }
