@@ -677,15 +677,18 @@ static void draw_radar_active_location_marker(lv_layer_t *layer) {
 // for these to be printed the same as map's, not adapted to radar's own
 // plain-square blip style -- so this is a near-verbatim port of map_view.cpp's
 // draw_icon_legend()/draw_altitude_legend() (same icon shapes, same 6
-// altitude bands), using the same measured, fixed local-y positions as
-// map_view.cpp (see project backlog: "bullseye/legend centering"). Shifted
-// up twice now (4px, then another 8px) since the swipe bar kept
-// overlapping it.
+// altitude bands), using the same measured local-y positions as
+// map_view.cpp, anchored to LCD_V_RES so the legend stays pinned to the
+// bottom of the screen on taller panels instead of the bare literals
+// tuned for jc1060's 600px height (see project backlog: "bullseye/legend
+// centering"). Shifted up twice now (4px, then another 8px) since the
+// swipe bar kept overlapping it -- those margins are baked into the
+// offsets below.
 #define LEGEND_X0 4
 #define LEGEND_W  248
-#define LEGEND_ICON_Y 554
-#define LEGEND_ALT_Y  572
-#define LEGEND_BOTTOM 586
+#define LEGEND_ICON_Y (LCD_V_RES - 46)
+#define LEGEND_ALT_Y  (LCD_V_RES - 28)
+#define LEGEND_BOTTOM (LCD_V_RES - 14)
 
 // Solid backdrop behind both legend rows -- see map_view.cpp's
 // draw_legend_backdrop() for the full rationale (an airport/aircraft label
