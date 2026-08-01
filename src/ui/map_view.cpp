@@ -897,14 +897,18 @@ static void draw_aircraft(lv_layer_t *layer) {
     _list->unlock();
 }
 
-// Shared legend geometry -- fixed, measured local-y positions (see
-// project backlog: "bullseye/legend centering"). Shifted up twice now
-// (4px, then another 8px) since the swipe bar kept overlapping it.
+// Shared legend geometry -- measured local-y positions (see project
+// backlog: "bullseye/legend centering"), anchored to the bottom of the
+// screen via LCD_V_RES so the legend doesn't float miles above the swipe
+// bar on taller panels (jc1060 is 600px tall; the Pi port's Waveshare
+// panel is 800px -- these were bare literals tuned for 600 until this
+// fix). Shifted up twice now (4px, then another 8px) since the swipe bar
+// kept overlapping it -- those margins are baked into the offsets below.
 #define LEGEND_X0 4
 #define LEGEND_W  248
-#define LEGEND_ICON_Y 554
-#define LEGEND_ALT_Y  572
-#define LEGEND_BOTTOM 586
+#define LEGEND_ICON_Y (LCD_V_RES - 46)
+#define LEGEND_ALT_Y  (LCD_V_RES - 28)
+#define LEGEND_BOTTOM (LCD_V_RES - 14)
 
 // Solid backdrop behind both legend rows. Without this, an airport/runway
 // label (or an aircraft tag) that happens to render underneath reads as
