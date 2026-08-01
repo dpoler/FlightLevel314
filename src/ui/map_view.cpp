@@ -178,6 +178,16 @@ static void overlay_update() {
     // than one that's correctly waiting for input (reported after a
     // factory reset). Same "point at what to actually do" pattern as the
     // no-location-selected case further down.
+    //
+    // ESP32-only: the Pi build has no wifi_ssid field to configure in the
+    // first place -- its networking is managed by the OS (NetworkManager/
+    // systemd), not this app (see settings_pi.cpp, which deliberately drops
+    // the WiFi/Ethernet settings UI entirely), and
+    // pi/platform_linux/fetcher_stats_linux.cpp's fetcher_connection_type()
+    // always reports NET_WIFI regardless of g_config -- so this branch
+    // would otherwise show a permanently-wrong "No WiFi configured" message
+    // on every Pi boot even though the network is already up (reported).
+#if defined(ARDUINO)
     if (!g_config.use_ethernet && !g_config.wifi_ssid[0]) {
         lv_obj_add_flag(_overlay_spinner, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(_overlay_net, LV_OBJ_FLAG_HIDDEN);
@@ -186,6 +196,7 @@ static void overlay_update() {
         lv_label_set_text(_overlay_status, "No WiFi configured\n\nTap the gear icon to set it up");
         return;
     }
+#endif
 
     // Network isn't up yet -- show the normal acquiring-IP sequence
     // regardless of whether a location is selected, so first boot still
