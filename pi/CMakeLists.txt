@@ -67,6 +67,7 @@ set(SHARED_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/status_bar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/view_menu.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/alerts.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/location_picker.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/data/http_mutex.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/data/error_log.cpp
 )
@@ -82,6 +83,7 @@ add_executable(adsb_pi
     platform_linux/http_linux.cpp
     platform_linux/datasource_remote.cpp
     platform_linux/fetcher_stats_linux.cpp
+    platform_linux/locations_linux.cpp
     ${SHARED_SOURCES}
 )
 target_include_directories(adsb_pi PRIVATE

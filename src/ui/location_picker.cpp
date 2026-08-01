@@ -5,7 +5,7 @@
 #include "../pins_config.h"
 #include "status_bar.h"
 #include "view_menu.h"
-#include <Arduino.h>
+#include "../platform/platform.h"
 #include <cstring>
 #include <cctype>
 
