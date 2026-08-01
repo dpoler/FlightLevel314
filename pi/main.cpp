@@ -16,6 +16,7 @@
 #include "../src/ui/stats.h"
 #include "../src/ui/geo.h"
 #include "../src/ui/alerts.h"
+#include "../src/ui/location_picker.h"
 #include <chrono>
 #include <thread>
 
@@ -40,6 +41,7 @@ AircraftList aircraft_list;
 volatile bool touch_active = false;
 
 extern void pi_fetcher_stats_update(bool ok, uint32_t elapsed_ms);
+extern void pi_wait_for_next_fetch(int seconds);
 
 static void fetch_loop() {
     RemoteApiDataSource src;
@@ -50,7 +52,10 @@ static void fetch_loop() {
         pi_fetcher_stats_update(ok, elapsed);
         platform_log("Fetch (%s): %s, %d aircraft tracked (%ums)\n",
                       src.name(), ok ? "OK" : "FAILED", aircraft_list.count, elapsed);
-        std::this_thread::sleep_for(std::chrono::seconds(20));
+        // Waits up to 20s, but returns immediately if
+        // fetcher_request_immediate_fetch() is called in the meantime
+        // (locations_set_active() calls it on every location switch).
+        pi_wait_for_next_fetch(20);
     }
 }
 
@@ -65,6 +70,7 @@ int main() {
     // proves the JSON-file config storage actually works, not just links.
     g_config = storage_load_config();
     storage_save_config(g_config);
+    locations_init();
 
     std::thread fetch_thread(fetch_loop);
     fetch_thread.detach();
@@ -85,6 +91,7 @@ int main() {
 
     status_bar_create(screen);
     views_init(screen, &aircraft_list);
+    location_picker_init(screen);
     detail_card_init(screen, &aircraft_list);
     alerts_init(screen);
     views_resume_last_view();
