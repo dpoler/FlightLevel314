@@ -32,10 +32,17 @@ static bool _filter_just_clicked = false; // suppress the row-tap handler right 
 #define TITLE_H 30
 #define COL_HEADER_H 18
 #define HEADER_H (TITLE_H + COL_HEADER_H)
-// Was 16 -- the tileview's own horizontal scrollbar ("swipe bar") runs
-// right along the bottom edge and was overlapping/cutting off the last
-// row (reported). One fewer row keeps the whole table clear of it.
-#define MAX_ROWS 15
+// Was a bare literal 16, then 15 -- the tileview's own horizontal
+// scrollbar ("swipe bar") runs right along the bottom edge and was
+// overlapping/cutting off the last row (reported) on jc1060's 552px-tall
+// canvas. The real fix isn't "15 rows", it's "leave SWIPE_BAR_CLEARANCE
+// px clear at the bottom" -- 15 was just what that clearance worked out
+// to at jc1060's BOARD_H (552 - 48 - 24 = 480, /32 = 15 exactly). Deriving
+// it from BOARD_H instead means a taller panel (e.g. the Pi's 800px)
+// actually uses the extra room instead of leaving it as unused dead space
+// below a fixed 15-row table (reported on real Pi hardware).
+#define SWIPE_BAR_CLEARANCE 24
+#define MAX_ROWS ((BOARD_H - HEADER_H - SWIPE_BAR_CLEARANCE) / ROW_H)
 
 // Sort modes
 enum SortMode {
