@@ -16,9 +16,13 @@ else()
 endif()
 
 # This app doesn't use LVGL's bundled examples/demos -- skip building them
-# to keep the CMake dev-loop build fast.
-set(LV_CONF_BUILD_DISABLE_EXAMPLES ON CACHE BOOL "" FORCE)
-set(LV_CONF_BUILD_DISABLE_DEMOS ON CACHE BOOL "" FORCE)
+# to keep the CMake dev-loop build fast. These are the real option names
+# LVGL v9.5.0 reads (env_support/cmake/os_desktop.cmake) -- an earlier
+# LV_CONF_BUILD_DISABLE_EXAMPLES/DEMOS pair here matched no actual LVGL
+# option and silently did nothing, so demos/examples were always being
+# built regardless.
+set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 
 # Must match whatever PlatformIO actually resolves platformio.ini's
 # `lvgl/lvgl@^9.2.2` to for jc1060, NOT that literal version string --
@@ -106,4 +110,17 @@ elseif(PI_DISPLAY_BACKEND STREQUAL "DRM")
     target_sources(adsb_pi PRIVATE display_drm.cpp input_libinput.cpp)
     target_include_directories(adsb_pi PRIVATE ${DRM_INCLUDE_DIRS} ${LIBINPUT_INCLUDE_DIRS})
     target_link_libraries(adsb_pi PRIVATE ${DRM_LIBRARIES} ${LIBINPUT_LIBRARIES})
+    # LVGL's own driver sources (src/drivers/display/drm/lv_linux_drm.c,
+    # src/drivers/indev/libinput/lv_libinput.c) are compiled as part of the
+    # `lvgl` target itself, not adsb_pi -- lv_conf.h's LV_USE_LINUX_DRM/
+    # LV_USE_LIBINPUT (set whenever PI_BACKEND_DRM reaches it, which it does
+    # for every target via the directory-scope add_compile_definitions
+    # above) means lvgl.h unconditionally pulls in <xf86drmMode.h> ->
+    # <drm.h> for every single LVGL source file, not just ours. Without
+    # these same include dirs on the `lvgl` target, its own compilation
+    # fails before adsb_pi is ever reached (Debian ships drm.h under
+    # /usr/include/libdrm/, not /usr/include/ directly -- only libdrm's own
+    # pkg-config Cflags know to add that -I).
+    target_include_directories(lvgl PUBLIC ${DRM_INCLUDE_DIRS} ${LIBINPUT_INCLUDE_DIRS})
+    target_link_libraries(lvgl PUBLIC ${DRM_LIBRARIES} ${LIBINPUT_LIBRARIES})
 endif()
