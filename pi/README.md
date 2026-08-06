@@ -8,14 +8,18 @@ behavior genuinely differs, and `src/platform/platform.h` for the
 mutex/time/HTTP/config-storage seam that makes the sharing possible.
 
 **Status**: Map/Radar/Arrivals/Stats all render live adsb.lol traffic in a
-real swipeable tileview. Not yet ported: Settings (needs a scoped-down
-design — see below), the status bar (nav dots/gear icon — there's a blank
-~48px strip at the top for now), alerts (military/emergency toasts),
-locations (Home + saved airports — the active location is a fixed
-Seattle-Tacoma coordinate stub in `app_stubs.cpp`), metar/airlines/
-enrichment (detail card falls back to the aircraft's own fields fine
-without these). Real DSI hardware bring-up (DRM/KMS + libinput) hasn't
-been tested against physical hardware yet.
+real swipeable tileview, with a real status bar (nav tabs/gear/range
+chip), VIEW chip popover (trails, tag fields, secondary-location
+visibility), alerts (military/emergency toasts), a real saved-locations
+system (add/remove/reorder, ICAO or plain lat/lon), and a scoped-down
+Settings screen. Real DSI hardware bring-up (DRM/KMS + libinput) is
+confirmed working against physical hardware (Pi 3B+, Waveshare 10.1"
+panel) — touch, swipe, and the full network fetch/render loop all
+verified. Not yet ported: metar/airlines/enrichment (detail card falls
+back to the aircraft's own fields fine without these). No on-device way
+to set the airportdb.io token yet (ESP32's USB-serial `TOKEN=` mechanism
+wasn't ported) — hand-edit `~/.config/adsb/config.json`'s `apt_tok` key
+directly with the app stopped, for now.
 
 ## Hardware target
 
@@ -44,22 +48,29 @@ Config persists to `~/.config/adsb/config.json` (or
 
 ## Building on the Pi (real hardware)
 
-Not yet build-tested on real hardware — this is the expected path once a
-Pi + the Waveshare panel are in hand:
+Build-tested against real hardware (Pi 3B+, Debian 13/trixie,
+`6.18.34+rpt-rpi-v8`, Waveshare 10.1" DSI panel). The panel needs
+exclusive DRM access, so a running desktop's display manager needs to be
+out of the way first — either install Raspberry Pi OS Lite from the
+start, or free up an existing desktop install without reinstalling:
+`sudo systemctl set-default multi-user.target && sudo systemctl disable
+--now lightdm` (swap `lightdm` for whatever your image actually runs;
+`systemctl list-units --type=service --state=running | grep -i display`
+will show it).
 
 ```
 sudo apt install build-essential cmake libsdl2-dev libcurl4-openssl-dev \
     libdrm-dev libinput-dev pkg-config
-cmake -S . -B build -DPI_DISPLAY_BACKEND=DRM
+cmake -S . -B build -DPI_DISPLAY_BACKEND=DRM   # ~3min, first run only
 cmake --build build -j4
-sudo ./build/pi/adsb_pi   # or install as a service, see below -- needs
-                          # /dev/dri and /dev/input access either way
+./build/pi/adsb_pi   # no sudo needed if your user is already in the
+                      # video/render/input groups (`groups` to check);
+                      # otherwise: sudo usermod -aG video,render,input $USER
 ```
 
 `display_drm.cpp` assumes the panel enumerates as `/dev/dri/card0`;
 `input_libinput.cpp` auto-locates the touch device by capability. Both
-are unverified against real hardware — expect to adjust them during
-bring-up (task #6 of the port; see `project_pi_port` notes).
+assumptions held on the first real run — no changes needed.
 
 ## Installing as a kiosk service
 
@@ -67,6 +78,17 @@ bring-up (task #6 of the port; see `project_pi_port` notes).
 sudo useradd -r -G video,input,render adsb
 sudo mkdir -p /opt/adsb-pi
 sudo cp build/pi/adsb_pi /opt/adsb-pi/
+
+# The service pins HOME=/opt/adsb-pi (see adsb-pi.service) since the
+# `adsb` user has no real home directory -- seed its config there.
+# storage_linux.cpp/locations_linux.cpp only mkdir() one level deep, so
+# .config/adsb must already exist before the service's first launch.
+sudo mkdir -p /opt/adsb-pi/.config/adsb
+# Reuse whatever you already set up testing manually (saved locations,
+# airportdb.io token), if any:
+sudo cp ~/.config/adsb/*.json /opt/adsb-pi/.config/adsb/ 2>/dev/null || true
+sudo chown -R adsb:adsb /opt/adsb-pi/.config
+
 sudo cp pi/adsb-pi.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now adsb-pi
@@ -88,8 +110,8 @@ Logs: `journalctl -u adsb-pi -f`.
   releases. If a fresh jc1060 build resolves a newer version and something
   here stops compiling, re-check that before assuming it's this port's bug.
 - `pi/app_stubs.cpp` holds temporary link-satisfying implementations for
-  everything not yet ported (locations/metar/airlines/enrichment/alerts/
-  status_bar) — each gets deleted as the real thing lands.
+  everything not yet ported (currently just metar/airlines/enrichment) —
+  each gets deleted as the real thing lands.
 - `src/data/fetcher.cpp` (jc1060's WiFi/C6-co-processor fetch loop) is
   deliberately untouched and not shared — see its own extensive comments
   and `project_p4_heap_constraints`/`project_platform_pin` history for why
