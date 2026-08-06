@@ -6,6 +6,7 @@
 #include "../data/enrichment.h"
 #include "../data/airlines.h"
 #include "../pins_config.h"
+#include <cstdio> // snprintf -- not reliably transitive under libstdc++ (Pi build)
 
 static lv_obj_t *_card = nullptr;
 
