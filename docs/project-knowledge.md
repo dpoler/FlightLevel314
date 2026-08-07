@@ -469,8 +469,9 @@ mostly chronological.
   `src/ui/` but is explicitly disabled on ESP32 ("tiles broken on ESP32-P4") —
   worth checking if it's closer to reusable on Pi than starting fresh.
   Licensing/sourcing/storage-budget for sectionals not investigated. Not
-  scoped. (Partial: Pi Map now has a live/cached Carto dark basemap via
-  `pi/basemap.cpp` — see `cursor/pi-map-basemap-7c95` / PR #4.)
+  scoped. (Partial: Pi Map now has live/cached basemap styles via
+  `pi/basemap.cpp` — Carto dark / dark_nolabels / FAA VFR sectional tiles —
+  with per-style disk-cache TTLs; see PR #4.)
 
 - **Map legend backdrop vs basemap (Pi)**: before the basemap, the opaque
   legend panel (`draw_legend_backdrop` in `map_view.cpp`) was invisible

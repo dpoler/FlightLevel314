@@ -11,8 +11,8 @@
 
 #define PANEL_W 270
 #define PANEL_H 460
-// Extra height when the Pi Map BASEMAP section is shown (toggle + opacity slider).
-#define PANEL_H_WITH_BASEMAP 580
+// Extra height when the Pi Map BASEMAP section is shown (toggle + style + opacity).
+#define PANEL_H_WITH_BASEMAP 640
 
 #define COLOR_PANEL  lv_color_hex(0x14142a)
 #define COLOR_ACCENT lv_color_hex(0x00cc66)
@@ -24,6 +24,7 @@ static lv_obj_t *_overlay = nullptr;
 static lv_obj_t *_panel = nullptr;
 static lv_obj_t *_len_label = nullptr;
 static lv_obj_t *_bm_opa_label = nullptr;
+static lv_obj_t *_bm_style_lbl = nullptr;
 
 static void close_overlay() {
     if (_overlay) {
@@ -45,6 +46,7 @@ static void close_overlay() {
         _panel = nullptr;
         _len_label = nullptr;
         _bm_opa_label = nullptr;
+        _bm_style_lbl = nullptr;
     }
 }
 
@@ -245,8 +247,9 @@ static void open_overlay() {
 #if !defined(ARDUINO)
     if (show_basemap) {
         // ============================================================
-        // Basemap -- Carto dark tiles under Map. Off = solid canvas.
-        // Opacity slider is "how defined" (10-100%); persist on release.
+        // Basemap -- Carto dark / FAA VFR sectional under Map.
+        // Style cycles Dark → Dark (no labels) → VFR Sectional.
+        // Opacity is "how defined" (10-100%); persist on release.
         // ============================================================
         section_header(_panel, "BASEMAP", 352);
         toggle_row(_panel, "Show basemap", 380, map_basemap_shown(), [](lv_event_t *e) {
@@ -255,21 +258,43 @@ static void open_overlay() {
             map_view_update();
         });
 
+        lv_obj_t *style_btn = lv_obj_create(_panel);
+        lv_obj_set_size(style_btn, PANEL_W - 20, 32);
+        lv_obj_set_pos(style_btn, 0, 414);
+        lv_obj_set_style_bg_color(style_btn, COLOR_ROW, 0);
+        lv_obj_set_style_border_color(style_btn, COLOR_ACCENT, 0);
+        lv_obj_set_style_border_width(style_btn, 1, 0);
+        lv_obj_set_style_radius(style_btn, 6, 0);
+        lv_obj_set_style_pad_all(style_btn, 0, 0);
+        lv_obj_clear_flag(style_btn, LV_OBJ_FLAG_SCROLLABLE);
+        _bm_style_lbl = lv_label_create(style_btn);
+        lv_label_set_text_fmt(_bm_style_lbl, "Style: %s", map_basemap_style_name());
+        lv_obj_set_style_text_color(_bm_style_lbl, COLOR_ACCENT, 0);
+        lv_obj_set_style_text_font(_bm_style_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_center(_bm_style_lbl);
+        lv_obj_add_event_cb(style_btn, [](lv_event_t *e) {
+            map_basemap_style_cycle();
+            if (_bm_style_lbl)
+                lv_label_set_text_fmt(_bm_style_lbl, "Style: %s", map_basemap_style_name());
+            // Re-request tiles for the new style (clears stale front buffer).
+            map_view_on_show();
+        }, LV_EVENT_CLICKED, nullptr);
+
         lv_obj_t *opa_lbl = lv_label_create(_panel);
         lv_label_set_text(opa_lbl, "Opacity");
         lv_obj_set_style_text_font(opa_lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(opa_lbl, COLOR_DIM, 0);
-        lv_obj_set_pos(opa_lbl, 0, 414);
+        lv_obj_set_pos(opa_lbl, 0, 456);
 
         _bm_opa_label = lv_label_create(_panel);
         lv_label_set_text_fmt(_bm_opa_label, "%d%%", map_basemap_opa());
         lv_obj_set_style_text_color(_bm_opa_label, lv_color_white(), 0);
         lv_obj_set_style_text_font(_bm_opa_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_pos(_bm_opa_label, PANEL_W - 20 - 50, 414);
+        lv_obj_set_pos(_bm_opa_label, PANEL_W - 20 - 50, 456);
 
         lv_obj_t *bm_slider = lv_slider_create(_panel);
         lv_obj_set_size(bm_slider, PANEL_W - 20, 10);
-        lv_obj_set_pos(bm_slider, 0, 438);
+        lv_obj_set_pos(bm_slider, 0, 480);
         lv_slider_set_range(bm_slider, 10, 100);
         lv_slider_set_value(bm_slider, map_basemap_opa(), LV_ANIM_OFF);
         lv_obj_set_style_bg_color(bm_slider, lv_color_hex(0x333366), 0);
@@ -288,7 +313,7 @@ static void open_overlay() {
             storage_save_config(g_config);
         }, LV_EVENT_PRESS_LOST, nullptr);
 
-        alerts_y = 470;
+        alerts_y = 512;
     }
 #endif
 

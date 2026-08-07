@@ -61,3 +61,20 @@ void map_basemap_opa_set(int pct) {
     if (pct > 100) pct = 100;
     g_config.map_basemap_opa = pct;
 }
+
+int map_basemap_style() { return g_config.map_basemap_style; }
+
+const char *map_basemap_style_name() {
+    switch (g_config.map_basemap_style) {
+    case MAP_BASEMAP_STYLE_DARK_NOLABELS: return "Dark (no labels)";
+    case MAP_BASEMAP_STYLE_SECTIONAL:     return "VFR Sectional";
+    case MAP_BASEMAP_STYLE_DARK:
+    default:                              return "Dark";
+    }
+}
+
+void map_basemap_style_cycle() {
+    g_config.map_basemap_style =
+        (g_config.map_basemap_style + 1) % MAP_BASEMAP_STYLE_COUNT;
+    storage_save_config(g_config);
+}
