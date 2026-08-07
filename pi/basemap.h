@@ -12,6 +12,8 @@ extern "C" {
 
 // Call when active location or range changes (or on init). Kicks a background
 // fetch if the cached basemap doesn't already match. Non-blocking.
+// canvas_h should be LCD_V_RES: Map draws in absolute screen Y (same space
+// as geo_center_y), so a shorter buffer leaves a solid strip at the bottom.
 void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int canvas_h,
                      int geo_center_y, int bullseye_r_px);
 
