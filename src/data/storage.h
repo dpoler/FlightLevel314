@@ -67,9 +67,10 @@ struct UserConfig {
     // / Radar but kept in the shared UserConfig so Pi JSON and ESP32 NVS key
     // sets stay aligned. Defaults: on at 50% opacity, Carto dark_all.
     // Style: 0=Carto dark, 1=Carto dark (no labels), 2=FAA VFR sectional,
-    // 3=Carto light. Opacity is per-style.
+    // 3=Carto voyager (cream light), 4=voyager no labels, 5=OpenTopoMap.
+    // Opacity is per-style.
     bool map_basemap_enabled;
-    int map_basemap_opa[4];         // 10-100 percent per style (default 50)
+    int map_basemap_opa[6];         // 10-100 percent per style (default 50)
     int map_basemap_style;          // see display_prefs / basemap styles
 
     // Resume-on-boot state -- all written from discrete, human-paced actions
