@@ -55,11 +55,17 @@ void map_basemap_toggle() {
     storage_save_config(g_config);
 }
 
-int map_basemap_opa() { return g_config.map_basemap_opa; }
+int map_basemap_opa() {
+    int s = g_config.map_basemap_style;
+    if (s < 0 || s >= MAP_BASEMAP_STYLE_COUNT) s = 0;
+    return g_config.map_basemap_opa[s];
+}
 void map_basemap_opa_set(int pct) {
     if (pct < 10) pct = 10;
     if (pct > 100) pct = 100;
-    g_config.map_basemap_opa = pct;
+    int s = g_config.map_basemap_style;
+    if (s < 0 || s >= MAP_BASEMAP_STYLE_COUNT) s = 0;
+    g_config.map_basemap_opa[s] = pct;
 }
 
 int map_basemap_style() { return g_config.map_basemap_style; }

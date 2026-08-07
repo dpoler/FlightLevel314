@@ -34,9 +34,10 @@ void tag_type_toggle();
 bool secondary_locations_shown();
 void secondary_locations_toggle();
 
-// Pi Map basemap (VIEW menu, Map only). Opacity is 10-100 percent;
-// map_basemap_opa_set() does not persist — caller saves on slider release
-// (same split as trails_amount_set).
+// Pi Map basemap (VIEW menu, Map only). Opacity is 10-100 percent and is
+// stored per style (Dark / Dark no-labels / Sectional each remember their
+// own). map_basemap_opa_set() does not persist — caller saves on slider
+// release (same split as trails_amount_set).
 // Styles: 0=Carto dark, 1=Carto dark no labels, 2=FAA VFR sectional.
 #define MAP_BASEMAP_STYLE_DARK 0
 #define MAP_BASEMAP_STYLE_DARK_NOLABELS 1
@@ -45,8 +46,8 @@ void secondary_locations_toggle();
 
 bool map_basemap_shown();
 void map_basemap_toggle();
-int map_basemap_opa();
-void map_basemap_opa_set(int pct);
+int map_basemap_opa();              // opacity for the active style
+void map_basemap_opa_set(int pct);  // sets opacity for the active style
 int map_basemap_style();
 const char *map_basemap_style_name();
 void map_basemap_style_cycle();

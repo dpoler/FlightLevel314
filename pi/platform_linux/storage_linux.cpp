@@ -62,7 +62,7 @@ static UserConfig defaults() {
         cfg.view_show_secondary_locations[i] = true;
     }
     cfg.map_basemap_enabled = true;
-    cfg.map_basemap_opa = 50;
+    for (int i = 0; i < 3; i++) cfg.map_basemap_opa[i] = 50;
     cfg.map_basemap_style = 0;
     cfg.last_view_idx = 0;
     cfg.last_range_idx = 0;
@@ -134,9 +134,17 @@ UserConfig storage_load_config() {
     cfg.view_show_secondary_locations[0] = doc["show2loc0"] | cfg.view_show_secondary_locations[0];
     cfg.view_show_secondary_locations[1] = doc["show2loc1"] | cfg.view_show_secondary_locations[1];
     cfg.map_basemap_enabled = doc["bm_on"] | cfg.map_basemap_enabled;
-    cfg.map_basemap_opa = doc["bm_opa"] | cfg.map_basemap_opa;
-    if (cfg.map_basemap_opa < 10) cfg.map_basemap_opa = 10;
-    if (cfg.map_basemap_opa > 100) cfg.map_basemap_opa = 100;
+    // Legacy single bm_opa seeds all styles if per-style keys are absent.
+    int legacy_opa = doc["bm_opa"] | 50;
+    if (legacy_opa < 10) legacy_opa = 10;
+    if (legacy_opa > 100) legacy_opa = 100;
+    for (int i = 0; i < 3; i++) {
+        char key[12];
+        snprintf(key, sizeof(key), "bm_opa%d", i);
+        cfg.map_basemap_opa[i] = doc[key] | legacy_opa;
+        if (cfg.map_basemap_opa[i] < 10) cfg.map_basemap_opa[i] = 10;
+        if (cfg.map_basemap_opa[i] > 100) cfg.map_basemap_opa[i] = 100;
+    }
     cfg.map_basemap_style = doc["bm_style"] | cfg.map_basemap_style;
     if (cfg.map_basemap_style < 0) cfg.map_basemap_style = 0;
     if (cfg.map_basemap_style > 2) cfg.map_basemap_style = 2;
@@ -190,7 +198,12 @@ void storage_save_config(const UserConfig &cfg) {
     doc["show2loc0"] = cfg.view_show_secondary_locations[0];
     doc["show2loc1"] = cfg.view_show_secondary_locations[1];
     doc["bm_on"] = cfg.map_basemap_enabled;
-    doc["bm_opa"] = cfg.map_basemap_opa;
+    for (int i = 0; i < 3; i++) {
+        char key[12];
+        snprintf(key, sizeof(key), "bm_opa%d", i);
+        doc[key] = cfg.map_basemap_opa[i];
+    }
+    doc["bm_opa"] = cfg.map_basemap_opa[0]; // legacy
     doc["bm_style"] = cfg.map_basemap_style;
     doc["last_view"] = cfg.last_view_idx;
     doc["last_rng"] = cfg.last_range_idx;
