@@ -25,10 +25,11 @@
 #include "../third_party/stb_image.h"
 
 #define MAX_CACHE 20
-// Prefer near-native thumbnail_large (~360-500 x 280). Aggressive shrink
-// with nearest-neighbor is what made early photos look grainy.
-#define PHOTO_MAX_W 440
-#define PHOTO_MAX_H 280
+// Sized to the detail-card photo slot on 1280-wide layouts (~440x236).
+// Mild shrink from thumbnail_large (~500x280) with bilinear — sharp, no
+// collision with the telemetry grid below.
+#define PHOTO_MAX_W 420
+#define PHOTO_MAX_H 236
 
 namespace {
 

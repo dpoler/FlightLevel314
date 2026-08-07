@@ -20,7 +20,6 @@ static lv_obj_t *_reg_label = nullptr;
 // Identity
 static lv_obj_t *_operator_label = nullptr;
 static lv_obj_t *_type_label = nullptr;
-static lv_obj_t *_cat_label = nullptr;
 static lv_obj_t *_aircraft_detail_label = nullptr;
 static lv_obj_t *_photo_credit_label = nullptr;
 #if !defined(ARDUINO)
@@ -59,47 +58,64 @@ static bool _visible = false;
 static Aircraft _current_ac;
 static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syncs _current_ac from this every tick
 
-#define CARD_H 330
+// Layout: originally tuned for jc1060's 1024x600. On the Pi's 1280x800 we
+// reserve a right-hand photo column and put the 6-col telemetry grid
+// *below* that band so STATUS/SIGNAL/QNH never collide with the image.
+// Card height is sized to fit everything with scrolling disabled.
+#if LCD_H_RES >= 1280
+#define CARD_H        400
+#define PHOTO_SLOT_W  440
+#define PHOTO_SLOT_H  236
+#define IDENTITY_MAX_W (LCD_H_RES - 32 - PHOTO_SLOT_W - 16)
+#define GRID_Y0       268
+#define GRID_COL_W    ((LCD_H_RES - 32) / 6)
+#else
+#define CARD_H        310
+#define PHOTO_SLOT_W  0
+#define PHOTO_SLOT_H  0
+#define IDENTITY_MAX_W (LCD_H_RES - 32)
+#define GRID_Y0       148
+#define GRID_COL_W    160
+#endif
+
 #define CARD_BG lv_color_hex(0x141428)
 #define CARD_TEXT lv_color_hex(0xccccdd)
 #define CARD_ACCENT lv_color_hex(0x4488ff)
 #define CARD_DIM lv_color_hex(0x666688)
-#define CARD_HIGHLIGHT lv_color_hex(0x88bbff)
 
-// Data grid column positions (6 cols across ~960px usable)
-#define COL1 0
-#define COL2 160
-#define COL3 320
-#define COL4 480
-#define COL5 640
-#define COL6 800
+#define COL1 (0 * GRID_COL_W)
+#define COL2 (1 * GRID_COL_W)
+#define COL3 (2 * GRID_COL_W)
+#define COL4 (3 * GRID_COL_W)
+#define COL5 (4 * GRID_COL_W)
+#define COL6 (5 * GRID_COL_W)
 
 static const char *decode_category(const char *cat) {
     if (!cat[0]) return "";
     if (cat[0] == 'A') {
         switch (cat[1]) {
             case '0': return "Uncat";
-            case '1': return "Light <15.5k lbs";
-            case '2': return "Small 15.5-75k lbs";
-            case '3': return "Large 75-300k lbs";
-            case '4': return "High vortex (B757)";
-            case '5': return "Heavy >300k lbs";
-            case '6': return "High perf >5g, >400kt";
+            case '1': return "Light";
+            case '2': return "Small";
+            case '3': return "Large";
+            case '4': return "High vortex";
+            case '5': return "Heavy";
+            case '6': return "High perf";
             case '7': return "Rotorcraft";
         }
     } else if (cat[0] == 'B') {
         switch (cat[1]) {
-            case '1': return "Glider/Sailplane";
-            case '2': return "Lighter-than-air";
-            case '3': return "Parachutist";
+            case '1': return "Glider";
+            case '2': return "Balloon";
+            case '3': return "Parachute";
             case '4': return "Ultralight";
-            case '6': return "UAV/Drone";
-            case '7': return "Space vehicle";
+            case '6': return "UAV";
+            case '7': return "Space";
         }
     } else if (cat[0] == 'C') {
         switch (cat[1]) {
-            case '1': return "Emergency vehicle";
-            case '2': return "Service vehicle";
+            case '1': return "Emergency veh";
+            case '2': return "Service veh";
             case '3': return "Obstruction";
         }
     }
@@ -119,14 +135,40 @@ static const char *decode_squawk(uint16_t sq) {
     }
 }
 
+// Type line: "Desc (CODE)  ·  Cat A3: Large" — keeps category with the
+// aircraft identity instead of floating alone at a fixed x=500.
+static void set_type_and_category(const char *desc_or_type, const char *type_code,
+                                  const char *category) {
+    char buf[96];
+    int pos = 0;
+    if (desc_or_type && desc_or_type[0]) {
+        if (type_code && type_code[0] && strcmp(desc_or_type, type_code) != 0)
+            pos = snprintf(buf, sizeof(buf), "%s (%s)", desc_or_type, type_code);
+        else
+            pos = snprintf(buf, sizeof(buf), "%s", desc_or_type);
+    } else if (type_code && type_code[0]) {
+        pos = snprintf(buf, sizeof(buf), "%s", type_code);
+    } else {
+        buf[0] = '\0';
+    }
+
+    const char *cat_desc = decode_category(category ? category : "");
+    if (category && category[0]) {
+        if (pos > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, "  ·  ");
+        if (cat_desc[0])
+            snprintf(buf + pos, sizeof(buf) - pos, "Cat %s: %s", category, cat_desc);
+        else
+            snprintf(buf + pos, sizeof(buf) - pos, "Cat %s", category);
+    }
+    lv_label_set_text(_type_label, buf);
+}
+
 static void on_enrichment_ready(AircraftEnrichment *data) {
     if (!_visible) return;
 
-    // Model — more detailed than bulk API desc
+    // Model — more detailed than bulk API desc; keep category on the same line.
     if (data->model[0]) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "%s (%s)", data->model, _current_ac.type_code);
-        lv_label_set_text(_type_label, buf);
+        set_type_and_category(data->model, _current_ac.type_code, _current_ac.category);
     }
 
     // Aircraft details line: manufacturer | country year | engines
@@ -138,30 +180,22 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         pos += snprintf(detail + pos, sizeof(detail) - pos, "%s", data->manufacturer);
     }
     if (data->registered_country[0]) {
-        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, "  |  ");
+        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, "  ·  ");
         pos += snprintf(detail + pos, sizeof(detail) - pos, "%s", data->registered_country);
         if (data->year_built > 0) {
             pos += snprintf(detail + pos, sizeof(detail) - pos, " %d", data->year_built);
         }
     } else if (data->year_built > 0) {
-        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, "  |  ");
+        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, "  ·  ");
         pos += snprintf(detail + pos, sizeof(detail) - pos, "Built %d", data->year_built);
     }
     if (data->engine_count > 0 && data->engine_type[0]) {
-        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, "  |  ");
+        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, "  ·  ");
         snprintf(detail + pos, sizeof(detail) - pos, "%dx %s", data->engine_count, data->engine_type);
     }
     if (detail[0]) lv_label_set_text(_aircraft_detail_label, detail);
 
-    if (data->photo_photographer[0]) {
-        lv_label_set_text_fmt(_photo_credit_label, "Photo: %s", data->photo_photographer);
-        lv_obj_clear_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
-    }
-
 #if !defined(ARDUINO)
-    // Real aircraft photo (planespotters thumbnail) -- Pi only. ESP32's
-    // PSRAM image path is broken (README Known Issues); credit text above
-    // is all it shows.
     if (data->photo_rgb565 && data->photo_w > 0 && data->photo_h > 0 && _photo_img) {
         memset(&_photo_dsc, 0, sizeof(_photo_dsc));
         _photo_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
@@ -173,14 +207,25 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         _photo_dsc.data = data->photo_rgb565;
         lv_image_set_src(_photo_img, &_photo_dsc);
         lv_obj_set_size(_photo_img, data->photo_w, data->photo_h);
-        lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 4);
+        lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 0);
         lv_obj_clear_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
         strlcpy(_photo_shown_icao, _current_ac.icao_hex, sizeof(_photo_shown_icao));
-        // Credit under the photo on the right
-        lv_obj_align_to(_photo_credit_label, _photo_img, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 4);
-        lv_obj_set_style_text_align(_photo_credit_label, LV_TEXT_ALIGN_RIGHT, 0);
-    }
+
+        if (data->photo_photographer[0]) {
+            lv_label_set_text_fmt(_photo_credit_label, "Photo: %s", data->photo_photographer);
+            lv_obj_clear_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_align_to(_photo_credit_label, _photo_img, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 4);
+            lv_obj_set_style_text_align(_photo_credit_label, LV_TEXT_ALIGN_RIGHT, 0);
+        }
+    } else
 #endif
+    if (data->photo_photographer[0]) {
+        // ESP32 (or Pi with metadata but no pixels): credit under identity.
+        lv_label_set_text_fmt(_photo_credit_label, "Photo: %s", data->photo_photographer);
+        lv_obj_clear_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_pos(_photo_credit_label, 0, 118);
+        lv_obj_set_style_text_align(_photo_credit_label, LV_TEXT_ALIGN_LEFT, 0);
+    }
 }
 
 static lv_obj_t *make_data_row(lv_obj_t *parent, const char *label_text,
@@ -367,10 +412,9 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_radius(_card, 12, 0);
     lv_obj_set_style_pad_all(_card, 16, 0);
     lv_obj_set_style_clip_corner(_card, true, 0);
-    lv_obj_add_flag(_card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(_card, LV_OBJ_FLAG_SCROLL_CHAIN);
-    lv_obj_set_scroll_dir(_card, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(_card, LV_SCROLLBAR_MODE_AUTO);
+    // Sized to fit — no scroll/scrollbar (photo used to overflow CARD_H).
+    lv_obj_clear_flag(_card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(_card, LV_SCROLLBAR_MODE_OFF);
 
     // Drag handle indicator
     lv_obj_t *handle = lv_obj_create(_card);
@@ -381,44 +425,49 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_border_width(handle, 0, 0);
     lv_obj_align(handle, LV_ALIGN_TOP_MID, 0, -8);
 
-    // === HEADER ===
+    // === HEADER (left column; photo owns the right on wide screens) ===
     _callsign_label = lv_label_create(_card);
     lv_obj_set_style_text_font(_callsign_label, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(_callsign_label, lv_color_white(), 0);
-    lv_obj_set_pos(_callsign_label, 0, 4);
+    lv_obj_set_pos(_callsign_label, 0, 0);
+    lv_obj_set_width(_callsign_label, IDENTITY_MAX_W - 120);
+    lv_label_set_long_mode(_callsign_label, LV_LABEL_LONG_CLIP);
 
     _badge_label = lv_label_create(_card);
     lv_obj_set_style_text_font(_badge_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(_badge_label, 280, 12);
+    lv_obj_align_to(_badge_label, _callsign_label, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
     lv_label_set_text(_badge_label, "");
 
     // Sub-header: Reg | ICAO | Squawk
     _reg_label = lv_label_create(_card);
     lv_obj_set_style_text_font(_reg_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_reg_label, CARD_DIM, 0);
-    lv_obj_set_pos(_reg_label, 0, 36);
+    lv_obj_set_pos(_reg_label, 0, 34);
+    lv_obj_set_width(_reg_label, IDENTITY_MAX_W);
+    lv_label_set_long_mode(_reg_label, LV_LABEL_LONG_CLIP);
 
     // === IDENTITY ===
     _operator_label = lv_label_create(_card);
     lv_obj_set_style_text_font(_operator_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_operator_label, CARD_ACCENT, 0);
-    lv_obj_set_pos(_operator_label, 0, 58);
+    lv_obj_set_pos(_operator_label, 0, 56);
+    lv_obj_set_width(_operator_label, IDENTITY_MAX_W);
+    lv_label_set_long_mode(_operator_label, LV_LABEL_LONG_CLIP);
 
     _type_label = lv_label_create(_card);
     lv_obj_set_style_text_font(_type_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_type_label, CARD_TEXT, 0);
     lv_obj_set_pos(_type_label, 0, 78);
-
-    _cat_label = lv_label_create(_card);
-    lv_obj_set_style_text_font(_cat_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_cat_label, CARD_DIM, 0);
-    lv_obj_set_pos(_cat_label, 500, 78);
+    lv_obj_set_width(_type_label, IDENTITY_MAX_W);
+    lv_label_set_long_mode(_type_label, LV_LABEL_LONG_CLIP);
 
     _aircraft_detail_label = lv_label_create(_card);
     lv_label_set_text(_aircraft_detail_label, "");
     lv_obj_set_style_text_font(_aircraft_detail_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_aircraft_detail_label, CARD_DIM, 0);
     lv_obj_set_pos(_aircraft_detail_label, 0, 98);
+    lv_obj_set_width(_aircraft_detail_label, IDENTITY_MAX_W);
+    lv_label_set_long_mode(_aircraft_detail_label, LV_LABEL_LONG_CLIP);
 
     _photo_credit_label = lv_label_create(_card);
     lv_label_set_text(_photo_credit_label, "");
@@ -427,17 +476,18 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_pos(_photo_credit_label, 0, 118);
     lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 
-#if !defined(ARDUINO)
-    // Right-side photo slot (planespotters thumbnail_large, up to ~440x280).
-    // Hidden until enrichment_linux fills photo_rgb565.
+#if !defined(ARDUINO) && LCD_H_RES >= 1280
+    // Reserved right column for planespotters thumbnail — telemetry grid
+    // starts below PHOTO_SLOT_H so fields never sit under the image.
     _photo_img = lv_image_create(_card);
-    lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 4);
+    lv_obj_set_size(_photo_img, PHOTO_SLOT_W, PHOTO_SLOT_H);
+    lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_add_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(_photo_img, LV_OBJ_FLAG_CLICKABLE);
 #endif
 
-    // === DATA GRID ROW 1 — flight state ===
-    int y1 = 178;
+    // === DATA GRID — full width, below identity/photo band ===
+    int y1 = GRID_Y0;
     make_data_row(_card, "ALTITUDE", COL1, y1, &_alt_label);
     make_data_row(_card, "GND SPD", COL2, y1, &_spd_label);
     make_data_row(_card, "HEADING", COL3, y1, &_hdg_label);
@@ -445,8 +495,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     make_data_row(_card, "SQUAWK", COL5, y1, &_squawk_label);
     make_data_row(_card, "STATUS", COL6, y1, &_status_label);
 
-    // === DATA GRID ROW 2 — position & tracking ===
-    int y2 = 220;
+    int y2 = GRID_Y0 + 42;
     make_data_row(_card, "DISTANCE", COL1, y2, &_dist_label);
     make_data_row(_card, "BEARING", COL2, y2, &_bearing_label);
     make_data_row(_card, "LAT", COL3, y2, &_lat_label);
@@ -454,8 +503,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     make_data_row(_card, "TRACKED", COL5, y2, &_track_label);
     make_data_row(_card, "SIGNAL", COL6, y2, &_signal_label);
 
-    // === DATA GRID ROW 3 — extended flight params ===
-    int y3 = 262;
+    int y3 = GRID_Y0 + 84;
     make_data_row(_card, "MACH", COL1, y3, &_mach_label);
     make_data_row(_card, "IAS", COL2, y3, &_ias_label);
     make_data_row(_card, "TAS", COL3, y3, &_tas_label);
@@ -480,6 +528,8 @@ void detail_card_show(const Aircraft *ac) {
 
     // === HEADER ===
     lv_label_set_text(_callsign_label, ac->callsign[0] ? ac->callsign : ac->icao_hex);
+    // Re-anchor badge after callsign text width changes
+    lv_obj_align_to(_badge_label, _callsign_label, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
 
     // Military / Emergency badge
     if (ac->is_emergency) {
@@ -496,10 +546,10 @@ void detail_card_show(const Aircraft *ac) {
     // Sub-header: Reg | ICAO | Squawk with decode
     const char *sq_decode = decode_squawk(ac->squawk);
     if (sq_decode[0]) {
-        lv_label_set_text_fmt(_reg_label, "%s  |  %s  |  Sq %04d (%s)",
+        lv_label_set_text_fmt(_reg_label, "%s  ·  %s  ·  Sq %04d (%s)",
                               ac->registration, ac->icao_hex, ac->squawk, sq_decode);
     } else {
-        lv_label_set_text_fmt(_reg_label, "%s  |  %s  |  Sq %04d",
+        lv_label_set_text_fmt(_reg_label, "%s  ·  %s  ·  Sq %04d",
                               ac->registration, ac->icao_hex, ac->squawk);
     }
 
@@ -515,25 +565,10 @@ void detail_card_show(const Aircraft *ac) {
         lv_label_set_text(_operator_label, ac->owner_op[0] ? ac->owner_op : "");
     }
 
-    // Type description
     if (ac->desc[0]) {
-        char buf[52];
-        snprintf(buf, sizeof(buf), "%s (%s)", ac->desc, ac->type_code);
-        lv_label_set_text(_type_label, buf);
-    } else if (ac->type_code[0]) {
-        lv_label_set_text(_type_label, ac->type_code);
+        set_type_and_category(ac->desc, ac->type_code, ac->category);
     } else {
-        lv_label_set_text(_type_label, "");
-    }
-
-    // Category
-    const char *cat_desc = decode_category(ac->category);
-    if (cat_desc[0]) {
-        lv_label_set_text_fmt(_cat_label, "Cat %s: %s", ac->category, cat_desc);
-    } else if (ac->category[0]) {
-        lv_label_set_text_fmt(_cat_label, "Cat %s", ac->category);
-    } else {
-        lv_label_set_text(_cat_label, "");
+        set_type_and_category(ac->type_code, nullptr, ac->category);
     }
 
     // Clear enrichment fields
@@ -550,7 +585,6 @@ void detail_card_show(const Aircraft *ac) {
     render_grid(ac);
 
     // === Slide in ===
-    lv_obj_scroll_to_y(_card, 0, LV_ANIM_OFF);
     _visible = true;
     lv_anim_t a;
     lv_anim_init(&a);
@@ -605,6 +639,6 @@ bool detail_card_is_visible() {
 }
 
 void detail_card_scroll(int delta) {
-    if (!_visible || !_card) return;
-    lv_obj_scroll_by(_card, 0, -delta * 40, LV_ANIM_ON);
+    // Card is no longer scrollable — kept for API compat (swipe may still call).
+    (void)delta;
 }
