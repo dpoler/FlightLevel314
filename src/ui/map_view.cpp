@@ -1035,23 +1035,6 @@ static void draw_aircraft(lv_layer_t *layer) {
 #define LEGEND_ALT_Y  (LCD_V_RES - 28)
 #define LEGEND_BOTTOM (LCD_V_RES - 14)
 
-// Solid backdrop behind both legend rows. Without this, an airport/runway
-// label (or an aircraft tag) that happens to render underneath reads as
-// jumbled overlapping text -- the legend was already drawn last so it sits
-// on top and stays legible on its own, but "legible on top of a mess" isn't
-// the same as "not a mess." An opaque panel (not just high-opacity) erases
-// whatever's underneath within its footprint instead of layering over it.
-static void draw_legend_backdrop(lv_layer_t *layer) {
-    lv_draw_rect_dsc_t bg;
-    lv_draw_rect_dsc_init(&bg);
-    bg.bg_color = BG_COLOR;
-    bg.bg_opa = LV_OPA_COVER;
-    bg.radius = 6;
-    lv_area_t a = {(lv_coord_t)LEGEND_X0, (lv_coord_t)(LEGEND_ICON_Y - 6),
-                   (lv_coord_t)(LEGEND_X0 + LEGEND_W), (lv_coord_t)LEGEND_BOTTOM};
-    lv_draw_rect(layer, &bg, &a);
-}
-
 static void draw_altitude_legend(lv_layer_t *layer) {
     // Colors sourced from altitude_color() at a representative altitude in
     // each labeled band, rather than a second hardcoded palette -- keeps the
@@ -1229,7 +1212,9 @@ static void canvas_draw_cb(lv_event_t *e) {
         draw_saved_airports(layer);
     }
     draw_aircraft(layer);
-    draw_legend_backdrop(layer);
+    // Legend prints on the map with no panel — the old opaque BG_COLOR
+    // backdrop matched the solid canvas before basemaps, but with a live
+    // basemap it read as a dark-blue bar covering rings/aircraft.
     draw_icon_legend(layer);
     draw_altitude_legend(layer);
     draw_filter_label(layer);
