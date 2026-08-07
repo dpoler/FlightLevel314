@@ -178,18 +178,13 @@ static void draw_rings(lv_layer_t *layer) {
 // LV_DRAW_SW_DRAW_UNIT_CNT=1 (single-threaded software rasterizer, not
 // using the Pi's other 3 cores), and each lv_draw_* call carries real
 // dispatch/clip overhead beyond the pixels it touches -- two rounds of
-// cuts (160->24 segments, dropped 3-ring blip glow to 1 then removed it
-// entirely, see draw_blips()) still reported jumpy. This round drops the
-// hub glow (3 extra draws/frame, purely decorative, easiest thing to cut
-// without losing the actual "sweep" effect) and halves the trail again
-// (24->12) -- still 2x jc1060's 6-band count, but total extra draws vs.
-// jc1060's original is now small (12 trail + 3 bloom = 15 draws, vs.
-// jc1060's 7) rather than the large multiples tried before. If this is
-// *still* jumpy, the bottleneck likely isn't this function's draw count
-// at all -- worth checking whether jc1060's original unmodified sweep
-// (temporarily force the #else branch) is itself smooth on the Pi, to
-// isolate whether something structural (e.g. the whole view's per-frame
-// redraw, or the DRM present path) is the real cost, not this addition.
+// draw-count cuts still reported jumpy, so guessing at counts stopped
+// being useful. Per-phase profiling added instead (profile_record()/
+// profile_maybe_log() below, journalctl -u adsb-pi) -- deliberately
+// turned this back UP to a demanding level (was cut down to 12/36 in the
+// last round) so the profiling data actually shows something under real
+// load instead of measuring the already-trimmed case. Tune from the
+// logged numbers, not blind, once they're in.
 static void draw_sweep(lv_layer_t *layer) {
     float rad = _sweep_angle * M_PI / 180.0f;
     int ex = RADAR_CX + (int)(RADAR_R * sinf(rad));
@@ -199,11 +194,10 @@ static void draw_sweep(lv_layer_t *layer) {
     lv_draw_line_dsc_init(&line);
     line.color = COLOR_SWEEP;
 
-    // Comet tail: a handful of thin segments over a moderate arc,
-    // opacity following an eased (squared) falloff instead of discrete
-    // steps.
-    const float TAIL_DEG = 36.0f;
-    const int TAIL_SEGMENTS = 12;
+    // Comet tail: many thin segments over a wide arc, opacity following
+    // an eased (squared) falloff instead of discrete steps.
+    const float TAIL_DEG = 80.0f;
+    const int TAIL_SEGMENTS = 120;
     for (int i = TAIL_SEGMENTS; i >= 1; i--) {
         float t = (float)i / TAIL_SEGMENTS;   // 1.0 (far) .. ~0 (near sweep)
         float trail_rad = (_sweep_angle - t * TAIL_DEG) * M_PI / 180.0f;
@@ -223,6 +217,18 @@ static void draw_sweep(lv_layer_t *layer) {
     line.opa = LV_OPA_20; line.width = 7; lv_draw_line(layer, &line);
     line.opa = LV_OPA_40; line.width = 4; lv_draw_line(layer, &line);
     line.opa = LV_OPA_COVER; line.width = 2; lv_draw_line(layer, &line);
+
+    // Center hub glow -- small pulsing halo at the origin.
+    lv_draw_rect_dsc_t hub;
+    lv_draw_rect_dsc_init(&hub);
+    hub.bg_color = COLOR_SWEEP;
+    hub.radius = LV_RADIUS_CIRCLE;
+    for (int r = 6; r >= 2; r -= 2) {
+        hub.bg_opa = (lv_opa_t)(LV_OPA_20 * (8 - r) / 2);
+        lv_area_t ha = {(lv_coord_t)(RADAR_CX - r), (lv_coord_t)(RADAR_CY - r),
+                         (lv_coord_t)(RADAR_CX + r), (lv_coord_t)(RADAR_CY + r)};
+        lv_draw_rect(layer, &hub, &ha);
+    }
 }
 #else
 static void draw_sweep(lv_layer_t *layer) {
@@ -327,12 +333,38 @@ static void draw_blips(lv_layer_t *layer) {
             }
         }
 
-        // Blip dot — larger for better visibility. Was briefly a
-        // Pi-exclusive glow (1-3 rings under a core dot); reverted --
-        // "still jumpy" after cutting the sweep trail down too, so
-        // pulling this per-aircraft cost out entirely to isolate whether
-        // the sweep trail alone is the bottleneck or something else is.
-        // Revisit once the sweep itself is confirmed smooth.
+#if !defined(ARDUINO)
+        // Pi-exclusive glowing blip -- concentric fading halo under a
+        // bright core dot, instead of jc1060's flat filled square (kept
+        // verbatim in the #else below). Turned back up to 3 rings for the
+        // profiling pass (draw_sweep()'s comment) -- was cut to 1 then
+        // removed entirely across two rounds of blind guessing without
+        // resolving "jumpy"; restoring the demanding version so the
+        // per-phase timing log actually shows what this costs instead of
+        // measuring the already-trimmed case.
+        lv_draw_rect_dsc_t glow;
+        lv_draw_rect_dsc_init(&glow);
+        glow.bg_color = color;
+        glow.radius = LV_RADIUS_CIRCLE;
+        static const int GLOW_R[3] = {9, 7, 5};
+        static const uint8_t GLOW_PCT[3] = {20, 35, 55};
+        for (int gi = 0; gi < 3; gi++) {
+            int r = GLOW_R[gi];
+            glow.bg_opa = (uint8_t)((opa * GLOW_PCT[gi]) / 100);
+            lv_area_t ga = {(lv_coord_t)(sx - r), (lv_coord_t)(sy - r),
+                            (lv_coord_t)(sx + r), (lv_coord_t)(sy + r)};
+            lv_draw_rect(layer, &glow, &ga);
+        }
+        lv_draw_rect_dsc_t dot;
+        lv_draw_rect_dsc_init(&dot);
+        dot.bg_color = color;
+        dot.bg_opa = opa;
+        dot.radius = LV_RADIUS_CIRCLE;
+        lv_area_t area = {(lv_coord_t)(sx - 3), (lv_coord_t)(sy - 3),
+                          (lv_coord_t)(sx + 3), (lv_coord_t)(sy + 3)};
+        lv_draw_rect(layer, &dot, &area);
+#else
+        // Blip dot — larger for better visibility
         lv_draw_rect_dsc_t dot;
         lv_draw_rect_dsc_init(&dot);
         dot.bg_color = color;
@@ -341,6 +373,7 @@ static void draw_blips(lv_layer_t *layer) {
         lv_area_t area = {(lv_coord_t)(sx - 4), (lv_coord_t)(sy - 4),
                           (lv_coord_t)(sx + 4), (lv_coord_t)(sy + 4)};
         lv_draw_rect(layer, &dot, &area);
+#endif
 
         // Labels — two zones: paint detail (0-45deg) and condensed
         // (45-240deg). Each of Flight ID / Alt-Speed / Type is independently
@@ -853,8 +886,50 @@ static void draw_filter_label(lv_layer_t *layer) {
     lv_draw_label(layer, &lbl, &la);
 }
 
+#if !defined(ARDUINO)
+// Temporary per-phase profiling -- "still jumpy" persisted through two
+// rounds of pure draw-count cuts, so measuring instead of cutting a
+// third time blind. Logs avg/max per phase every ~2s of wall time (not
+// every frame, would flood journalctl) to stdout/journalctl -u adsb-pi.
+// Delete this whole #if block (and the profile_record()/profile_maybe_log()
+// calls sprinkled through radar_draw_cb below) once the actual
+// bottleneck is identified and fixed -- same "temporary, clearly marked,
+// removed once its job is done" pattern as the earlier debug ruler.
+struct RadarProfilePhase {
+    const char *name;
+    uint32_t sum_ms = 0, max_ms = 0, count = 0;
+};
+static RadarProfilePhase _prof_rings{"rings"}, _prof_sweep{"sweep"},
+    _prof_blips{"blips"}, _prof_legend{"legend"}, _prof_total{"TOTAL"};
+static uint32_t _prof_last_log_ms = 0;
+
+static void profile_record(RadarProfilePhase &p, uint32_t dt) {
+    p.sum_ms += dt;
+    if (dt > p.max_ms) p.max_ms = dt;
+    p.count++;
+}
+
+static void profile_maybe_log() {
+    uint32_t now = millis();
+    if (now - _prof_last_log_ms < 2000) return;
+    _prof_last_log_ms = now;
+    RadarProfilePhase *phases[] = {&_prof_rings, &_prof_sweep, &_prof_blips, &_prof_legend, &_prof_total};
+    platform_log("[RadarProfile] ");
+    for (RadarProfilePhase *p : phases) {
+        uint32_t avg = p->count ? p->sum_ms / p->count : 0;
+        platform_log("%s avg=%ums max=%ums (n=%u) ", p->name, avg, p->max_ms, p->count);
+        p->sum_ms = 0; p->max_ms = 0; p->count = 0;
+    }
+    platform_log("\n");
+}
+#endif
+
 static void radar_draw_cb(lv_event_t *e) {
     lv_layer_t *layer = lv_event_get_layer(e);
+#if !defined(ARDUINO)
+    uint32_t t_frame_start = millis();
+    uint32_t t_start = t_frame_start, t;
+#endif
     draw_rings(layer);
     // Secondary locations -- other airports + the active location's own
     // marker. Off gives the "just dots" look (VIEW menu, view_menu.cpp) --
@@ -866,12 +941,27 @@ static void radar_draw_cb(lv_event_t *e) {
 #endif
         draw_radar_saved_airports(layer);
     }
+#if !defined(ARDUINO)
+    t = millis(); profile_record(_prof_rings, t - t_start); t_start = t;
+#endif
     draw_sweep(layer);
+#if !defined(ARDUINO)
+    t = millis(); profile_record(_prof_sweep, t - t_start); t_start = t;
+#endif
     draw_blips(layer);
+#if !defined(ARDUINO)
+    t = millis(); profile_record(_prof_blips, t - t_start); t_start = t;
+#endif
     draw_radar_legend_backdrop(layer);
     draw_radar_icon_legend(layer);
     draw_radar_altitude_legend(layer);
     draw_filter_label(layer);
+#if !defined(ARDUINO)
+    t = millis();
+    profile_record(_prof_legend, t - t_start);
+    profile_record(_prof_total, t - t_frame_start);
+    profile_maybe_log();
+#endif
 }
 
 static void update_filter_visuals() {
