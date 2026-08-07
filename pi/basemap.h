@@ -15,6 +15,11 @@ extern "C" {
 void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int canvas_h,
                      int geo_center_y, int bullseye_r_px);
 
+// LVGL-thread only. Installs a newly-built basemap (if any) into the buffer
+// that basemap_draw reads. Call between frames (e.g. map timer), never from
+// a worker thread. Returns true if a new basemap was installed.
+bool basemap_poll_swap(void);
+
 // Draw the current basemap (if ready) under map content. Safe from the
 // LVGL draw callback. No-op until the first successful fetch completes.
 void basemap_draw(lv_layer_t *layer);
