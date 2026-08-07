@@ -172,6 +172,9 @@ size_t curl_write(char *ptr, size_t size, size_t nmemb, void *userdata) {
 }
 
 bool http_get(const std::string &url, std::vector<uint8_t> &out) {
+    static std::once_flag curl_once;
+    std::call_once(curl_once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+
     CURL *curl = curl_easy_init();
     if (!curl) return false;
     CurlBuf buf;
@@ -181,12 +184,145 @@ bool http_get(const std::string &url, std::vector<uint8_t> &out) {
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ADS-B-Display-Basemap/1.0");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 8L);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ""); // enable gzip if offered
     CURLcode rc = curl_easy_perform(curl);
     long code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
     curl_easy_cleanup(curl);
     if (rc != CURLE_OK || (code != 200 && code != 404)) return false;
     out.swap(buf.data);
+    return true;
+}
+
+// Parallel tile downloads (sequential curl was the dominant cost - ~100-140
+// tiles at 50nm). Up to MAX_PARALLEL in flight; connection reuse via multi.
+constexpr int MAX_PARALLEL = 8;
+
+struct TileFetch {
+    std::string url;
+    int dst_x = 0;
+    int dst_y = 0;
+    CurlBuf buf;
+    CURL *easy = nullptr;
+    bool finished = false;
+    bool ok = false;
+};
+
+bool decode_tile_image(const std::vector<uint8_t> &bytes, std::vector<uint8_t> &rgba,
+                       unsigned &w, unsigned &h);
+void blit_tile_rgba(std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
+                    const std::vector<uint8_t> &tile_rgba, int dst_x, int dst_y);
+
+void bind_easy(TileFetch &job) {
+    job.easy = curl_easy_init();
+    job.buf.data.clear();
+    job.finished = false;
+    job.ok = false;
+    curl_easy_setopt(job.easy, CURLOPT_URL, job.url.c_str());
+    curl_easy_setopt(job.easy, CURLOPT_WRITEFUNCTION, curl_write);
+    curl_easy_setopt(job.easy, CURLOPT_WRITEDATA, &job.buf);
+    curl_easy_setopt(job.easy, CURLOPT_USERAGENT, "ADS-B-Display-Basemap/1.0");
+    curl_easy_setopt(job.easy, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(job.easy, CURLOPT_TIMEOUT, 20L);
+    curl_easy_setopt(job.easy, CURLOPT_CONNECTTIMEOUT, 8L);
+    curl_easy_setopt(job.easy, CURLOPT_ACCEPT_ENCODING, "");
+    curl_easy_setopt(job.easy, CURLOPT_PRIVATE, &job);
+}
+
+// Fetch all jobs with curl_multi; decode+blit as each completes.
+// Returns false if the request gen was superseded mid-flight.
+bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
+                          std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
+                          uint32_t gen, int fetch_pct_end) {
+    if (jobs.empty()) return true;
+    static std::once_flag curl_once;
+    std::call_once(curl_once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+
+    CURLM *multi = curl_multi_init();
+    if (!multi) return false;
+    curl_multi_setopt(multi, CURLMOPT_MAX_TOTAL_CONNECTIONS, (long)MAX_PARALLEL);
+    curl_multi_setopt(multi, CURLMOPT_MAX_HOST_CONNECTIONS, (long)MAX_PARALLEL);
+
+    const int total = (int)jobs.size();
+    int next = 0;
+    int done = 0;
+    int running = 0;
+
+    auto start_more = [&]() {
+        while (running < MAX_PARALLEL && next < total) {
+            TileFetch &job = jobs[(size_t)next++];
+            bind_easy(job);
+            curl_multi_add_handle(multi, job.easy);
+            running++;
+        }
+    };
+
+    start_more();
+    progress_set(gen, true, 1);
+
+    while (done < total) {
+        {
+            std::lock_guard<std::mutex> lock(g_mu);
+            if (gen != g_req_gen) {
+                // Drop in-flight handles; ignore remaining results.
+                for (auto &job : jobs) {
+                    if (job.easy) {
+                        curl_multi_remove_handle(multi, job.easy);
+                        curl_easy_cleanup(job.easy);
+                        job.easy = nullptr;
+                    }
+                }
+                curl_multi_cleanup(multi);
+                return false;
+            }
+        }
+
+        int still = 0;
+        curl_multi_perform(multi, &still);
+
+        int msgs = 0;
+        while (CURLMsg *msg = curl_multi_info_read(multi, &msgs)) {
+            if (msg->msg != CURLMSG_DONE) continue;
+            CURL *easy = msg->easy_handle;
+            char *priv = nullptr;
+            curl_easy_getinfo(easy, CURLINFO_PRIVATE, &priv);
+            TileFetch *job = reinterpret_cast<TileFetch *>(priv);
+            long code = 0;
+            curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &code);
+            if (job) {
+                job->finished = true;
+                job->ok = (msg->data.result == CURLE_OK && code == 200 && !job->buf.data.empty());
+                if (job->ok) {
+                    std::vector<uint8_t> rgba;
+                    unsigned tw = 0, th = 0;
+                    if (decode_tile_image(job->buf.data, rgba, tw, th)) {
+                        blit_tile_rgba(mosaic, mosaic_w, mosaic_h, rgba,
+                                       job->dst_x, job->dst_y);
+                    }
+                }
+                job->buf.data.clear();
+                job->buf.data.shrink_to_fit();
+            }
+            curl_multi_remove_handle(multi, easy);
+            curl_easy_cleanup(easy);
+            if (job) job->easy = nullptr;
+            running--;
+            done++;
+            progress_set(gen, true, (done * fetch_pct_end) / total);
+            start_more();
+        }
+
+        if (done >= total) break;
+        if (still == 0 && next >= total) {
+            // Nothing left running and nothing to start - avoid spinning.
+            break;
+        }
+        int wait_ms = 100;
+        curl_multi_wait(multi, nullptr, 0, wait_ms, nullptr);
+    }
+
+    curl_multi_cleanup(multi);
     return true;
 }
 
@@ -209,8 +345,19 @@ int osm_zoom_for_radius(float radius_nm, int usable_h, float center_lat) {
 int zoom_for_style(int style, float radius_nm, int usable_h, float center_lat) {
     int z = osm_zoom_for_radius(radius_nm, usable_h, center_lat);
     if (style == MAP_BASEMAP_STYLE_SECTIONAL) {
+        // Screen-pixel matching at 50nm wants z~10 (~140 tiles). Sectional
+        // chart paper doesn't need that - coarser LODs read fine and cut
+        // download count dramatically (z=8 ~9-25 tiles).
+        if (radius_nm >= 40.0f) z = SECTIONAL_Z_MIN;
+        else if (radius_nm >= 15.0f) {
+            if (z > 9) z = 9;
+        }
         if (z < SECTIONAL_Z_MIN) z = SECTIONAL_Z_MIN;
         if (z > SECTIONAL_Z_MAX) z = SECTIONAL_Z_MAX;
+    } else if (radius_nm >= 40.0f && z > 4) {
+        // Matching zoom at 50nm is still ~100 OSM tiles; one level coarser
+        // is plenty under warp/opacity and ~4x fewer downloads.
+        z--;
     }
     return z;
 }
@@ -494,10 +641,10 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         }
     }
 
-    int tx0 = (int)floor(min_mx / TILE_PX) - 1;
-    int tx1 = (int)floor(max_mx / TILE_PX) + 1;
-    int ty0 = (int)floor(min_my / TILE_PX) - 1;
-    int ty1 = (int)floor(max_my / TILE_PX) + 1;
+    int tx0 = (int)floor(min_mx / TILE_PX);
+    int tx1 = (int)floor(max_mx / TILE_PX);
+    int ty0 = (int)floor(min_my / TILE_PX);
+    int ty1 = (int)floor(max_my / TILE_PX);
     // Clamp Y to valid mercator tile rows; X wraps.
     if (ty0 < 0) ty0 = 0;
     if (ty1 >= n) ty1 = n - 1;
@@ -525,43 +672,32 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     }
 
     const int tile_total = tiles_w * tiles_h;
-    int tile_done = 0;
     // Tile downloads dominate wall time (esp. sectional JPEG); warp is the rest.
     constexpr int FETCH_PCT_END = 80;
 
+    std::vector<TileFetch> jobs;
+    jobs.reserve((size_t)tile_total);
     for (int ty = ty0; ty <= ty1; ty++) {
         for (int tx = tx0; tx <= tx1; tx++) {
-            {
-                std::lock_guard<std::mutex> lock(g_mu);
-                if (gen != g_req_gen) return false;
-            }
             int wtx = tx % n;
             if (wtx < 0) wtx += n;
-
+            TileFetch job;
             char url[320];
             format_tile_url(url, sizeof(url), slot.style, z, wtx, ty);
-            std::vector<uint8_t> bytes;
-            if (!http_get(url, bytes) || bytes.empty()) {
-                tile_done++;
-                progress_set(gen, true, (tile_done * FETCH_PCT_END) / tile_total);
-                continue;
-            }
-
-            std::vector<uint8_t> rgba;
-            unsigned tw = 0, th = 0;
-            if (!decode_tile_image(bytes, rgba, tw, th)) {
-                tile_done++;
-                progress_set(gen, true, (tile_done * FETCH_PCT_END) / tile_total);
-                continue;
-            }
-
-            int dst_x = (tx - tx0) * TILE_PX;
-            int dst_y = (ty - ty0) * TILE_PX;
-            blit_tile_rgba(mosaic, mosaic_w, mosaic_h, rgba, dst_x, dst_y);
-            tile_done++;
-            progress_set(gen, true, (tile_done * FETCH_PCT_END) / tile_total);
+            job.url = url;
+            job.dst_x = (tx - tx0) * TILE_PX;
+            job.dst_y = (ty - ty0) * TILE_PX;
+            jobs.push_back(std::move(job));
         }
     }
+
+    platform_log("Basemap: fetching %d tiles at z=%d (parallel %d)\n",
+                 tile_total, z, MAX_PARALLEL);
+    const uint32_t t_fetch0 = platform_millis();
+    if (!fetch_tiles_parallel(jobs, mosaic, mosaic_w, mosaic_h, gen, FETCH_PCT_END))
+        return false;
+    platform_log("Basemap: tile fetch %ums for %d tiles\n",
+                 (unsigned)(platform_millis() - t_fetch0), tile_total);
 
     // Anti-alias before the nonlinear warp. Critical for two reasons:
     // 1) Mercator tile *row* boundaries are constant-latitude → exact
@@ -586,6 +722,7 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         slot.rgb565[i + 1] = (uint8_t)(bg >> 8);
     }
 
+    const uint32_t t_warp0 = platform_millis();
     for (int sy = 0; sy < slot.h; sy++) {
         if ((sy & 31) == 0) {
             std::lock_guard<std::mutex> lock(g_mu);
@@ -623,6 +760,8 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
             slot.rgb565[off + 1] = (uint8_t)(pix >> 8);
         }
     }
+    platform_log("Basemap: warp %ums (%dx%d)\n",
+                 (unsigned)(platform_millis() - t_warp0), slot.w, slot.h);
 
     slot.bind_dsc();
     slot.valid = true;
