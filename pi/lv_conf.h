@@ -49,17 +49,17 @@
 #define LV_USE_ANIM 1
 
 /* OS + multi-core software draw.
- * Pi 3B+ has 4 cores; until now LV_USE_OS defaulted to LV_OS_NONE and
- * DRAW_UNIT_CNT was 1, so the SW rasterizer ran entirely on the main
- * thread -- matching the ~4.5-6ms/draw-call cost measured on real DRM.
- * pthread + CNT=2 fans draw tasks across two cores (leave headroom for
- * the UI main thread and the detached fetch thread). Try 3 later if
- * profiling shows headroom; don't jump straight to 4.
+ * Pi 3B+ has 4 cores. LV_USE_OS defaulted to LV_OS_NONE and DRAW_UNIT_CNT
+ * was 1, so the SW rasterizer ran entirely on the main thread -- matching
+ * the ~4.5-6ms/draw-call cost measured on real DRM. pthread + CNT>1 fans
+ * draw tasks across worker cores (leave headroom for the UI main thread
+ * and the detached fetch thread). Currently trying CNT=3 after CNT=2
+ * looked smooth with text_local fixes; don't jump straight to 4.
  * Stack bumped to 32KB because LVGL's internal ThorVG path is enabled
  * when CNT > 1 (lv_draw_sw.c) -- LVGL's own note recommends >=32KB then. */
 #define LV_USE_OS LV_OS_PTHREAD
 #define LV_DRAW_THREAD_STACK_SIZE (32 * 1024)
-#define LV_DRAW_SW_DRAW_UNIT_CNT 2
+#define LV_DRAW_SW_DRAW_UNIT_CNT 3
 
 /* Image decoders */
 #define LV_USE_LODEPNG 1
