@@ -585,6 +585,10 @@ void worker_main(uint32_t gen) {
             g_inbox = std::move(local);
             g_inbox.bind_dsc();
             g_inbox_ready = true;
+            platform_log("Weather: ready %dx%d\n", g_inbox.w, g_inbox.h);
+        } else if (gen != g_req_gen) {
+            platform_log("Weather: discarded superseded build (gen %u → %u)\n",
+                         (unsigned)gen, (unsigned)g_req_gen);
         }
         g_worker_busy = false;
     }
@@ -600,14 +604,33 @@ void weather_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     std::lock_guard<std::mutex> lock(g_mu);
     const bool front_ok = slot_matches(g_front, lat, lon, radius_nm,
                                        canvas_w, canvas_h, geo_center_y, bullseye_r_px);
+    // Map's 1s timer calls us every tick for TTL refresh. A fresh front with
+    // nothing pending is a no-op — do not bump g_req_gen.
     if (front_ok && slot_fresh(g_front) && !g_worker_busy && !g_inbox_ready) {
         return;
     }
 
+    const bool same_req =
+        fabsf(g_req_lat - lat) < 1e-4f && fabsf(g_req_lon - lon) < 1e-4f &&
+        fabsf(g_req_radius - radius_nm) < 0.5f &&
+        g_req_w == canvas_w && g_req_h == canvas_h &&
+        g_req_cy == geo_center_y && g_req_br == bullseye_r_px &&
+        g_req_w > 0;
+
+    // Already fetching (or holding a finished inbox) for this geometry —
+    // bumping gen here used to cancel the worker mid-fetch forever.
+    if (same_req && (g_worker_busy || g_inbox_ready)) {
+        return;
+    }
+
+    // Geometry changed: drop the drawn buffer. TTL refresh keeps the stale
+    // front visible until the new inbox swaps in.
     if (!front_ok) {
         g_front.valid = false;
     }
-    g_inbox_ready = false;
+    if (!same_req) {
+        g_inbox_ready = false;
+    }
 
     g_req_lat = lat;
     g_req_lon = lon;
