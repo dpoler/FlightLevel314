@@ -17,6 +17,8 @@
 #include "../src/data/error_log.h"
 #include "../src/data/fetcher.h"
 #include "../src/platform/platform.h"
+#include "../src/ui/map_view.h"
+#include "basemap.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -40,7 +42,7 @@ static UserConfig _cfg;
 static settings_changed_cb_t _on_change = nullptr;
 
 #define PANEL_W 370
-#define PANEL_H 420
+#define PANEL_H 470
 #define FIELD_W 280
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
@@ -230,6 +232,26 @@ void settings_init(lv_obj_t *parent) {
 
     status_refresh(nullptr);
     lv_timer_create(status_refresh, 2000, nullptr);
+
+    // Expire all basemap mosaics (Carto + sectional). Instant action — not
+    // part of Save. Refetch happens the next time Map asks for a basemap.
+    lv_obj_t *cache_btn = lv_button_create(_panel);
+    lv_obj_set_size(cache_btn, FIELD_W + 30, 34);
+    lv_obj_align(cache_btn, LV_ALIGN_BOTTOM_MID, 0, -58);
+    lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
+    lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
+    lv_obj_set_style_border_width(cache_btn, 1, 0);
+    lv_obj_set_style_radius(cache_btn, 6, 0);
+    lv_obj_t *cache_lbl = lv_label_create(cache_btn);
+    lv_label_set_text(cache_lbl, "Clear map cache");
+    lv_obj_set_style_text_color(cache_lbl, lv_color_hex(0xffaa66), 0);
+    lv_obj_set_style_text_font(cache_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(cache_lbl);
+    lv_obj_add_event_cb(cache_btn, [](lv_event_t *e) {
+        int n = basemap_cache_clear();
+        platform_log("Settings: cleared %d basemap cache file(s)\n", n);
+        map_view_on_show(); // re-request for current projection if Map is live
+    }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *save_btn = lv_button_create(_panel);
     lv_obj_set_size(save_btn, 120, 40);

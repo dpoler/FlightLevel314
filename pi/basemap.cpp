@@ -30,6 +30,8 @@
 #include <thread>
 #include <vector>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <unistd.h>
 #include <cstdlib>
 
 #define STBI_ONLY_PNG
@@ -497,4 +499,35 @@ void basemap_draw(lv_layer_t *layer) {
 bool basemap_ready(void) {
     return slot_matches(g_front, g_req_lat, g_req_lon, g_req_radius,
                         g_req_w, g_req_h, g_req_cy, g_req_br, g_req_style);
+}
+
+int basemap_cache_clear(void) {
+    // Drop in-memory mosaics first so draw doesn't keep showing deleted disk.
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        g_front = BasemapSlot{};
+        g_inbox = BasemapSlot{};
+        g_inbox_ready = false;
+        g_req_gen++; // supersede any in-flight worker publish
+    }
+
+    std::string dir = cache_dir();
+    DIR *d = opendir(dir.c_str());
+    if (!d) {
+        platform_log("Basemap: cache clear — no dir at %s\n", dir.c_str());
+        return 0;
+    }
+    int removed = 0;
+    while (dirent *ent = readdir(d)) {
+        if (!ent->d_name[0] || ent->d_name[0] == '.') continue;
+        const char *name = ent->d_name;
+        size_t len = strlen(name);
+        if (len < 8 || strcmp(name + len - 7, ".rgb565") != 0) continue;
+        std::string path = dir + "/" + name;
+        if (unlink(path.c_str()) == 0) removed++;
+    }
+    closedir(d);
+    platform_log("Basemap: cache clear — removed %d file(s) from %s\n",
+                 removed, dir.c_str());
+    return removed;
 }

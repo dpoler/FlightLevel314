@@ -471,7 +471,8 @@ mostly chronological.
   Licensing/sourcing/storage-budget for sectionals not investigated. Not
   scoped. (Partial: Pi Map now has live/cached basemap styles via
   `pi/basemap.cpp` — Carto dark / dark_nolabels / FAA VFR sectional tiles —
-  with per-style disk-cache TTLs; see PR #4.)
+  with per-style disk-cache TTLs and a Settings "Clear map cache" button;
+  see PR #4.)
 
 - **Map legend backdrop vs basemap (Pi)**: before the basemap, the opaque
   legend panel (`draw_legend_backdrop` in `map_view.cpp`) was invisible

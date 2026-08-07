@@ -27,6 +27,11 @@ void basemap_draw(lv_layer_t *layer);
 // True once at least one basemap buffer is ready to blit.
 bool basemap_ready(void);
 
+// Delete all on-disk basemap mosaics and drop the in-memory front/inbox
+// buffers. LVGL-thread only. Next basemap_request() will refetch.
+// Returns the number of cache files removed.
+int basemap_cache_clear(void);
+
 #ifdef __cplusplus
 }
 #endif
