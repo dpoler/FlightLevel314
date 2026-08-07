@@ -696,6 +696,8 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
                                        canvas_w, canvas_h, geo_center_y, bullseye_r_px,
                                        style);
     if (front_ok && !g_worker_busy && !g_inbox_ready) {
+        g_prog_visible = false;
+        g_prog_pct = 0;
         return;
     }
 
