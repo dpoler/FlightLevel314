@@ -25,8 +25,10 @@
 #include "../third_party/stb_image.h"
 
 #define MAX_CACHE 20
-#define PHOTO_MAX_W 260
-#define PHOTO_MAX_H 150
+// Prefer near-native thumbnail_large (~360-500 x 280). Aggressive shrink
+// with nearest-neighbor is what made early photos look grainy.
+#define PHOTO_MAX_W 440
+#define PHOTO_MAX_H 280
 
 namespace {
 
@@ -71,8 +73,8 @@ bool http_get_json(const char *url, JsonDocument &doc) {
 }
 
 bool http_get_bytes(const char *url, std::vector<uint8_t> &out) {
-    // Thumbnails are ~30KB; leave headroom for larger "thumbnail_large".
-    std::vector<char> buf(256 * 1024);
+    // thumbnail_large is typically ~30-80KB.
+    std::vector<char> buf(512 * 1024);
     size_t len = 0;
     if (!platform_http_get(url, buf.data(), buf.size(), &len) || len == 0) return false;
     out.assign((uint8_t *)buf.data(), (uint8_t *)buf.data() + len);
@@ -83,13 +85,39 @@ uint16_t rgb888_to_rgb565(uint8_t r, uint8_t g, uint8_t b) {
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-// Decode JPEG/PNG bytes to a downscaled RGB565 buffer owned by the caller.
+static inline uint8_t sample_channel(const unsigned char *rgb, int w, int h,
+                                     float x, float y, int c) {
+    // Bilinear sample of channel c in an RGB888 buffer.
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x > (float)(w - 1)) x = (float)(w - 1);
+    if (y > (float)(h - 1)) y = (float)(h - 1);
+    int x0 = (int)x;
+    int y0 = (int)y;
+    int x1 = x0 + 1 < w ? x0 + 1 : x0;
+    int y1 = y0 + 1 < h ? y0 + 1 : y0;
+    float fx = x - (float)x0;
+    float fy = y - (float)y0;
+    const unsigned char *p00 = rgb + ((size_t)y0 * (size_t)w + (size_t)x0) * 3 + c;
+    const unsigned char *p10 = rgb + ((size_t)y0 * (size_t)w + (size_t)x1) * 3 + c;
+    const unsigned char *p01 = rgb + ((size_t)y1 * (size_t)w + (size_t)x0) * 3 + c;
+    const unsigned char *p11 = rgb + ((size_t)y1 * (size_t)w + (size_t)x1) * 3 + c;
+    float v = (1 - fx) * (1 - fy) * (float)(*p00)
+            + fx * (1 - fy) * (float)(*p10)
+            + (1 - fx) * fy * (float)(*p01)
+            + fx * fy * (float)(*p11);
+    if (v < 0) v = 0;
+    if (v > 255) v = 255;
+    return (uint8_t)(v + 0.5f);
+}
+
+// Decode JPEG/PNG to RGB565. Keeps near-native size; bilinear when scaling.
 bool decode_photo_rgb565(const uint8_t *bytes, size_t len,
                          uint8_t **out_rgb, uint16_t *out_w, uint16_t *out_h) {
     int w = 0, h = 0, n = 0;
-    unsigned char *rgba = stbi_load_from_memory(bytes, (int)len, &w, &h, &n, 3);
-    if (!rgba || w <= 0 || h <= 0) {
-        if (rgba) stbi_image_free(rgba);
+    unsigned char *rgb = stbi_load_from_memory(bytes, (int)len, &w, &h, &n, 3);
+    if (!rgb || w <= 0 || h <= 0) {
+        if (rgb) stbi_image_free(rgb);
         return false;
     }
 
@@ -107,22 +135,44 @@ bool decode_photo_rgb565(const uint8_t *bytes, size_t len,
     size_t bytes_out = (size_t)dw * (size_t)dh * 2;
     uint8_t *rgb565 = (uint8_t *)malloc(bytes_out);
     if (!rgb565) {
-        stbi_image_free(rgba);
+        stbi_image_free(rgb);
         return false;
     }
 
+    // Ordered 2x2 dither softens RGB565 banding (reads as grain on sky/fuselage).
+    static const float dither[2][2] = {
+        { 0.0f / 4.0f, 2.0f / 4.0f },
+        { 3.0f / 4.0f, 1.0f / 4.0f },
+    };
+
+    const bool scale = (dw != w) || (dh != h);
     for (int y = 0; y < dh; y++) {
-        int sy = (y * h) / dh;
         for (int x = 0; x < dw; x++) {
-            int sx = (x * w) / dw;
-            const unsigned char *p = rgba + ((size_t)sy * (size_t)w + (size_t)sx) * 3;
-            uint16_t pix = rgb888_to_rgb565(p[0], p[1], p[2]);
+            uint8_t r, g, b;
+            if (!scale) {
+                const unsigned char *p = rgb + ((size_t)y * (size_t)w + (size_t)x) * 3;
+                r = p[0]; g = p[1]; b = p[2];
+            } else {
+                float sx = ((float)x + 0.5f) * (float)w / (float)dw - 0.5f;
+                float sy = ((float)y + 0.5f) * (float)h / (float)dh - 0.5f;
+                r = sample_channel(rgb, w, h, sx, sy, 0);
+                g = sample_channel(rgb, w, h, sx, sy, 1);
+                b = sample_channel(rgb, w, h, sx, sy, 2);
+            }
+            float d = dither[y & 1][x & 1];
+            int ri = (int)r + (int)(d * 7.0f);
+            int gi = (int)g + (int)(d * 3.0f);
+            int bi = (int)b + (int)(d * 7.0f);
+            if (ri > 255) ri = 255;
+            if (gi > 255) gi = 255;
+            if (bi > 255) bi = 255;
+            uint16_t pix = rgb888_to_rgb565((uint8_t)ri, (uint8_t)gi, (uint8_t)bi);
             size_t off = ((size_t)y * (size_t)dw + (size_t)x) * 2;
             rgb565[off] = (uint8_t)(pix & 0xFF);
             rgb565[off + 1] = (uint8_t)(pix >> 8);
         }
     }
-    stbi_image_free(rgba);
+    stbi_image_free(rgb);
     *out_rgb = rgb565;
     *out_w = (uint16_t)dw;
     *out_h = (uint16_t)dh;

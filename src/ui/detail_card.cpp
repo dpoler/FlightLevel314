@@ -173,10 +173,12 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         _photo_dsc.data = data->photo_rgb565;
         lv_image_set_src(_photo_img, &_photo_dsc);
         lv_obj_set_size(_photo_img, data->photo_w, data->photo_h);
+        lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 4);
         lv_obj_clear_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
         strlcpy(_photo_shown_icao, _current_ac.icao_hex, sizeof(_photo_shown_icao));
         // Credit under the photo on the right
-        lv_obj_align_to(_photo_credit_label, _photo_img, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
+        lv_obj_align_to(_photo_credit_label, _photo_img, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 4);
+        lv_obj_set_style_text_align(_photo_credit_label, LV_TEXT_ALIGN_RIGHT, 0);
     }
 #endif
 }
@@ -426,10 +428,10 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 
 #if !defined(ARDUINO)
-    // Right-side photo slot (planespotters thumbnail). Hidden until
-    // enrichment_linux fills photo_rgb565.
+    // Right-side photo slot (planespotters thumbnail_large, up to ~440x280).
+    // Hidden until enrichment_linux fills photo_rgb565.
     _photo_img = lv_image_create(_card);
-    lv_obj_set_pos(_photo_img, LCD_H_RES - 16 - 260, 4);
+    lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 4);
     lv_obj_add_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(_photo_img, LV_OBJ_FLAG_CLICKABLE);
 #endif
