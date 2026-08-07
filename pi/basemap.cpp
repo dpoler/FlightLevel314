@@ -14,8 +14,7 @@
 // Cache: one RGB565 file per (style, lat, lon, range, canvas geometry).
 // Freshness is mtime vs a per-style TTL (OSM/Carto ~30d; sectionals ~40d
 // so we refetch ahead of the ~56-day chart cycle). Filename includes an
-// `eq4` tag: sharper wide-range zoom bias + lighter pre-warp blur
-// (invalidates softer eq3 mosaics).
+// `eq5` tag: HTTP/1.1 tile fetch (fixes OpenTopo missing squares under HTTP/2).
 
 #include "basemap.h"
 
@@ -186,6 +185,7 @@ bool http_get(const std::string &url, std::vector<uint8_t> &out) {
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 8L);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ""); // enable gzip if offered
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
     CURLcode rc = curl_easy_perform(curl);
     long code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
@@ -207,6 +207,7 @@ struct TileFetch {
     CURL *easy = nullptr;
     bool finished = false;
     bool ok = false;
+    int attempts = 0; // includes the in-flight try
 };
 
 bool decode_tile_image(const std::vector<uint8_t> &bytes, std::vector<uint8_t> &rgba,
@@ -227,11 +228,16 @@ void bind_easy(TileFetch &job) {
     curl_easy_setopt(job.easy, CURLOPT_TIMEOUT, 20L);
     curl_easy_setopt(job.easy, CURLOPT_CONNECTTIMEOUT, 8L);
     curl_easy_setopt(job.easy, CURLOPT_ACCEPT_ENCODING, "");
+    // OpenTopoMap drops multiplexed HTTP/2 streams under parallel load
+    // (CURLE_HTTP2_STREAM / empty body) → missing squares. HTTP/1.1 is
+    // reliable for all our tile hosts.
+    curl_easy_setopt(job.easy, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
     curl_easy_setopt(job.easy, CURLOPT_PRIVATE, &job);
 }
 
 // Fetch all jobs with curl_multi; decode+blit as each completes.
-// Returns false if the request gen was superseded mid-flight.
+// Failed tiles are retried a couple of times (OpenTopo was especially flaky
+// under HTTP/2 multiplex). Returns false if the request gen was superseded.
 bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
                           std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
                           uint32_t gen, int fetch_pct_end) {
@@ -248,10 +254,13 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
     int next = 0;
     int done = 0;
     int running = 0;
+    int failed = 0;
+    constexpr int MAX_ATTEMPTS = 3;
 
     auto start_more = [&]() {
         while (running < MAX_PARALLEL && next < total) {
             TileFetch &job = jobs[(size_t)next++];
+            job.attempts = 1;
             bind_easy(job);
             curl_multi_add_handle(multi, job.easy);
             running++;
@@ -265,7 +274,6 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
         {
             std::lock_guard<std::mutex> lock(g_mu);
             if (gen != g_req_gen) {
-                // Drop in-flight handles; ignore remaining results.
                 for (auto &job : jobs) {
                     if (job.easy) {
                         curl_multi_remove_handle(multi, job.easy);
@@ -290,32 +298,47 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
             TileFetch *job = reinterpret_cast<TileFetch *>(priv);
             long code = 0;
             curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &code);
-            if (job) {
-                job->finished = true;
-                job->ok = (msg->data.result == CURLE_OK && code == 200 && !job->buf.data.empty());
-                if (job->ok) {
-                    std::vector<uint8_t> rgba;
-                    unsigned tw = 0, th = 0;
-                    if (decode_tile_image(job->buf.data, rgba, tw, th)) {
-                        blit_tile_rgba(mosaic, mosaic_w, mosaic_h, rgba,
-                                       job->dst_x, job->dst_y);
-                    }
+            bool hop = (msg->data.result == CURLE_OK && code == 200 && job &&
+                        !job->buf.data.empty());
+            bool decoded = false;
+            if (hop) {
+                std::vector<uint8_t> rgba;
+                unsigned tw = 0, th = 0;
+                if (decode_tile_image(job->buf.data, rgba, tw, th)) {
+                    blit_tile_rgba(mosaic, mosaic_w, mosaic_h, rgba,
+                                   job->dst_x, job->dst_y);
+                    decoded = true;
                 }
-                job->buf.data.clear();
-                job->buf.data.shrink_to_fit();
             }
+
             curl_multi_remove_handle(multi, easy);
             curl_easy_cleanup(easy);
             if (job) job->easy = nullptr;
             running--;
+
+            if (job && !decoded && job->attempts < MAX_ATTEMPTS) {
+                // Retry transient empty/HTTP2/timeout failures.
+                job->attempts++;
+                bind_easy(*job);
+                curl_multi_add_handle(multi, job->easy);
+                running++;
+                continue;
+            }
+
+            if (job) {
+                job->finished = true;
+                job->ok = decoded;
+                if (!decoded) failed++;
+                job->buf.data.clear();
+                job->buf.data.shrink_to_fit();
+            }
             done++;
             progress_set(gen, true, (done * fetch_pct_end) / total);
             start_more();
         }
 
         if (done >= total) break;
-        if (still == 0 && next >= total) {
-            // Nothing left running and nothing to start - avoid spinning.
+        if (still == 0 && next >= total && running == 0) {
             break;
         }
         int wait_ms = 100;
@@ -323,6 +346,9 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
     }
 
     curl_multi_cleanup(multi);
+    if (failed > 0) {
+        platform_log("Basemap: %d/%d tiles failed after retries\n", failed, total);
+    }
     return true;
 }
 
@@ -431,7 +457,7 @@ void ensure_dir(const std::string &path) {
 std::string cache_path(int style, float lat, float lon, float radius_nm,
                        int w, int h, int cy, int br) {
     char name[220];
-    snprintf(name, sizeof(name), "%s/%s_eq4_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
+    snprintf(name, sizeof(name), "%s/%s_eq5_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
              cache_dir().c_str(), style_cache_tag(style),
              lat, lon, radius_nm, w, h, cy, br);
     return name;
