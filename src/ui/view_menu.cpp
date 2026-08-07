@@ -250,7 +250,7 @@ static void open_overlay() {
     if (show_basemap) {
         // ============================================================
         // Basemap -- Carto dark / FAA VFR sectional under Map.
-        // Style cycles Dark → Dark (no labels) → Light → VFR Sectional.
+        // Style: Dark → Dark NL → Light (Voyager) → Light NL → Topo → Sectional.
         // Opacity is per-style (10-100%); each style remembers its own.
         // ============================================================
         section_header(_panel, "BASEMAP", 352);

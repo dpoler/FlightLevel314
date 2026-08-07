@@ -91,11 +91,13 @@ bool slot_matches(const BasemapSlot &s, float lat, float lon, float radius_nm,
 
 const char *style_cache_tag(int style) {
     switch (style) {
-    case MAP_BASEMAP_STYLE_DARK_NOLABELS: return "darknl";
-    case MAP_BASEMAP_STYLE_SECTIONAL:     return "vfrsec";
-    case MAP_BASEMAP_STYLE_LIGHT:         return "light";
+    case MAP_BASEMAP_STYLE_DARK_NOLABELS:  return "darknl";
+    case MAP_BASEMAP_STYLE_SECTIONAL:      return "vfrsec";
+    case MAP_BASEMAP_STYLE_LIGHT:          return "voyager";
+    case MAP_BASEMAP_STYLE_LIGHT_NOLABELS: return "voyagernl";
+    case MAP_BASEMAP_STYLE_TOPO:           return "opentopo";
     case MAP_BASEMAP_STYLE_DARK:
-    default:                              return "dark";
+    default:                               return "dark";
     }
 }
 
@@ -103,15 +105,37 @@ const char *style_cache_tag(int style) {
 int style_cache_ttl_days(int style) {
     switch (style) {
     case MAP_BASEMAP_STYLE_SECTIONAL:
-        // Chart cycle is ~56 days; refresh a bit early so we don't sit on
-        // an expired edition for long after the next one publishes.
         return 40;
+    case MAP_BASEMAP_STYLE_TOPO:
+        // Contours/landcover move slowly; same ballpark as OSM.
+        return 30;
     case MAP_BASEMAP_STYLE_DARK:
     case MAP_BASEMAP_STYLE_DARK_NOLABELS:
     case MAP_BASEMAP_STYLE_LIGHT:
+    case MAP_BASEMAP_STYLE_LIGHT_NOLABELS:
     default:
-        // OSM/Carto roads/labels change slowly for a personal kiosk.
         return 30;
+    }
+}
+
+// Empty/OOB fill matching each style's paper (avoids dark gutters on light maps).
+void style_paper_rgb(int style, uint8_t &r, uint8_t &g, uint8_t &b) {
+    switch (style) {
+    case MAP_BASEMAP_STYLE_LIGHT:
+    case MAP_BASEMAP_STYLE_LIGHT_NOLABELS:
+        r = 0xfb; g = 0xf7; b = 0xf0; // Carto Voyager cream
+        break;
+    case MAP_BASEMAP_STYLE_TOPO:
+        r = 0xe8; g = 0xe4; b = 0xd0;
+        break;
+    case MAP_BASEMAP_STYLE_SECTIONAL:
+        r = 0xf2; g = 0xea; b = 0xd0; // chart paper
+        break;
+    case MAP_BASEMAP_STYLE_DARK:
+    case MAP_BASEMAP_STYLE_DARK_NOLABELS:
+    default:
+        r = 0x0a; g = 0x0a; b = 0x1a;
+        break;
     }
 }
 
@@ -177,8 +201,19 @@ void format_tile_url(char *buf, size_t buflen, int style, int z, int x, int y) {
                  "https://basemaps.cartocdn.com/dark_nolabels/%d/%d/%d.png", z, x, y);
         break;
     case MAP_BASEMAP_STYLE_LIGHT:
+        // Voyager is cream/warm — Carto light_all is near-white and harsh on a
+        // night-cockpit display. Positron is no longer on this CDN.
         snprintf(buf, buflen,
-                 "https://basemaps.cartocdn.com/light_all/%d/%d/%d.png", z, x, y);
+                 "https://basemaps.cartocdn.com/rastertiles/voyager/%d/%d/%d.png", z, x, y);
+        break;
+    case MAP_BASEMAP_STYLE_LIGHT_NOLABELS:
+        snprintf(buf, buflen,
+                 "https://basemaps.cartocdn.com/rastertiles/voyager_nolabels/%d/%d/%d.png",
+                 z, x, y);
+        break;
+    case MAP_BASEMAP_STYLE_TOPO:
+        snprintf(buf, buflen,
+                 "https://tile.opentopomap.org/%d/%d/%d.png", z, x, y);
         break;
     case MAP_BASEMAP_STYLE_SECTIONAL:
         // ArcGIS MapServer tile path is /tile/{z}/{y}/{x} (y before x).
@@ -335,11 +370,12 @@ void box_blur_3x3(std::vector<uint8_t> &img, int w, int h) {
     }
 }
 
-// Bilinear sample of an RGBA mosaic. Out of bounds → dark Map bg.
+// Bilinear sample of an RGBA mosaic. Out of bounds → style paper color.
 void sample_mosaic_rgb(const std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
-                       double u, double v, uint8_t &r, uint8_t &g, uint8_t &b) {
+                       double u, double v, uint8_t pr, uint8_t pg, uint8_t pb,
+                       uint8_t &r, uint8_t &g, uint8_t &b) {
     if (u < 0 || v < 0 || u >= mosaic_w - 1 || v >= mosaic_h - 1) {
-        r = 0x0a; g = 0x0a; b = 0x1a;
+        r = pr; g = pg; b = pb;
         return;
     }
     int x0 = (int)floor(u);
@@ -365,13 +401,14 @@ void sample_mosaic_rgb(const std::vector<uint8_t> &mosaic, int mosaic_w, int mos
 // (cheap area filter — kills moiré when upsampling chart paper).
 void sample_mosaic_area(const std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
                         double u, double v, double du, double dv,
+                        uint8_t pr, uint8_t pg, uint8_t pb,
                         uint8_t &r, uint8_t &g, uint8_t &b) {
     double span = du > dv ? du : dv;
     int n = 1;
     if (span > 1.25) n = 2;
     if (span > 2.5) n = 3;
     if (n == 1) {
-        sample_mosaic_rgb(mosaic, mosaic_w, mosaic_h, u, v, r, g, b);
+        sample_mosaic_rgb(mosaic, mosaic_w, mosaic_h, u, v, pr, pg, pb, r, g, b);
         return;
     }
     double rs = 0, gs = 0, bs = 0;
@@ -382,7 +419,7 @@ void sample_mosaic_area(const std::vector<uint8_t> &mosaic, int mosaic_w, int mo
             double uu = u0 + (i + 0.5) * du / n;
             double vv = v0 + (j + 0.5) * dv / n;
             uint8_t rr, gg, bb;
-            sample_mosaic_rgb(mosaic, mosaic_w, mosaic_h, uu, vv, rr, gg, bb);
+            sample_mosaic_rgb(mosaic, mosaic_w, mosaic_h, uu, vv, pr, pg, pb, rr, gg, bb);
             rs += rr; gs += gg; bs += bb;
         }
     }
@@ -456,9 +493,14 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
 
     const int mosaic_w = tiles_w * TILE_PX;
     const int mosaic_h = tiles_h * TILE_PX;
+    uint8_t paper_r, paper_g, paper_b;
+    style_paper_rgb(slot.style, paper_r, paper_g, paper_b);
     std::vector<uint8_t> mosaic((size_t)mosaic_w * mosaic_h * 4);
     for (size_t i = 0; i < mosaic.size(); i += 4) {
-        mosaic[i] = 0x0a; mosaic[i + 1] = 0x0a; mosaic[i + 2] = 0x1a; mosaic[i + 3] = 255;
+        mosaic[i] = paper_r;
+        mosaic[i + 1] = paper_g;
+        mosaic[i + 2] = paper_b;
+        mosaic[i + 3] = 255;
     }
 
     for (int ty = ty0; ty <= ty1; ty++) {
@@ -501,7 +543,7 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     const double origin_mx = (double)tx0 * TILE_PX;
     const double origin_my = (double)ty0 * TILE_PX;
 
-    uint16_t bg = rgb888_to_rgb565(0x0a, 0x0a, 0x1a);
+    uint16_t bg = rgb888_to_rgb565(paper_r, paper_g, paper_b);
     for (size_t i = 0; i < slot.rgb565.size(); i += 2) {
         slot.rgb565[i] = (uint8_t)(bg & 0xFF);
         slot.rgb565[i + 1] = (uint8_t)(bg >> 8);
@@ -533,7 +575,8 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
             if (dv < 1.0) dv = 1.0;
             uint8_t r, g, b;
             sample_mosaic_area(mosaic, mosaic_w, mosaic_h,
-                               mx - origin_mx, my - origin_my, du, dv, r, g, b);
+                               mx - origin_mx, my - origin_my, du, dv,
+                               paper_r, paper_g, paper_b, r, g, b);
             uint16_t pix = rgb888_to_rgb565(r, g, b);
             size_t off = ((size_t)sy * slot.w + sx) * 2;
             slot.rgb565[off] = (uint8_t)(pix & 0xFF);

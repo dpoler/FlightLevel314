@@ -42,7 +42,7 @@ UserConfig storage_load_config() {
         cfg.view_show_secondary_locations[i] = true;
     }
     cfg.map_basemap_enabled = true;
-    for (int i = 0; i < 4; i++) cfg.map_basemap_opa[i] = 50;
+    for (int i = 0; i < 6; i++) cfg.map_basemap_opa[i] = 50;
     cfg.map_basemap_style = 0; // Carto dark_all
     cfg.last_view_idx = 0;   // VIEW_MAP
     cfg.last_range_idx = 0;  // widest preset
@@ -96,7 +96,7 @@ UserConfig storage_load_config() {
     int legacy_opa = _prefs.getInt("bm_opa", 50);
     if (legacy_opa < 10) legacy_opa = 10;
     if (legacy_opa > 100) legacy_opa = 100;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 6; i++) {
         char key[12];
         snprintf(key, sizeof(key), "bm_opa%d", i);
         cfg.map_basemap_opa[i] = _prefs.getInt(key, legacy_opa);
@@ -105,7 +105,7 @@ UserConfig storage_load_config() {
     }
     cfg.map_basemap_style = _prefs.getInt("bm_style", cfg.map_basemap_style);
     if (cfg.map_basemap_style < 0) cfg.map_basemap_style = 0;
-    if (cfg.map_basemap_style > 3) cfg.map_basemap_style = 3;
+    if (cfg.map_basemap_style > 5) cfg.map_basemap_style = 5;
     cfg.last_view_idx = _prefs.getInt("last_view", cfg.last_view_idx);
     cfg.last_range_idx = _prefs.getInt("last_rng", cfg.last_range_idx);
     if (_prefs.isKey("last_loc"))
@@ -157,7 +157,7 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putBool("show2loc0", cfg.view_show_secondary_locations[0]);
     _prefs.putBool("show2loc1", cfg.view_show_secondary_locations[1]);
     _prefs.putBool("bm_on", cfg.map_basemap_enabled);
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 6; i++) {
         char key[12];
         snprintf(key, sizeof(key), "bm_opa%d", i);
         _prefs.putInt(key, cfg.map_basemap_opa[i]);
