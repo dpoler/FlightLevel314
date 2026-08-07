@@ -48,3 +48,16 @@ void secondary_locations_toggle() {
     g_config.view_show_secondary_locations[i] = !g_config.view_show_secondary_locations[i];
     storage_save_config(g_config);
 }
+
+bool map_basemap_shown() { return g_config.map_basemap_enabled; }
+void map_basemap_toggle() {
+    g_config.map_basemap_enabled = !g_config.map_basemap_enabled;
+    storage_save_config(g_config);
+}
+
+int map_basemap_opa() { return g_config.map_basemap_opa; }
+void map_basemap_opa_set(int pct) {
+    if (pct < 10) pct = 10;
+    if (pct > 100) pct = 100;
+    g_config.map_basemap_opa = pct;
+}
