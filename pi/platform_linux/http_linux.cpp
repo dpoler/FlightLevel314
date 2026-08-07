@@ -28,7 +28,9 @@ bool platform_http_get(const char *url, char *out, size_t out_size, size_t *out_
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "adsb-pi-port/0.1");
+    // Planespotters (and some other APIs) reject generic library UAs with
+    // HTTP 403 -- identify the app and include a contact URL.
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "adsb/0.1 (+https://github.com/dpoler/adsb)");
 
     CURLcode res = curl_easy_perform(curl);
     long http_code = 0;
