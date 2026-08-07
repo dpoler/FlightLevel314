@@ -54,3 +54,10 @@ void map_basemap_opa_set(int pct);  // sets opacity for the active style
 int map_basemap_style();
 const char *map_basemap_style_name();
 void map_basemap_style_cycle();
+
+// Pi Map weather overlay (RainViewer precip radar). Opacity 10-100%;
+// map_weather_opa_set() does not persist — caller saves on slider release.
+bool map_weather_shown();
+void map_weather_toggle();
+int map_weather_opa();
+void map_weather_opa_set(int pct);

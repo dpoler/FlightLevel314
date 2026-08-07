@@ -96,3 +96,16 @@ void map_basemap_style_cycle() {
     }
     storage_save_config(g_config);
 }
+
+bool map_weather_shown() { return g_config.map_weather_enabled; }
+void map_weather_toggle() {
+    g_config.map_weather_enabled = !g_config.map_weather_enabled;
+    storage_save_config(g_config);
+}
+
+int map_weather_opa() { return g_config.map_weather_opa; }
+void map_weather_opa_set(int pct) {
+    if (pct < 10) pct = 10;
+    if (pct > 100) pct = 100;
+    g_config.map_weather_opa = pct;
+}

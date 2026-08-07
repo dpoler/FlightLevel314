@@ -11,8 +11,8 @@
 
 #define PANEL_W 270
 #define PANEL_H 460
-// Extra height when the Pi Map BASEMAP section is shown (toggle + style + opacity).
-#define PANEL_H_WITH_BASEMAP 640
+// Extra height when the Pi Map BASEMAP + WEATHER sections are shown.
+#define PANEL_H_WITH_BASEMAP 780
 
 #define COLOR_PANEL  lv_color_hex(0x14142a)
 #define COLOR_ACCENT lv_color_hex(0x00cc66)
@@ -26,6 +26,8 @@ static lv_obj_t *_len_label = nullptr;
 static lv_obj_t *_bm_opa_label = nullptr;
 static lv_obj_t *_bm_style_lbl = nullptr;
 static lv_obj_t *_bm_opa_slider = nullptr;
+static lv_obj_t *_wx_opa_label = nullptr;
+static lv_obj_t *_wx_opa_slider = nullptr;
 
 static void close_overlay() {
     if (_overlay) {
@@ -49,6 +51,8 @@ static void close_overlay() {
         _bm_opa_label = nullptr;
         _bm_style_lbl = nullptr;
         _bm_opa_slider = nullptr;
+        _wx_opa_label = nullptr;
+        _wx_opa_slider = nullptr;
     }
 }
 
@@ -326,7 +330,51 @@ static void open_overlay() {
             storage_save_config(g_config);
         }, LV_EVENT_PRESS_LOST, nullptr);
 
-        alerts_y = 512;
+        // ============================================================
+        // Weather -- RainViewer precip radar (public API, no key).
+        // ============================================================
+        section_header(_panel, "WEATHER", 512);
+        toggle_row(_panel, "Show weather", 540, map_weather_shown(), [](lv_event_t *e) {
+            if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != map_weather_shown())
+                map_weather_toggle();
+            map_view_on_show(); // kick fetch when enabling
+            map_view_update();
+        });
+
+        lv_obj_t *wx_opa_lbl = lv_label_create(_panel);
+        lv_label_set_text(wx_opa_lbl, "Opacity");
+        lv_obj_set_style_text_font(wx_opa_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(wx_opa_lbl, COLOR_DIM, 0);
+        lv_obj_set_pos(wx_opa_lbl, 0, 574);
+
+        _wx_opa_label = lv_label_create(_panel);
+        lv_label_set_text_fmt(_wx_opa_label, "%d%%", map_weather_opa());
+        lv_obj_set_style_text_color(_wx_opa_label, lv_color_white(), 0);
+        lv_obj_set_style_text_font(_wx_opa_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_pos(_wx_opa_label, PANEL_W - 20 - 50, 574);
+
+        _wx_opa_slider = lv_slider_create(_panel);
+        lv_obj_set_size(_wx_opa_slider, PANEL_W - 20, 10);
+        lv_obj_set_pos(_wx_opa_slider, 0, 598);
+        lv_slider_set_range(_wx_opa_slider, 10, 100);
+        lv_slider_set_value(_wx_opa_slider, map_weather_opa(), LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(_wx_opa_slider, lv_color_hex(0x333366), 0);
+        lv_obj_set_style_bg_color(_wx_opa_slider, COLOR_ACCENT, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(_wx_opa_slider, COLOR_ACCENT, LV_PART_KNOB);
+        lv_obj_add_event_cb(_wx_opa_slider, [](lv_event_t *e) {
+            int val = lv_slider_get_value(lv_event_get_target_obj(e));
+            map_weather_opa_set(val);
+            lv_label_set_text_fmt(_wx_opa_label, "%d%%", val);
+            map_view_update();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_add_event_cb(_wx_opa_slider, [](lv_event_t *e) {
+            storage_save_config(g_config);
+        }, LV_EVENT_RELEASED, nullptr);
+        lv_obj_add_event_cb(_wx_opa_slider, [](lv_event_t *e) {
+            storage_save_config(g_config);
+        }, LV_EVENT_PRESS_LOST, nullptr);
+
+        alerts_y = 630;
     }
 #endif
 

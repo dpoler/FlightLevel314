@@ -22,6 +22,7 @@
 #include "../src/ui/map_view.h"
 #include "../src/ui/range.h"
 #include "basemap.h"
+#include "weather.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -153,9 +154,11 @@ static void save_and_close(lv_event_t *e) {
 
 static void clear_all_caches_cb(lv_event_t *e) {
     int n = basemap_cache_clear();
+    int nw = weather_cache_clear();
     locations_nearby_cache_clear();
-    platform_log("Settings: cleared all caches (%d basemap file(s) + nearby runways)\n", n);
-    map_view_on_show(); // re-request basemap for current projection if Map is live
+    platform_log("Settings: cleared all caches (%d basemap + %d weather file(s) + nearby runways)\n",
+                 n, nw);
+    map_view_on_show(); // re-request basemap/weather for current projection if Map is live
 }
 
 static void factory_reset_cb(lv_event_t *e) {
@@ -174,6 +177,7 @@ static void factory_reset_cb(lv_event_t *e) {
     storage_factory_reset();
     locations_factory_reset();
     basemap_cache_clear();
+    weather_cache_clear();
 
     _cfg = storage_load_config(); // compiled defaults (no config.json)
     g_config = _cfg;
