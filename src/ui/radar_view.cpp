@@ -19,6 +19,9 @@
 #if __has_include("airports_db.h")
 #include "airports_db.h"
 #define HAS_AIRPORTS_DB 1
+#elif __has_include("ui/airports_db.h")
+#include "ui/airports_db.h"
+#define HAS_AIRPORTS_DB 1
 #else
 #define HAS_AIRPORTS_DB 0
 #endif
