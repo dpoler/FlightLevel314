@@ -8,7 +8,6 @@
 #include "display_prefs.h"
 #include "../pins_config.h"
 #include "../data/storage.h"
-#include "../data/locations.h"
 
 #define PANEL_W 270
 #define PANEL_H 460
@@ -248,14 +247,6 @@ static void open_overlay() {
         // without a real user toggle).
         if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != secondary_locations_shown())
             secondary_locations_toggle();
-        // Nearby large-airport runway cache is drawn under this toggle — if
-        // the eye is on but the cache is empty (e.g. airports_db was missing
-        // when it first ran), re-assert enable so Pi can kick a fresh scan.
-        int ai = locations_active_index();
-        if (ai >= 0 && secondary_locations_shown() && locations_nearby_enabled(ai) &&
-            locations_nearby_count(ai) == 0) {
-            locations_nearby_set_enabled(ai, true);
-        }
         int v = views_get_active_index();
         if (v == VIEW_MAP) map_view_update();
         else if (v == VIEW_RADAR) radar_view_update();
