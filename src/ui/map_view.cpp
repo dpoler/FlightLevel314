@@ -1072,6 +1072,80 @@ static void draw_filter_label(lv_layer_t *layer) {
     lv_draw_label(layer, &lbl, &la);
 }
 
+#if !defined(ARDUINO)
+// Lower-right status while a network basemap build is in flight (sectional
+// at 50nm can take a while). Cache hits stay silent.
+static void draw_basemap_updating(lv_layer_t *layer) {
+    if (!map_basemap_shown()) return;
+    int pct = 0;
+    if (!basemap_updating(&pct)) return;
+
+    const int panel_w = 176;
+    const int panel_h = 44;
+    const int margin = 10;
+    const int x1 = CANVAS_W - margin;
+    const int x0 = x1 - panel_w;
+    // Match legend vertical band (lower edge of canvas / near swipe bar).
+    const int y1 = LCD_V_RES - 16;
+    const int y0 = y1 - panel_h;
+
+    lv_draw_rect_dsc_t bg;
+    lv_draw_rect_dsc_init(&bg);
+    bg.bg_color = lv_color_hex(0x121826);
+    bg.bg_opa = LV_OPA_90;
+    bg.radius = 6;
+    bg.border_width = 1;
+    bg.border_color = lv_color_hex(0x3a4a66);
+    bg.border_opa = LV_OPA_60;
+    lv_area_t pa = {(lv_coord_t)x0, (lv_coord_t)y0, (lv_coord_t)x1, (lv_coord_t)y1};
+    lv_draw_rect(layer, &bg, &pa);
+
+    char label[40];
+    if (pct > 0)
+        snprintf(label, sizeof(label), "Updating map... %d%%", pct);
+    else
+        snprintf(label, sizeof(label), "Updating map...");
+
+    lv_draw_label_dsc_t lbl;
+    lv_draw_label_dsc_init(&lbl);
+    lbl.color = lv_color_hex(0xc8d2e4);
+    lbl.font = &lv_font_montserrat_14;
+    lbl.opa = LV_OPA_COVER;
+    lbl.text = label;
+    lbl.text_local = 1;
+    lv_area_t la = {(lv_coord_t)(x0 + 10), (lv_coord_t)(y0 + 4),
+                    (lv_coord_t)(x1 - 8), (lv_coord_t)(y0 + 20)};
+    lv_draw_label(layer, &lbl, &la);
+
+    const int bar_x0 = x0 + 10;
+    const int bar_x1 = x1 - 10;
+    const int bar_y0 = y0 + 26;
+    const int bar_y1 = y0 + 34;
+
+    lv_draw_rect_dsc_t track;
+    lv_draw_rect_dsc_init(&track);
+    track.bg_color = lv_color_hex(0x1e2a3c);
+    track.bg_opa = LV_OPA_COVER;
+    track.radius = 3;
+    lv_area_t ta = {(lv_coord_t)bar_x0, (lv_coord_t)bar_y0,
+                    (lv_coord_t)bar_x1, (lv_coord_t)bar_y1};
+    lv_draw_rect(layer, &track, &ta);
+
+    int fill_w = ((bar_x1 - bar_x0) * pct) / 100;
+    if (pct > 0 && fill_w < 4) fill_w = 4;
+    if (fill_w > 0) {
+        lv_draw_rect_dsc_t fill;
+        lv_draw_rect_dsc_init(&fill);
+        fill.bg_color = lv_color_hex(0x4a90d9);
+        fill.bg_opa = LV_OPA_COVER;
+        fill.radius = 3;
+        lv_area_t fa = {(lv_coord_t)bar_x0, (lv_coord_t)bar_y0,
+                        (lv_coord_t)(bar_x0 + fill_w), (lv_coord_t)bar_y1};
+        lv_draw_rect(layer, &fill, &fa);
+    }
+}
+#endif
+
 #if HAS_STATIC_MAP
 static lv_image_dsc_t _static_map_dscs[STATIC_MAP_COUNT];
 static bool _static_maps_inited = false;
@@ -1159,6 +1233,9 @@ static void canvas_draw_cb(lv_event_t *e) {
     draw_icon_legend(layer);
     draw_altitude_legend(layer);
     draw_filter_label(layer);
+#if !defined(ARDUINO)
+    draw_basemap_updating(layer);
+#endif
 }
 
 void map_view_init(lv_obj_t *parent, AircraftList *list) {
@@ -1360,9 +1437,19 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
             sync_active_location();
 #if !defined(ARDUINO)
             basemap_poll_swap();
+            // Refresh often while tiles download so the progress bar moves.
+            int bm_pct = 0;
+            bool updating = basemap_updating(&bm_pct);
+            lv_timer_set_period(t, updating ? 200 : 1000);
+            (void)bm_pct;
 #endif
             lv_obj_invalidate(_canvas);
         }
+#if !defined(ARDUINO)
+        else {
+            lv_timer_set_period(t, 1000);
+        }
+#endif
     }, 1000, nullptr);
 }
 

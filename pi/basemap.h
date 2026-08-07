@@ -27,6 +27,11 @@ void basemap_draw(lv_layer_t *layer);
 // True once at least one basemap buffer is ready to blit.
 bool basemap_ready(void);
 
+// True while a network/build is in progress for the current request
+// (not shown for instant disk-cache hits). *out_pct is 0..100 best-effort
+// progress; pass nullptr if unused. LVGL-thread safe.
+bool basemap_updating(int *out_pct);
+
 // Delete all on-disk basemap mosaics and drop the in-memory front/inbox
 // buffers. LVGL-thread only. Next basemap_request() will refetch.
 // Returns the number of cache files removed.
