@@ -66,6 +66,14 @@ float g_req_lat = 0, g_req_lon = 0, g_req_radius = 0;
 int g_req_w = 0, g_req_h = 0, g_req_cy = 0, g_req_br = 0;
 uint32_t g_req_gen = 0;
 
+bool slot_matches(const BasemapSlot &s, float lat, float lon, float radius_nm,
+                  int w, int h, int cy, int br) {
+    return s.valid &&
+           fabsf(s.lat - lat) < 1e-4f && fabsf(s.lon - lon) < 1e-4f &&
+           fabsf(s.radius_nm - radius_nm) < 0.5f &&
+           s.w == w && s.h == h && s.geo_cy == cy && s.bullseye_r == br;
+}
+
 struct CurlBuf {
     std::vector<uint8_t> data;
 };
@@ -324,14 +332,21 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     if (canvas_w <= 0 || canvas_h <= 0 || bullseye_r_px <= 0) return;
 
     std::lock_guard<std::mutex> lock(g_mu);
+    const bool front_ok = slot_matches(g_front, lat, lon, radius_nm,
+                                       canvas_w, canvas_h, geo_center_y, bullseye_r_px);
     // Skip if front already matches and nothing is in flight / pending.
-    if (g_front.valid && !g_worker_busy && !g_inbox_ready &&
-        fabsf(g_front.lat - lat) < 1e-4f && fabsf(g_front.lon - lon) < 1e-4f &&
-        fabsf(g_front.radius_nm - radius_nm) < 0.5f &&
-        g_front.w == canvas_w && g_front.h == canvas_h &&
-        g_front.geo_cy == geo_center_y && g_front.bullseye_r == bullseye_r_px) {
+    if (front_ok && !g_worker_busy && !g_inbox_ready) {
         return;
     }
+
+    // Projection already moved to the new location/range. Drop any basemap that
+    // doesn't match so runways/aircraft aren't drawn over the wrong geography
+    // while the replacement fetch runs (solid canvas bg until ready).
+    if (!front_ok) {
+        g_front.valid = false;
+    }
+    g_inbox_ready = false; // discard a pending publish for the previous request
+
     g_req_lat = lat;
     g_req_lon = lon;
     g_req_radius = radius_nm;
@@ -364,6 +379,13 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
 bool basemap_poll_swap(void) {
     std::lock_guard<std::mutex> lock(g_mu);
     if (!g_inbox_ready) return false;
+    // Only install if inbox still matches the latest request (location/range
+    // may have changed again while the worker was finishing).
+    if (!slot_matches(g_inbox, g_req_lat, g_req_lon, g_req_radius,
+                      g_req_w, g_req_h, g_req_cy, g_req_br)) {
+        g_inbox_ready = false;
+        return false;
+    }
     g_front = std::move(g_inbox);
     g_front.bind_dsc();
     g_inbox_ready = false;
@@ -371,9 +393,14 @@ bool basemap_poll_swap(void) {
 }
 
 void basemap_draw(lv_layer_t *layer) {
-    // LVGL thread only. g_front is only mutated on this thread via poll_swap,
-    // so draw units can keep reading dsc.data after this returns.
-    if (!g_front.valid || g_front.rgb565.empty()) return;
+    // LVGL thread only. g_front is only mutated on this thread via poll_swap /
+    // basemap_request, so draw units can keep reading dsc.data after return.
+    // Refuse a front buffer that doesn't match the current projection.
+    if (!slot_matches(g_front, g_req_lat, g_req_lon, g_req_radius,
+                      g_req_w, g_req_h, g_req_cy, g_req_br)) {
+        return;
+    }
+    if (g_front.rgb565.empty()) return;
 
     g_front.bind_dsc();
 
@@ -386,5 +413,6 @@ void basemap_draw(lv_layer_t *layer) {
 }
 
 bool basemap_ready(void) {
-    return g_front.valid;
+    return slot_matches(g_front, g_req_lat, g_req_lon, g_req_radius,
+                        g_req_w, g_req_h, g_req_cy, g_req_br);
 }
