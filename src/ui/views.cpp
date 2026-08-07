@@ -45,13 +45,13 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_size(tileview, LCD_H_RES, CONTENT_H);
     lv_obj_set_style_bg_color(tileview, lv_color_hex(0x0a0a1a), 0);
     lv_obj_set_style_bg_opa(tileview, LV_OPA_COVER, 0);
-    // Hide the horizontal "swipe bar" scrollbar (AUTO would keep a thumb
-    // visible whenever neighboring tiles exist). View switching uses
-    // views_attach_swipe() + views_switch_to(), not the native scrollbar.
-    lv_obj_set_scrollbar_mode(tileview, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_opa(tileview, LV_OPA_TRANSP, LV_PART_SCROLLBAR);
-    lv_obj_set_style_bg_opa(tileview, LV_OPA_TRANSP, LV_PART_SCROLLBAR | LV_STATE_SCROLLED);
-    lv_obj_set_style_width(tileview, 0, LV_PART_SCROLLBAR);
+    // Keep the horizontal "swipe bar" (tileview scrollbar) visible as the
+    // view-switch affordance. MODE_ON so it stays put instead of only
+    // flashing mid-swipe (AUTO). The solid blue strip that used to sit
+    // under it was not this scrollbar -- it was undrawn canvas BG_COLOR
+    // below a CANVAS_H-tall basemap (see map_view.cpp map_basemap_sync);
+    // that strip is gone now that the basemap covers full screen height.
+    lv_obj_set_scrollbar_mode(tileview, LV_SCROLLBAR_MODE_ON);
 
     // Create 4 horizontal tiles — all get opaque backgrounds to prevent bleed-through during scroll animation.
     // Runway diagrams live inside Map view now (see map_view.cpp draw_saved_airports) —
