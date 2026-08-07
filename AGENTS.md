@@ -104,7 +104,9 @@ work without them):
 - **`fetcher.cpp` stays ESP32-only.** Do not refactor it into the Pi path; Pi
   uses `pi/platform_linux/datasource_remote.cpp` (accepted JSON-schema drift
   risk).
-- **Pi DRM draw budget:** ~4.5–6 ms per `lv_draw_*` call on real hardware
-  (`LV_DRAW_SW_DRAW_UNIT_CNT=1`). Budget draw calls tightly on that path.
+- **Pi DRM draw budget:** historically ~4.5–6 ms per `lv_draw_*` call with
+  single-threaded SW rasterize. `pi/lv_conf.h` now uses `LV_OS_PTHREAD` +
+  `LV_DRAW_SW_DRAW_UNIT_CNT=2` — re-measure on real DRM before assuming the
+  old per-call cost still holds. Still budget draw calls tightly.
 - **LVGL version pin on Pi:** CMake pins `v9.5.0` to match what PlatformIO
   actually resolves from `^9.2.2` — floating ESP32 deps can desync APIs.

@@ -54,6 +54,13 @@ FetchContent_MakeAvailable(ArduinoJson)
 target_include_directories(lvgl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
 
+# pi/lv_conf.h sets LV_USE_OS=LV_OS_PTHREAD + LV_DRAW_SW_DRAW_UNIT_CNT>1 so
+# LVGL's SW renderer spawns worker threads. LVGL's CMake does not auto-link
+# libpthread from that define -- add it explicitly (PUBLIC so adsb_pi
+# inherits it).
+find_package(Threads REQUIRED)
+target_link_libraries(lvgl PUBLIC Threads::Threads)
+
 # Shared with jc1060 (compiled here for Linux, via PlatformIO for ESP32) --
 # see src/data/aircraft.h and each file's own comments for the #if
 # defined(ARDUINO) forks where platform behavior actually differs.
