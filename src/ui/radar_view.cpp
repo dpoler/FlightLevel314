@@ -174,19 +174,22 @@ static void draw_rings(lv_layer_t *layer) {
 
 #if !defined(ARDUINO)
 // Pi-exclusive richer sweep -- jc1060's 6-line banded fade (kept verbatim
-// below) was sized for the P4's weaker GPU/heap budget. First attempt
-// here (160 segments, 3-ring blip glow) assumed the Pi's raw compute
-// made per-call cost a non-issue -- wrong: pi/lv_conf.h has
+// below) was sized for the P4's weaker GPU/heap budget. pi/lv_conf.h has
 // LV_DRAW_SW_DRAW_UNIT_CNT=1 (single-threaded software rasterizer, not
-// using the other 3 cores at all), and each lv_draw_* call carries real
-// dispatch/clip overhead beyond the pixels it touches. Reported
-// slow/jumpy on real hardware -- cut hard rather than nudged: 24
-// segments (still 4x jc1060's 6 bands, ~85% fewer draws than the first
-// attempt) plus a bloomed leading edge (wide dim line under a bright
-// thin core) and a small pulsing hub glow at the origin, both fixed-cost
-// per frame so not part of what got cut. Purely visual -- doesn't change
-// _sweep_angle's own update logic, sweep timing, or aircraft-boost math
-// in draw_blips() at all.
+// using the Pi's other 3 cores), and each lv_draw_* call carries real
+// dispatch/clip overhead beyond the pixels it touches -- two rounds of
+// cuts (160->24 segments, dropped 3-ring blip glow to 1 then removed it
+// entirely, see draw_blips()) still reported jumpy. This round drops the
+// hub glow (3 extra draws/frame, purely decorative, easiest thing to cut
+// without losing the actual "sweep" effect) and halves the trail again
+// (24->12) -- still 2x jc1060's 6-band count, but total extra draws vs.
+// jc1060's original is now small (12 trail + 3 bloom = 15 draws, vs.
+// jc1060's 7) rather than the large multiples tried before. If this is
+// *still* jumpy, the bottleneck likely isn't this function's draw count
+// at all -- worth checking whether jc1060's original unmodified sweep
+// (temporarily force the #else branch) is itself smooth on the Pi, to
+// isolate whether something structural (e.g. the whole view's per-frame
+// redraw, or the DRM present path) is the real cost, not this addition.
 static void draw_sweep(lv_layer_t *layer) {
     float rad = _sweep_angle * M_PI / 180.0f;
     int ex = RADAR_CX + (int)(RADAR_R * sinf(rad));
@@ -199,8 +202,8 @@ static void draw_sweep(lv_layer_t *layer) {
     // Comet tail: a handful of thin segments over a moderate arc,
     // opacity following an eased (squared) falloff instead of discrete
     // steps.
-    const float TAIL_DEG = 45.0f;
-    const int TAIL_SEGMENTS = 24;
+    const float TAIL_DEG = 36.0f;
+    const int TAIL_SEGMENTS = 12;
     for (int i = TAIL_SEGMENTS; i >= 1; i--) {
         float t = (float)i / TAIL_SEGMENTS;   // 1.0 (far) .. ~0 (near sweep)
         float trail_rad = (_sweep_angle - t * TAIL_DEG) * M_PI / 180.0f;
@@ -220,18 +223,6 @@ static void draw_sweep(lv_layer_t *layer) {
     line.opa = LV_OPA_20; line.width = 7; lv_draw_line(layer, &line);
     line.opa = LV_OPA_40; line.width = 4; lv_draw_line(layer, &line);
     line.opa = LV_OPA_COVER; line.width = 2; lv_draw_line(layer, &line);
-
-    // Center hub glow -- small pulsing halo at the origin.
-    lv_draw_rect_dsc_t hub;
-    lv_draw_rect_dsc_init(&hub);
-    hub.bg_color = COLOR_SWEEP;
-    hub.radius = LV_RADIUS_CIRCLE;
-    for (int r = 6; r >= 2; r -= 2) {
-        hub.bg_opa = (lv_opa_t)(LV_OPA_20 * (8 - r) / 2);
-        lv_area_t ha = {(lv_coord_t)(RADAR_CX - r), (lv_coord_t)(RADAR_CY - r),
-                         (lv_coord_t)(RADAR_CX + r), (lv_coord_t)(RADAR_CY + r)};
-        lv_draw_rect(layer, &hub, &ha);
-    }
 }
 #else
 static void draw_sweep(lv_layer_t *layer) {
@@ -336,32 +327,12 @@ static void draw_blips(lv_layer_t *layer) {
             }
         }
 
-#if !defined(ARDUINO)
-        // Pi-exclusive glowing blip -- one soft halo ring under a bright
-        // core dot, instead of jc1060's flat filled square (kept verbatim
-        // in the #else below). First attempt used 3 rings per blip;
-        // reported slow/jumpy on real hardware at ~60 aircraft (see
-        // draw_sweep()'s comment -- same single-threaded-rasterizer/
-        // per-draw-call-overhead root cause) -- cut to 1 ring, a 66%
-        // reduction in the per-aircraft draw count.
-        lv_draw_rect_dsc_t glow;
-        lv_draw_rect_dsc_init(&glow);
-        glow.bg_color = color;
-        glow.radius = LV_RADIUS_CIRCLE;
-        glow.bg_opa = (uint8_t)((opa * 35) / 100);
-        lv_area_t ga = {(lv_coord_t)(sx - 7), (lv_coord_t)(sy - 7),
-                        (lv_coord_t)(sx + 7), (lv_coord_t)(sy + 7)};
-        lv_draw_rect(layer, &glow, &ga);
-        lv_draw_rect_dsc_t dot;
-        lv_draw_rect_dsc_init(&dot);
-        dot.bg_color = color;
-        dot.bg_opa = opa;
-        dot.radius = LV_RADIUS_CIRCLE;
-        lv_area_t area = {(lv_coord_t)(sx - 3), (lv_coord_t)(sy - 3),
-                          (lv_coord_t)(sx + 3), (lv_coord_t)(sy + 3)};
-        lv_draw_rect(layer, &dot, &area);
-#else
-        // Blip dot — larger for better visibility
+        // Blip dot — larger for better visibility. Was briefly a
+        // Pi-exclusive glow (1-3 rings under a core dot); reverted --
+        // "still jumpy" after cutting the sweep trail down too, so
+        // pulling this per-aircraft cost out entirely to isolate whether
+        // the sweep trail alone is the bottleneck or something else is.
+        // Revisit once the sweep itself is confirmed smooth.
         lv_draw_rect_dsc_t dot;
         lv_draw_rect_dsc_init(&dot);
         dot.bg_color = color;
@@ -370,7 +341,6 @@ static void draw_blips(lv_layer_t *layer) {
         lv_area_t area = {(lv_coord_t)(sx - 4), (lv_coord_t)(sy - 4),
                           (lv_coord_t)(sx + 4), (lv_coord_t)(sy + 4)};
         lv_draw_rect(layer, &dot, &area);
-#endif
 
         // Labels — two zones: paint detail (0-45deg) and condensed
         // (45-240deg). Each of Flight ID / Alt-Speed / Type is independently
