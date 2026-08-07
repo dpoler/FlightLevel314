@@ -64,8 +64,6 @@ static uint32_t _trails_cleared_at = 0;
 #define RUNWAY_LBL_H_SMALL        14
 #define RUNWAY_LBL_W_BIG          40     // lv_font_montserrat_14
 #define RUNWAY_LBL_H_BIG          18
-#define COLOR_RUNWAY         lv_color_hex(0x006600)
-#define COLOR_RUNWAY_LABEL   lv_color_hex(0x33cc66)
 
 static bool _filter_just_clicked = false; // guard against zoom cycle
 
@@ -486,7 +484,60 @@ static void draw_range_rings(lv_layer_t *layer) {
 // it (the marker used to hardcode its own brighter, full-opacity blue,
 // reported as standing out more than every other location's marker even
 // though it is meant to use "the same definition as other locations").
-#define COLOR_AIRPORT_GLYPH lv_color_hex(0x557799)
+//
+// On dark Map / dark OSM the original muted blue reads fine; on cream Light,
+// Topo, or sectional paper it disappears. Pick a darker navy + full opacity
+// when a light-paper basemap is under the Map.
+#if !defined(ARDUINO)
+static bool map_basemap_light_paper() {
+    if (!map_basemap_shown()) return false;
+    switch (map_basemap_style()) {
+    case MAP_BASEMAP_STYLE_LIGHT:
+    case MAP_BASEMAP_STYLE_LIGHT_NOLABELS:
+    case MAP_BASEMAP_STYLE_TOPO:
+    case MAP_BASEMAP_STYLE_SECTIONAL:
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
+static lv_color_t airport_glyph_color() {
+#if !defined(ARDUINO)
+    if (map_basemap_light_paper()) return lv_color_hex(0x0a3060);
+#endif
+    return lv_color_hex(0x557799);
+}
+
+static lv_opa_t airport_glyph_line_opa() {
+#if !defined(ARDUINO)
+    if (map_basemap_light_paper()) return LV_OPA_COVER;
+#endif
+    return LV_OPA_70;
+}
+
+static lv_opa_t airport_glyph_label_opa() {
+#if !defined(ARDUINO)
+    if (map_basemap_light_paper()) return LV_OPA_COVER;
+#endif
+    return LV_OPA_80;
+}
+
+static lv_color_t runway_line_color() {
+#if !defined(ARDUINO)
+    // Dark green vanishes into topo/sectional greens; navy stays readable.
+    if (map_basemap_light_paper()) return lv_color_hex(0x0a3060);
+#endif
+    return lv_color_hex(0x006600);
+}
+
+static lv_color_t runway_label_color() {
+#if !defined(ARDUINO)
+    if (map_basemap_light_paper()) return lv_color_hex(0x0a3060);
+#endif
+    return lv_color_hex(0x33cc66);
+}
 
 // Marks the current center reference point -- the active location's own
 // position. Skipped when the active location already has its runway diagram
@@ -506,9 +557,9 @@ static void draw_active_location_marker(lv_layer_t *layer) {
 
     lv_draw_line_dsc_t line_dsc;
     lv_draw_line_dsc_init(&line_dsc);
-    line_dsc.color = COLOR_AIRPORT_GLYPH;
+    line_dsc.color = airport_glyph_color();
     line_dsc.width = 1;
-    line_dsc.opa = LV_OPA_70;
+    line_dsc.opa = airport_glyph_line_opa();
 
     line_dsc.p1 = {(lv_value_precise_t)(hx - 8), (lv_value_precise_t)hy};
     line_dsc.p2 = {(lv_value_precise_t)(hx + 8), (lv_value_precise_t)hy};
@@ -591,7 +642,7 @@ static void place_runway_label(lv_layer_t *layer, lv_draw_label_dsc_t *lbl, Labe
 static void draw_runways_for(lv_layer_t *layer, const Location *loc, LabelRectSet &placed, float radius_nm) {
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
-    line.color = COLOR_RUNWAY;
+    line.color = runway_line_color();
     line.width = 1;
 
     bool show_labels = (radius_nm <= RUNWAY_LABEL_SHOW_MAX_NM);
@@ -608,7 +659,7 @@ static void draw_runways_for(lv_layer_t *layer, const Location *loc, LabelRectSe
     lv_draw_label_dsc_t lbl;
     if (show_labels) {
         lv_draw_label_dsc_init(&lbl);
-        lbl.color = COLOR_RUNWAY_LABEL;
+        lbl.color = runway_label_color();
         lbl.font = big_font ? &lv_font_montserrat_14 : &lv_font_montserrat_10;
         lbl.align = LV_TEXT_ALIGN_CENTER;
     }
@@ -646,9 +697,9 @@ static void draw_runways_for(lv_layer_t *layer, const Location *loc, LabelRectSe
 static void draw_airport_glyph(lv_layer_t *layer, int sx, int sy, const char *label) {
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
-    line.color = COLOR_AIRPORT_GLYPH;
+    line.color = airport_glyph_color();
     line.width = 1;
-    line.opa = LV_OPA_70;
+    line.opa = airport_glyph_line_opa();
 
     line.p1 = {(lv_value_precise_t)(sx - GLYPH_R), (lv_value_precise_t)sy};
     line.p2 = {(lv_value_precise_t)(sx + GLYPH_R), (lv_value_precise_t)sy};
@@ -659,9 +710,9 @@ static void draw_airport_glyph(lv_layer_t *layer, int sx, int sy, const char *la
 
     lv_draw_label_dsc_t lbl;
     lv_draw_label_dsc_init(&lbl);
-    lbl.color = COLOR_AIRPORT_GLYPH;
+    lbl.color = airport_glyph_color();
     lbl.font = &lv_font_montserrat_14;
-    lbl.opa = LV_OPA_80;
+    lbl.opa = airport_glyph_label_opa();
     lbl.text = label;
     lbl.text_local = 1;
     lv_area_t area = {(lv_coord_t)(sx + GLYPH_R + 2), (lv_coord_t)(sy - 8),
@@ -684,9 +735,9 @@ static void draw_airport_id_label(lv_layer_t *layer, const Location *loc, LabelR
 
     lv_draw_label_dsc_t lbl;
     lv_draw_label_dsc_init(&lbl);
-    lbl.color = COLOR_AIRPORT_GLYPH;
+    lbl.color = airport_glyph_color();
     lbl.font = &lv_font_montserrat_10;
-    lbl.opa = LV_OPA_60;
+    lbl.opa = airport_glyph_label_opa();
     lbl.align = LV_TEXT_ALIGN_CENTER;
 
     place_runway_label(layer, &lbl, placed, sx, sy, 0.0f, 1.0f, loc->icao, 50, 14);
