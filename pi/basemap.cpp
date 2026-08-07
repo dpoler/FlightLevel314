@@ -14,8 +14,8 @@
 // Cache: one RGB565 file per (style, lat, lon, range, canvas geometry).
 // Freshness is mtime vs a per-style TTL (OSM/Carto ~30d; sectionals ~40d
 // so we refetch ahead of the ~56-day chart cycle). Filename includes an
-// `eq3` tag: equirectangular warp + anti-alias; bumps past eq2 soft-zoom
-// caches that looked blurry at wide ranges.
+// `eq4` tag: sharper wide-range zoom bias + lighter pre-warp blur
+// (invalidates softer eq3 mosaics).
 
 #include "basemap.h"
 
@@ -339,6 +339,10 @@ int osm_zoom_for_radius(float radius_nm, int usable_h, float center_lat) {
             best_z = z;
         }
     }
+    // If the closest level is still softer than the screen, step up one so
+    // wide ranges aren't intentionally undersampled (looks "a little soft").
+    float best_ppd = 256.0f * (float)(1 << best_z) / 360.0f * cos_lat;
+    if (best_ppd < our_ppd && best_z < 15) best_z++;
     return best_z;
 }
 
@@ -427,7 +431,7 @@ void ensure_dir(const std::string &path) {
 std::string cache_path(int style, float lat, float lon, float radius_nm,
                        int w, int h, int cy, int br) {
     char name[220];
-    snprintf(name, sizeof(name), "%s/%s_eq3_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
+    snprintf(name, sizeof(name), "%s/%s_eq4_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
              cache_dir().c_str(), style_cache_tag(style),
              lat, lon, radius_nm, w, h, cy, br);
     return name;
@@ -661,8 +665,10 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     }
 
     const int tile_total = tiles_w * tiles_h;
-    // Tile downloads dominate wall time (esp. sectional JPEG); warp is the rest.
-    constexpr int FETCH_PCT_END = 80;
+    // Fetch dominates; leave headroom so blur/warp keep the % counter moving
+    // (it used to sit on 80% through the whole post-fetch phase).
+    constexpr int FETCH_PCT_END = 70;
+    constexpr int BLUR_PCT_END = 82;
 
     std::vector<TileFetch> jobs;
     jobs.reserve((size_t)tile_total);
@@ -691,16 +697,21 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     // Anti-alias before the nonlinear warp. Critical for two reasons:
     // 1) Mercator tile *row* boundaries are constant-latitude → exact
     //    horizontal lines in MapProjection; hard seams read as thick
-    //    scanlines across flat chart paper / dark fill.
+    //    scanlines across flat chart paper / dark ocean fill.
     // 2) JPEG / engraved-chart texture aliases into corduroy without a
     //    low-pass before resampling.
-    box_blur_3x3(mosaic, mosaic_w, mosaic_h);
-    box_blur_3x3(mosaic, mosaic_w, mosaic_h);
-    box_blur_3x3(mosaic, mosaic_w, mosaic_h);
-    if (slot.style == MAP_BASEMAP_STYLE_SECTIONAL) {
+    // Keep this light — three/four full-mosaic passes were making wide
+    // ranges look soft even with screen-matched zoom.
+    const int blur_passes = (slot.style == MAP_BASEMAP_STYLE_SECTIONAL) ? 2 : 1;
+    for (int i = 0; i < blur_passes; i++) {
+        {
+            std::lock_guard<std::mutex> lock(g_mu);
+            if (gen != g_req_gen) return false;
+        }
         box_blur_3x3(mosaic, mosaic_w, mosaic_h);
+        progress_set(gen, true,
+                     FETCH_PCT_END + ((i + 1) * (BLUR_PCT_END - FETCH_PCT_END)) / blur_passes);
     }
-    progress_set(gen, true, FETCH_PCT_END);
 
     const double origin_mx = (double)tx0 * TILE_PX;
     const double origin_my = (double)ty0 * TILE_PX;
@@ -713,12 +724,12 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
 
     const uint32_t t_warp0 = platform_millis();
     for (int sy = 0; sy < slot.h; sy++) {
-        if ((sy & 31) == 0) {
+        if ((sy & 15) == 0) {
             std::lock_guard<std::mutex> lock(g_mu);
             if (gen != g_req_gen) return false;
-            // Warp phase: 80% → 99% (leave 100 for publish).
+            // Warp phase: BLUR_PCT_END → 99%.
             g_prog_visible = true;
-            g_prog_pct = FETCH_PCT_END + (sy * (99 - FETCH_PCT_END)) / slot.h;
+            g_prog_pct = BLUR_PCT_END + (sy * (99 - BLUR_PCT_END)) / slot.h;
         }
         for (int sx = 0; sx < slot.w; sx++) {
             float lat, lon, lat_r, lon_r, lat_d, lon_d;
@@ -737,8 +748,10 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
             pixel_of_coord(lat_d, lon_d, z, mx_d, my_d);
             double du = fabs(mx_r - mx);
             double dv = fabs(my_d - my);
-            if (du < 1.0) du = 1.0;
-            if (dv < 1.0) dv = 1.0;
+            // Do not floor to 1.0 — when the mosaic is sharper than the screen
+            // (du/dv < 1) expanding the footprint only softens the result.
+            if (du < 1e-6) du = 1.0;
+            if (dv < 1e-6) dv = 1.0;
             uint8_t r, g, b;
             sample_mosaic_area(mosaic, mosaic_w, mosaic_h,
                                mx - origin_mx, my - origin_my, du, dv,
