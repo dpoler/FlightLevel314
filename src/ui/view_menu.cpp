@@ -25,6 +25,7 @@ static lv_obj_t *_panel = nullptr;
 static lv_obj_t *_len_label = nullptr;
 static lv_obj_t *_bm_opa_label = nullptr;
 static lv_obj_t *_bm_style_lbl = nullptr;
+static lv_obj_t *_bm_opa_slider = nullptr;
 
 static void close_overlay() {
     if (_overlay) {
@@ -47,6 +48,7 @@ static void close_overlay() {
         _len_label = nullptr;
         _bm_opa_label = nullptr;
         _bm_style_lbl = nullptr;
+        _bm_opa_slider = nullptr;
     }
 }
 
@@ -249,7 +251,7 @@ static void open_overlay() {
         // ============================================================
         // Basemap -- Carto dark / FAA VFR sectional under Map.
         // Style cycles Dark → Dark (no labels) → VFR Sectional.
-        // Opacity is "how defined" (10-100%); persist on release.
+        // Opacity is per-style (10-100%); each style remembers its own.
         // ============================================================
         section_header(_panel, "BASEMAP", 352);
         toggle_row(_panel, "Show basemap", 380, map_basemap_shown(), [](lv_event_t *e) {
@@ -276,6 +278,10 @@ static void open_overlay() {
             map_basemap_style_cycle();
             if (_bm_style_lbl)
                 lv_label_set_text_fmt(_bm_style_lbl, "Style: %s", map_basemap_style_name());
+            // Each style remembers its own opacity — refresh slider/label.
+            int opa = map_basemap_opa();
+            if (_bm_opa_label) lv_label_set_text_fmt(_bm_opa_label, "%d%%", opa);
+            if (_bm_opa_slider) lv_slider_set_value(_bm_opa_slider, opa, LV_ANIM_OFF);
             // Re-request tiles for the new style (clears stale front buffer).
             map_view_on_show();
         }, LV_EVENT_CLICKED, nullptr);
@@ -292,24 +298,24 @@ static void open_overlay() {
         lv_obj_set_style_text_font(_bm_opa_label, &lv_font_montserrat_14, 0);
         lv_obj_set_pos(_bm_opa_label, PANEL_W - 20 - 50, 456);
 
-        lv_obj_t *bm_slider = lv_slider_create(_panel);
-        lv_obj_set_size(bm_slider, PANEL_W - 20, 10);
-        lv_obj_set_pos(bm_slider, 0, 480);
-        lv_slider_set_range(bm_slider, 10, 100);
-        lv_slider_set_value(bm_slider, map_basemap_opa(), LV_ANIM_OFF);
-        lv_obj_set_style_bg_color(bm_slider, lv_color_hex(0x333366), 0);
-        lv_obj_set_style_bg_color(bm_slider, COLOR_ACCENT, LV_PART_INDICATOR);
-        lv_obj_set_style_bg_color(bm_slider, COLOR_ACCENT, LV_PART_KNOB);
-        lv_obj_add_event_cb(bm_slider, [](lv_event_t *e) {
+        _bm_opa_slider = lv_slider_create(_panel);
+        lv_obj_set_size(_bm_opa_slider, PANEL_W - 20, 10);
+        lv_obj_set_pos(_bm_opa_slider, 0, 480);
+        lv_slider_set_range(_bm_opa_slider, 10, 100);
+        lv_slider_set_value(_bm_opa_slider, map_basemap_opa(), LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(_bm_opa_slider, lv_color_hex(0x333366), 0);
+        lv_obj_set_style_bg_color(_bm_opa_slider, COLOR_ACCENT, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(_bm_opa_slider, COLOR_ACCENT, LV_PART_KNOB);
+        lv_obj_add_event_cb(_bm_opa_slider, [](lv_event_t *e) {
             int val = lv_slider_get_value(lv_event_get_target_obj(e));
             map_basemap_opa_set(val);
             lv_label_set_text_fmt(_bm_opa_label, "%d%%", val);
             map_view_update();
         }, LV_EVENT_VALUE_CHANGED, nullptr);
-        lv_obj_add_event_cb(bm_slider, [](lv_event_t *e) {
+        lv_obj_add_event_cb(_bm_opa_slider, [](lv_event_t *e) {
             storage_save_config(g_config);
         }, LV_EVENT_RELEASED, nullptr);
-        lv_obj_add_event_cb(bm_slider, [](lv_event_t *e) {
+        lv_obj_add_event_cb(_bm_opa_slider, [](lv_event_t *e) {
             storage_save_config(g_config);
         }, LV_EVENT_PRESS_LOST, nullptr);
 
