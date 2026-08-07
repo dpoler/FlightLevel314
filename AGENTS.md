@@ -106,7 +106,8 @@ work without them):
   risk).
 - **Pi DRM draw budget:** historically ~4.5–6 ms per `lv_draw_*` call with
   single-threaded SW rasterize. `pi/lv_conf.h` now uses `LV_OS_PTHREAD` +
-  `LV_DRAW_SW_DRAW_UNIT_CNT=2` — re-measure on real DRM before assuming the
-  old per-call cost still holds. Still budget draw calls tightly.
+  `LV_DRAW_SW_DRAW_UNIT_CNT=3` — re-measure on real DRM before assuming the
+  old per-call cost still holds. Canvas `lv_draw_label` sites must set
+  `text_local=1` for non-literal strings (async workers otherwise UAF).
 - **LVGL version pin on Pi:** CMake pins `v9.5.0` to match what PlatformIO
   actually resolves from `^9.2.2` — floating ESP32 deps can desync APIs.
