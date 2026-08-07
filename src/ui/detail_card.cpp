@@ -72,13 +72,16 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #define SUMMARY_H      168
 #define PHOTO_SLOT_W   400
 #define PHOTO_SLOT_H   220
-#define STATS_GAP      16
-#define STATS_X        (SUMMARY_W + STATS_GAP)
-#define STATS_W        (LCD_H_RES - 2 * CARD_PAD - SUMMARY_W - STATS_GAP - PHOTO_SLOT_W - STATS_GAP)
+// Telemetry labels/values are short ("ALTITUDE", "FL350") — no need to
+// pack the grid against the summary. Center a fixed-width 3-col block in
+// the gap between summary and photo.
+#define GRID_COL_W     140
+#define STATS_W        (GRID_COL_W * 3)
+#define MID_AVAIL      (LCD_H_RES - 2 * CARD_PAD - SUMMARY_W - PHOTO_SLOT_W)
+#define STATS_X        (SUMMARY_W + (MID_AVAIL - STATS_W) / 2)
 #define IDENTITY_MAX_W (SUMMARY_W - 24)
 #define GRID_Y0        10
 #define GRID_ROW_H     42
-#define GRID_COL_W     (STATS_W / 3)
 #define GRID_COLS      3
 #else
 #define CARD_H         310
