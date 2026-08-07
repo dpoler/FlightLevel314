@@ -468,7 +468,15 @@ static void draw_blips(lv_layer_t *layer) {
             const char *id_text = ac.callsign[0] ? ac.callsign :
                                   (ac.registration[0] ? ac.registration : ac.icao_hex);
 
-            if (behind < PAINT_DETAIL_DEG) {
+#if !defined(ARDUINO)
+            // Always use the expanded stack on Pi. Switching to condensed at
+            // PAINT_DETAIL_DEG (45deg behind sweep) moves tags from sy-28 to
+            // sy-7 while the blip stays put -- reads as labels sliding alone.
+            const bool paint_detail = true;
+#else
+            const bool paint_detail = (behind < PAINT_DETAIL_DEG);
+#endif
+            if (paint_detail) {
                 // === PAINT ZONE: expanded detail -- stack whichever of the
                 // 3 fields are on, top to bottom ===
                 int line_y = sy - 28;
