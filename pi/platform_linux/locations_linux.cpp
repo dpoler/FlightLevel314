@@ -69,6 +69,10 @@ bool _verify_result_ok = false;
 char _verify_result_err[48] = {};
 
 bool _nearby_scan_active = false; // best-effort: skip a second concurrent scan request
+// Per-location: a scan was started and finished this process (even if it
+// found 0 airports). Prevents re-kicking airportdb on every Map show after
+// an empty/failed result; cleared when the eye toggle is turned on again.
+bool _nearby_scan_done[MAX_LOCATIONS] = {};
 
 std::string config_dir() {
     const char *xdg = getenv("XDG_CONFIG_HOME");
@@ -293,10 +297,12 @@ void locations_remove(int idx) {
         _locations[i] = _locations[i + 1];
         memcpy(_nearby_all[i], _nearby_all[i + 1], sizeof(_nearby_all[i]));
         _nearby_all_count[i] = _nearby_all_count[i + 1];
+        _nearby_scan_done[i] = _nearby_scan_done[i + 1];
     }
     _count--;
     memset(&_locations[_count], 0, sizeof(Location));
     _nearby_all_count[_count] = 0;
+    _nearby_scan_done[_count] = false;
 
     if (_active_index == idx) {
         _active_index = -1;
@@ -318,23 +324,27 @@ void locations_reorder(int from, int to) {
     Location moved_nearby[NEARBY_MAX];
     memcpy(moved_nearby, _nearby_all[from], sizeof(moved_nearby));
     int moved_nearby_count = _nearby_all_count[from];
+    bool moved_scan_done = _nearby_scan_done[from];
 
     if (from < to) {
         for (int i = from; i < to; i++) {
             _locations[i] = _locations[i + 1];
             memcpy(_nearby_all[i], _nearby_all[i + 1], sizeof(_nearby_all[i]));
             _nearby_all_count[i] = _nearby_all_count[i + 1];
+            _nearby_scan_done[i] = _nearby_scan_done[i + 1];
         }
     } else {
         for (int i = from; i > to; i--) {
             _locations[i] = _locations[i - 1];
             memcpy(_nearby_all[i], _nearby_all[i - 1], sizeof(_nearby_all[i]));
             _nearby_all_count[i] = _nearby_all_count[i - 1];
+            _nearby_scan_done[i] = _nearby_scan_done[i - 1];
         }
     }
     _locations[to] = moved;
     memcpy(_nearby_all[to], moved_nearby, sizeof(moved_nearby));
     _nearby_all_count[to] = moved_nearby_count;
+    _nearby_scan_done[to] = moved_scan_done;
 
     if (_active_index == from) {
         _active_index = to;
@@ -543,66 +553,117 @@ int locations_nearby_count(int idx) {
     return _locations[idx].nearby_count;
 }
 
-void locations_nearby_set_enabled(int idx, bool on) {
+// Spawn a detached nearby-large-airport scan for idx. Caller must NOT hold
+// _mutex. Captures owner fields under the lock, then fetches off-thread.
+void nearby_start_scan(int idx) {
     std::string owner_name;
     float owner_lat = 0, owner_lon = 0;
     char owner_icao[LOC_ICAO_LEN] = {};
-    bool need_scan = false;
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
         if (idx < 0 || idx >= _count) return;
-        if (_locations[idx].nearby_enabled == on) return;
-        _locations[idx].nearby_enabled = on;
-        save_all_locked();
-
-        if (on && _locations[idx].nearby_count == 0 && !_nearby_scan_active) {
-            owner_name = _locations[idx].name;
-            owner_lat = _locations[idx].lat;
-            owner_lon = _locations[idx].lon;
-            strlcpy(owner_icao, _locations[idx].icao, sizeof(owner_icao));
-            _nearby_scan_active = true;
-            need_scan = true;
-        }
+        if (_nearby_scan_active) return;
+        if (_locations[idx].nearby_count > 0) return;
+#if !HAS_AIRPORTS_DB
+        platform_log("Locations: nearby scan skipped — airports_db.h missing "
+                     "(run: python3 tools/generate_airports_db.py)\n");
+        _nearby_scan_done[idx] = true;
+        return;
+#endif
+        owner_name = _locations[idx].name;
+        owner_lat = _locations[idx].lat;
+        owner_lon = _locations[idx].lon;
+        strlcpy(owner_icao, _locations[idx].icao, sizeof(owner_icao));
+        _nearby_scan_active = true;
+        _nearby_scan_done[idx] = false;
     }
-
-    if (!need_scan) return;
 
 #if HAS_AIRPORTS_DB
     float radius = (float)g_config.radius_presets[3];
-    std::thread([owner_name, owner_lat, owner_lon, owner_icao_str = std::string(owner_icao), radius]() {
+    if (g_config.airportdb_token[0] == '\0') {
+        platform_log("Locations: nearby scan for '%s' — no airportdb.io token set; "
+                     "runway fetch will fail\n", owner_name.c_str());
+    }
+    platform_log("Locations: nearby scan starting for '%s' (r=%.0fnm)\n",
+                 owner_name.c_str(), radius);
+
+    std::thread([owner_name, owner_lat, owner_lon,
+                 owner_icao_str = std::string(owner_icao), radius]() {
         std::vector<Location> found;
+        int attempted = 0;
+        int fetch_fail = 0;
         for (int i = 0; i < AIRPORTS_DB_COUNT && (int)found.size() < NEARBY_MAX; i++) {
             const StaticAirport &ap = airports_db[i];
             if (!ap.large) continue;
             if (!owner_icao_str.empty() && owner_icao_str == ap.icao) continue;
-            if (MapProjection::distance_nm(owner_lat, owner_lon, ap.lat, ap.lon) > radius) continue;
+            if (MapProjection::distance_nm(owner_lat, owner_lon, ap.lat, ap.lon) > radius)
+                continue;
 
+            attempted++;
             Location entry;
             char err[48];
             if (fetch_airport_data(ap.icao, entry, err, sizeof(err))) {
                 found.push_back(entry);
+            } else {
+                fetch_fail++;
+                platform_log("Locations: nearby fetch %s failed: %s\n", ap.icao, err);
             }
         }
 
         std::lock_guard<std::mutex> lock(_mutex);
         int resolved = -1;
         for (int i = 0; i < _count; i++)
-            if (strcmp(_locations[i].name, owner_name.c_str()) == 0) { resolved = i; break; }
+            if (strcmp(_locations[i].name, owner_name.c_str()) == 0) {
+                resolved = i;
+                break;
+            }
         if (resolved != -1) {
             int n = (int)found.size();
             if (n > NEARBY_MAX) n = NEARBY_MAX;
             for (int i = 0; i < n; i++) _nearby_all[resolved][i] = found[i];
             _nearby_all_count[resolved] = n;
             _locations[resolved].nearby_count = n;
+            _nearby_scan_done[resolved] = true;
             save_all_locked();
+            platform_log("Locations: nearby scan for '%s' done — %d airport(s) "
+                         "(%d attempted, %d fetch fail)\n",
+                         owner_name.c_str(), n, attempted, fetch_fail);
         }
         _nearby_scan_active = false;
     }).detach();
-#else
-    std::lock_guard<std::mutex> lock(_mutex);
-    _nearby_scan_active = false;
 #endif
+}
+
+void locations_nearby_set_enabled(int idx, bool on) {
+    bool need_scan = false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (idx < 0 || idx >= _count) return;
+
+        const bool was = _locations[idx].nearby_enabled;
+        if (was == on) {
+            // Already in the requested state. Still (re)start a scan when
+            // enabling with an empty cache that hasn't finished an attempt
+            // this session — covers airports_db appearing after a previous
+            // enable-with-no-DB, and Map show kicking a stuck empty cache.
+            if (!(on && _locations[idx].nearby_count == 0 && !_nearby_scan_active &&
+                  !_nearby_scan_done[idx])) {
+                return;
+            }
+        } else {
+            _locations[idx].nearby_enabled = on;
+            if (on) _nearby_scan_done[idx] = false; // fresh attempt on toggle-on
+            save_all_locked();
+        }
+
+        if (on && _locations[idx].nearby_count == 0 && !_nearby_scan_active &&
+            !_nearby_scan_done[idx]) {
+            need_scan = true;
+        }
+    }
+
+    if (need_scan) nearby_start_scan(idx);
 }
 
 // No-op -- see locations_add_poll()'s comment; the nearby scan above runs to
@@ -611,11 +672,29 @@ void locations_nearby_set_enabled(int idx, bool on) {
 void locations_nearby_poll() {}
 
 const Location *locations_nearby_get_active(int *count) {
-    std::lock_guard<std::mutex> lock(_mutex);
-    if (_active_index < 0 || _active_index >= _count) {
-        if (count) *count = 0;
-        return nullptr;
+    int kick_idx = -1;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_active_index < 0 || _active_index >= _count) {
+            if (count) *count = 0;
+            return nullptr;
+        }
+        // Match ESP32: draw nothing when the eye toggle is off (cached data
+        // stays on disk for when it's turned back on).
+        if (!_locations[_active_index].nearby_enabled) {
+            if (count) *count = 0;
+            return nullptr;
+        }
+        if (_nearby_all_count[_active_index] == 0 && !_nearby_scan_active &&
+            !_nearby_scan_done[_active_index]) {
+            kick_idx = _active_index;
+        }
+        if (count) *count = _nearby_all_count[_active_index];
+        if (kick_idx < 0) return _nearby_all[_active_index];
     }
+    // Start outside the lock (nearby_start_scan takes it itself).
+    nearby_start_scan(kick_idx);
+    std::lock_guard<std::mutex> lock(_mutex);
     if (count) *count = _nearby_all_count[_active_index];
     return _nearby_all[_active_index];
 }
