@@ -46,9 +46,6 @@ static lv_obj_t *_nav_alt_label = nullptr;
 static lv_obj_t *_roll_label = nullptr;
 static lv_obj_t *_qnh_label = nullptr;
 
-// Loading
-static lv_obj_t *_loading_spinner = nullptr;
-
 // Live update timer
 static lv_timer_t *_update_timer = nullptr;
 
@@ -149,11 +146,6 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         snprintf(detail + pos, sizeof(detail) - pos, "%dx %s", data->engine_count, data->engine_type);
     }
     if (detail[0]) lv_label_set_text(_aircraft_detail_label, detail);
-
-    // Hide spinner when fully loaded
-    if (data->loaded && _loading_spinner) {
-        lv_obj_add_flag(_loading_spinner, LV_OBJ_FLAG_HIDDEN);
-    }
 }
 
 static lv_obj_t *make_data_row(lv_obj_t *parent, const char *label_text,
@@ -365,11 +357,6 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_pos(_badge_label, 280, 12);
     lv_label_set_text(_badge_label, "");
 
-    _loading_spinner = lv_spinner_create(_card);
-    lv_obj_set_size(_loading_spinner, 24, 24);
-    lv_obj_set_pos(_loading_spinner, 940, 4);
-    lv_obj_add_flag(_loading_spinner, LV_OBJ_FLAG_HIDDEN);
-
     // Sub-header: Reg | ICAO | Squawk
     _reg_label = lv_label_create(_card);
     lv_obj_set_style_text_font(_reg_label, &lv_font_montserrat_16, 0);
@@ -520,8 +507,11 @@ void detail_card_show(const Aircraft *ac) {
     // Start live update timer
     lv_timer_resume(_update_timer);
 
-    // Fetch enrichment (adsbdb + planespotters)
-    lv_obj_clear_flag(_loading_spinner, LV_OBJ_FLAG_HIDDEN);
+    // Enrichment (adsbdb + planespotters) fills manufacturer / model /
+    // engines when ready. No spinner — on Pi enrichment is still stubbed
+    // so a spinner would spin forever, and even on ESP32 it wasn't clear
+    // what activity it represented (live telemetry already updates via
+    // the timer above). Fields just appear when the callback fires.
     enrichment_fetch(ac->icao_hex, ac->registration, on_enrichment_ready);
 }
 

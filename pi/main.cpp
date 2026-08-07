@@ -6,6 +6,7 @@
 #include "../src/data/datasource.h"
 #include "../src/data/fetcher.h"
 #include "../src/data/locations.h"
+#include "../src/data/airlines.h"
 #include "../src/ui/views.h"
 #include "../src/ui/detail_card.h"
 #include "../src/ui/range.h"
@@ -73,6 +74,13 @@ int main() {
     g_config = storage_load_config();
     storage_save_config(g_config);
     locations_init();
+
+    // Airline code→name table (dpoler/AirlinesCSV). ESP32 loads this once
+    // inside fetcher_init()'s boot task; Pi has no equivalent, so kick it
+    // here on a background thread — blocking curl on the UI thread would
+    // stall first paint, and detail_card airline_lookup() simply returns
+    // nullptr until this finishes (falls back to owner_op).
+    std::thread([] { airlines_load(); }).detach();
 
     std::thread fetch_thread(fetch_loop);
     fetch_thread.detach();
