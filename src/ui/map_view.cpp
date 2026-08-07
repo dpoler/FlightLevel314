@@ -93,15 +93,18 @@ static char _tracked_hex[7] = {};
 // (~448 label, local y=400) and "make the bullseye larger" for the
 // radius. 343 isn't an arbitrary "bigger": it's 252 scaled by the same
 // ratio the canvas itself grew by (752/552 usable height, jc1060 ->
-// Pi) -- which, cross-checked, lands the top margin at 57px, almost
-// exactly jc1060's own 58px, and leaves the circle's bottom edge (743)
-// clear of the legend/swipe-bar zone. Keyed on LCD_V_RES rather than a
-// general CANVAS_H formula, same reasoning as jc1060's own values:
+// Pi). Follow-up same day: "lower it a little" -- CY nudged 400->420.
+// Not much room to work with here: at CY=420 the circle's bottom edge
+// (763) sits ~9px past where the legend row starts (754), matching
+// jc1060's own small overlap there (which already looks fine) rather
+// than an arbitrary pick -- going much lower than this would need the
+// radius trimmed too, or the legend moved. Keyed on LCD_V_RES rather
+// than a general CANVAS_H formula, same reasoning as jc1060's own values:
 // measured/chosen constants per screen, not a formula trusted to
 // generalize to a hypothetical third screen size.
 #if LCD_V_RES == 800
 #define MAP_BULLSEYE_R 343
-#define MAP_BULLSEYE_CY 400
+#define MAP_BULLSEYE_CY 420
 #else
 #define MAP_BULLSEYE_R 252
 #define MAP_BULLSEYE_CY 310
