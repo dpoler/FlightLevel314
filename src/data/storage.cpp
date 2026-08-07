@@ -44,6 +44,8 @@ UserConfig storage_load_config() {
     cfg.map_basemap_enabled = true;
     for (int i = 0; i < 6; i++) cfg.map_basemap_opa[i] = 50;
     cfg.map_basemap_style = 0; // Carto dark_all
+    cfg.map_weather_enabled = false;
+    cfg.map_weather_opa = 60;
     cfg.last_view_idx = 0;   // VIEW_MAP
     cfg.last_range_idx = 0;  // widest preset
     cfg.last_location_name[0] = '\0'; // nothing selected
@@ -106,6 +108,10 @@ UserConfig storage_load_config() {
     cfg.map_basemap_style = _prefs.getInt("bm_style", cfg.map_basemap_style);
     if (cfg.map_basemap_style < 0) cfg.map_basemap_style = 0;
     if (cfg.map_basemap_style > 5) cfg.map_basemap_style = 5;
+    cfg.map_weather_enabled = _prefs.getBool("wx_on", cfg.map_weather_enabled);
+    cfg.map_weather_opa = _prefs.getInt("wx_opa", cfg.map_weather_opa);
+    if (cfg.map_weather_opa < 10) cfg.map_weather_opa = 10;
+    if (cfg.map_weather_opa > 100) cfg.map_weather_opa = 100;
     cfg.last_view_idx = _prefs.getInt("last_view", cfg.last_view_idx);
     cfg.last_range_idx = _prefs.getInt("last_rng", cfg.last_range_idx);
     if (_prefs.isKey("last_loc"))
@@ -165,6 +171,8 @@ void storage_save_config(const UserConfig &cfg) {
     // Keep legacy bm_opa as style 0 so older builds still read something sensible.
     _prefs.putInt("bm_opa", cfg.map_basemap_opa[0]);
     _prefs.putInt("bm_style", cfg.map_basemap_style);
+    _prefs.putBool("wx_on", cfg.map_weather_enabled);
+    _prefs.putInt("wx_opa", cfg.map_weather_opa);
     _prefs.putInt("last_view", cfg.last_view_idx);
     _prefs.putInt("last_rng", cfg.last_range_idx);
     _prefs.putString("last_loc", cfg.last_location_name);

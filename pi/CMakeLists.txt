@@ -112,6 +112,8 @@ add_executable(adsb_pi
     settings_pi.cpp
     basemap.cpp
     basemap.h
+    weather.cpp
+    weather.h
     platform_linux/platform_linux.cpp
     platform_linux/storage_linux.cpp
     platform_linux/http_linux.cpp

@@ -73,6 +73,11 @@ struct UserConfig {
     int map_basemap_opa[6];         // 10-100 percent per style (default 50)
     int map_basemap_style;          // see display_prefs / basemap styles
 
+    // Pi Map weather overlay (RainViewer precip radar). Unused on ESP32 /
+    // Radar but kept in shared UserConfig. Defaults: off at 60% opacity.
+    bool map_weather_enabled;
+    int map_weather_opa;            // 10-100 percent (default 60)
+
     // Resume-on-boot state -- all written from discrete, human-paced actions
     // (nav tap, range chip tap, location picker selection, filter button
     // tap), never from a high-frequency path like a slider drag, so an
