@@ -121,9 +121,18 @@ static char _tracked_hex[7] = {};
 
 #if !defined(ARDUINO)
 // Kick (or skip-if-cached) a basemap fetch matching the current projection.
+//
+// Height is LCD_V_RES (full screen), not CANVAS_H. Map's custom draw
+// callback paints in absolute screen coordinates (LVGL DRAW_MAIN_END),
+// same space as MAP_BULLSEYE_CY / legend Y (LCD_V_RES - N). A buffer only
+// CANVAS_H tall drawn at y=0..CANVAS_H-1 leaves the bottom
+// STATUS_BAR_HEIGHT px of the canvas object (screen y CANVAS_H ..
+// LCD_V_RES-1) as solid BG_COLOR -- the dark-blue strip that showed up
+// once a live basemap replaced the matching solid fill. Status-bar
+// widgets cover the unused top rows.
 static void map_basemap_sync() {
     basemap_request(_proj.center_lat, _proj.center_lon, range_get_nm(),
-                    CANVAS_W, CANVAS_H, MAP_BULLSEYE_CY, MAP_BULLSEYE_R);
+                    CANVAS_W, LCD_V_RES, MAP_BULLSEYE_CY, MAP_BULLSEYE_R);
 }
 #endif
 
