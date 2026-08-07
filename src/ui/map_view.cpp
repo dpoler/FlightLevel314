@@ -1255,6 +1255,7 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_radius(_canvas, 0, 0);
     lv_obj_set_style_pad_all(_canvas, 0, 0);
     lv_obj_clear_flag(_canvas, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(_canvas, LV_SCROLLBAR_MODE_OFF);
     lv_obj_clear_flag(_canvas, LV_OBJ_FLAG_SCROLL_CHAIN);
     views_attach_swipe(_canvas);
 
