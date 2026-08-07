@@ -81,18 +81,33 @@ static char _tracked_hex[7] = {};
 // which must use the same values so rings and aircraft keep agreeing on
 // where a given nm distance actually plots.
 //
-// Measured (canvas-local y, i.e. 0 = right below the status bar): the
-// tileview's "swipe bar" sits at ~598, and the user wants the bullseye's
-// vertical center at ~310 (partway between ruler marks 348 and 398,
-// converted to local by subtracting STATUS_BAR_HEIGHT). Radius is fixed
-// at 252 (unchanged from the last "keep the same size" pass) --
-// MAP_PROJ_H/MAP_TOP_MARGIN below are solved backwards from
-// center=310/radius=252 through the same screen_h/top_margin formula
-// to_screen() (geo.h) already uses, rather than picked independently.
+// Measured (canvas-local y, i.e. 0 = right below the status bar): on
+// jc1060 (600px screen, ruler+photo pass) the tileview's "swipe bar"
+// sits at ~598, and the user wants the bullseye's vertical center at
+// ~310 (partway between ruler marks 348 and 398, converted to local by
+// subtracting STATUS_BAR_HEIGHT), radius fixed at 252.
+//
+// On the Pi's 800px screen these are bare pixel literals too, not a
+// formula extrapolated from jc1060's -- a second ruler+photo pass on
+// real Pi hardware (2026-08-06) got a direct answer for the center
+// (~448 label, local y=400) and "make the bullseye larger" for the
+// radius. 343 isn't an arbitrary "bigger": it's 252 scaled by the same
+// ratio the canvas itself grew by (752/552 usable height, jc1060 ->
+// Pi) -- which, cross-checked, lands the top margin at 57px, almost
+// exactly jc1060's own 58px, and leaves the circle's bottom edge (743)
+// clear of the legend/swipe-bar zone. Keyed on LCD_V_RES rather than a
+// general CANVAS_H formula, same reasoning as jc1060's own values:
+// measured/chosen constants per screen, not a formula trusted to
+// generalize to a hypothetical third screen size.
+#if LCD_V_RES == 800
+#define MAP_BULLSEYE_R 343
+#define MAP_BULLSEYE_CY 400
+#else
 #define MAP_BULLSEYE_R 252
 #define MAP_BULLSEYE_CY 310
-#define MAP_PROJ_H     (MAP_BULLSEYE_CY + MAP_BULLSEYE_R)  // 562
-#define MAP_TOP_MARGIN  (MAP_BULLSEYE_CY - MAP_BULLSEYE_R)  // 58
+#endif
+#define MAP_PROJ_H     (MAP_BULLSEYE_CY + MAP_BULLSEYE_R)
+#define MAP_TOP_MARGIN  (MAP_BULLSEYE_CY - MAP_BULLSEYE_R)
 
 // Per-view button/label pointers for filter buttons
 static lv_obj_t *_filter_btns[NUM_FILTERS] = {};
@@ -1089,43 +1104,6 @@ static void sync_active_location() {
     if (_canvas) lv_obj_invalidate(_canvas);
 }
 
-// TEMPORARY -- pixel-measurement pass for the bullseye/legend centering
-// bug (project backlog: "bullseye/legend centering, reverted"). Draws a
-// labeled 50px ruler (absolute screen Y, accounting for STATUS_BAR_HEIGHT)
-// so a single photo of the running screen can be measured against real,
-// known reference lines instead of guessing where the status bar/swipe
-// bar/bullseye/legend actually sit. Delete this whole #if block (and the
-// matching one in radar_view.cpp, and the scrollbar-mode override in
-// views.cpp) once the real fix lands from measured values.
-#define DEBUG_MEASURE_RULER 1
-#if DEBUG_MEASURE_RULER
-static void draw_debug_ruler(lv_layer_t *layer) {
-    lv_draw_line_dsc_t line;
-    lv_draw_line_dsc_init(&line);
-    line.color = lv_color_hex(0xff00ff);
-    line.width = 1;
-    line.opa = LV_OPA_70;
-
-    lv_draw_label_dsc_t lbl;
-    lv_draw_label_dsc_init(&lbl);
-    lbl.color = lv_color_hex(0xff00ff);
-    lbl.font = &lv_font_montserrat_10;
-    lbl.opa = LV_OPA_COVER;
-
-    for (int local_y = 0; local_y <= CANVAS_H; local_y += 50) {
-        line.p1 = {0, (lv_value_precise_t)local_y};
-        line.p2 = {(lv_value_precise_t)CANVAS_W, (lv_value_precise_t)local_y};
-        lv_draw_line(layer, &line);
-
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%d", local_y + STATUS_BAR_HEIGHT);
-        lbl.text = buf;
-        lv_area_t a = {2, (lv_coord_t)(local_y + 2), 50, (lv_coord_t)(local_y + 14)};
-        lv_draw_label(layer, &lbl, &a);
-    }
-}
-#endif
-
 static void canvas_draw_cb(lv_event_t *e) {
     lv_layer_t *layer = lv_event_get_layer(e);
 
@@ -1147,9 +1125,6 @@ static void canvas_draw_cb(lv_event_t *e) {
     draw_icon_legend(layer);
     draw_altitude_legend(layer);
     draw_filter_label(layer);
-#if DEBUG_MEASURE_RULER
-    draw_debug_ruler(layer);
-#endif
 }
 
 void map_view_init(lv_obj_t *parent, AircraftList *list) {
