@@ -17,6 +17,7 @@
 #include "../src/ui/geo.h"
 #include "../src/ui/alerts.h"
 #include "../src/ui/location_picker.h"
+#include "basemap.h"
 #include <chrono>
 #include <thread>
 
@@ -118,7 +119,7 @@ int main() {
     // main.cpp (opacity/filter/hide_ground/radius, matching what a view
     // would actually draw), so the count agrees with what's on screen
     // rather than being sourced from any one view's own drawn-count cache.
-    lv_timer_create([](lv_timer_t *) {
+    lv_timer_create([](lv_timer_t *t) {
         int count = 0;
         float center_lat, center_lon;
         locations_get_active_coords(&center_lat, &center_lon, nullptr);
@@ -141,6 +142,10 @@ int main() {
             aircraft_list.unlock();
         }
         status_bar_update(fetcher_wifi_connected(), count, stats_get()->current_count, fetcher_last_update());
+        // While Map is downloading tiles, refresh the upper-right "Map N%" often.
+        int bm_pct = 0;
+        lv_timer_set_period(t, basemap_updating(&bm_pct) ? 200 : 1000);
+        (void)bm_pct;
     }, 1000, nullptr);
 
     // A fixed ~1ms cadence, NOT lv_timer_handler()'s own returned "next
