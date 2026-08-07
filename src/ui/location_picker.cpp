@@ -5,9 +5,10 @@
 #include "../pins_config.h"
 #include "status_bar.h"
 #include "view_menu.h"
-#include <Arduino.h>
+#include "../platform/platform.h"
 #include <cstring>
 #include <cctype>
+#include <cstdio> // snprintf -- not reliably transitive under libstdc++ (Pi build)
 
 #define PANEL_W    320
 #define ROW_H      56   // was 44 -- felt cramped once the reorder handle was added (reported)

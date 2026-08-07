@@ -63,6 +63,21 @@ struct UserConfig {
     bool view_show_tag_type[2];        // aircraft type / operator
     bool view_show_secondary_locations[2]; // other saved/static airports
 
+    // Pi Map basemap (Carto / FAA sectional tiles under Map). Unused on ESP32
+    // / Radar but kept in the shared UserConfig so Pi JSON and ESP32 NVS key
+    // sets stay aligned. Defaults: on at 50% opacity, Carto dark_all.
+    // Style: 0=Carto dark, 1=Carto dark (no labels), 2=FAA VFR sectional,
+    // 3=Carto voyager (cream light), 4=voyager no labels, 5=OpenTopoMap.
+    // Opacity is per-style.
+    bool map_basemap_enabled;
+    int map_basemap_opa[6];         // 10-100 percent per style (default 50)
+    int map_basemap_style;          // see display_prefs / basemap styles
+
+    // Pi Map weather overlay (RainViewer precip radar). Unused on ESP32 /
+    // Radar but kept in shared UserConfig. Defaults: off at 60% opacity.
+    bool map_weather_enabled;
+    int map_weather_opa;            // 10-100 percent (default 60)
+
     // Resume-on-boot state -- all written from discrete, human-paced actions
     // (nav tap, range chip tap, location picker selection, filter button
     // tap), never from a high-frequency path like a slider drag, so an

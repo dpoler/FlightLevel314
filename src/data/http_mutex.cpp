@@ -1,15 +1,16 @@
 #include "http_mutex.h"
+#include "../platform/platform.h"
 
-static SemaphoreHandle_t _mutex = nullptr;
+static platform_mutex_t _mutex = nullptr;
 
 void http_mutex_init() {
-    _mutex = xSemaphoreCreateMutex();
+    _mutex = platform_mutex_create();
 }
 
-bool http_mutex_acquire(TickType_t timeout) {
-    return xSemaphoreTake(_mutex, timeout) == pdTRUE;
+bool http_mutex_acquire(uint32_t timeout_ms) {
+    return platform_mutex_lock(_mutex, timeout_ms);
 }
 
 void http_mutex_release() {
-    xSemaphoreGive(_mutex);
+    platform_mutex_unlock(_mutex);
 }

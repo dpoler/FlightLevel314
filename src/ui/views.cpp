@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include <cstdlib> // abs() -- only Arduino-flavored symbol this file used
 #include "views.h"
 #include "status_bar.h"
 #include "map_view.h"
@@ -45,6 +45,13 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_size(tileview, LCD_H_RES, CONTENT_H);
     lv_obj_set_style_bg_color(tileview, lv_color_hex(0x0a0a1a), 0);
     lv_obj_set_style_bg_opa(tileview, LV_OPA_COVER, 0);
+    // Keep the horizontal "swipe bar" (tileview scrollbar) visible as the
+    // view-switch affordance. MODE_ON so it stays put instead of only
+    // flashing mid-swipe (AUTO). The solid blue strip that used to sit
+    // under it was not this scrollbar -- it was undrawn canvas BG_COLOR
+    // below a CANVAS_H-tall basemap (see map_view.cpp map_basemap_sync);
+    // that strip is gone now that the basemap covers full screen height.
+    lv_obj_set_scrollbar_mode(tileview, LV_SCROLLBAR_MODE_ON);
 
     // Create 4 horizontal tiles — all get opaque backgrounds to prevent bleed-through during scroll animation.
     // Runway diagrams live inside Map view now (see map_view.cpp draw_saved_airports) —
@@ -150,7 +157,16 @@ void views_attach_swipe(lv_obj_t *obj) {
         if (abs(dx) >= SWIPE_THRESHOLD && abs(dx) > abs(dy) * 2) {
             _swipe_active = true;
             int v = views_get_active_index();
-            views_switch_to((dx < 0) ? (v + 1) % NUM_VIEWS : (v + NUM_VIEWS - 1) % NUM_VIEWS);
+            // Clamp at the ends rather than wrapping -- the tileview is a
+            // straight line (Map/Radar/Arrivals/Stats, in that order), not
+            // a loop, so wrapping (the old (v +/- 1) % NUM_VIEWS) jumped
+            // straight from one end to the other with no animation
+            // (LV_ANIM_OFF in views_switch_to()) since there's no sensible
+            // transition to animate between two tiles that aren't actually
+            // adjacent. Swiping past the first/last view now does nothing,
+            // matching the layout instead of fighting it.
+            int target = (dx < 0) ? v + 1 : v - 1;
+            if (target >= 0 && target < NUM_VIEWS) views_switch_to(target);
         }
     }, LV_EVENT_PRESSING, nullptr);
 }

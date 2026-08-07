@@ -1,24 +1,23 @@
 #include "error_log.h"
-#include <Arduino.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
+#include "../platform/platform.h"
 #include <stdarg.h>
 #include <string.h>
+#include <cstdio>
 
 static ErrorEntry _ring[ERROR_LOG_MAX];
 static int _write_idx = 0;
 static int _count = 0;         // entries in ring (max ERROR_LOG_MAX)
 static uint32_t _total = 0;    // lifetime count
-static SemaphoreHandle_t _mutex = nullptr;
+static platform_mutex_t _mutex = nullptr;
 
 void error_log_init() {
-    _mutex = xSemaphoreCreateMutex();
+    _mutex = platform_mutex_create();
     memset(_ring, 0, sizeof(_ring));
 }
 
 void error_log_add(const char *fmt, ...) {
     if (!_mutex) return;
-    if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
+    if (!platform_mutex_lock(_mutex, 50)) return;
 
     ErrorEntry &e = _ring[_write_idx];
     va_list args;
@@ -31,13 +30,13 @@ void error_log_add(const char *fmt, ...) {
     if (_count < ERROR_LOG_MAX) _count++;
     _total++;
 
-    xSemaphoreGive(_mutex);
+    platform_mutex_unlock(_mutex);
 }
 
 ErrorSnapshot error_log_snapshot() {
     ErrorSnapshot snap = {};
     if (!_mutex) return snap;
-    if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return snap;
+    if (!platform_mutex_lock(_mutex, 50)) return snap;
 
     snap.count = _count;
     // Copy in chronological order (oldest first)
@@ -46,17 +45,17 @@ ErrorSnapshot error_log_snapshot() {
         snap.entries[i] = _ring[(start + i) % ERROR_LOG_MAX];
     }
 
-    xSemaphoreGive(_mutex);
+    platform_mutex_unlock(_mutex);
     return snap;
 }
 
 void error_log_clear() {
     if (!_mutex) return;
-    if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
+    if (!platform_mutex_lock(_mutex, 50)) return;
     _count = 0;
     _write_idx = 0;
     memset(_ring, 0, sizeof(_ring));
-    xSemaphoreGive(_mutex);
+    platform_mutex_unlock(_mutex);
 }
 
 uint32_t error_log_total_count() {

@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include "../platform/platform.h" // millis()/strlcpy compatibility shims on non-Arduino builds
 #include "view_menu.h"
 #include "map_view.h"
 #include "radar_view.h"
@@ -11,6 +11,8 @@
 
 #define PANEL_W 270
 #define PANEL_H 460
+// Extra height when the Pi Map BASEMAP + WEATHER sections are shown.
+#define PANEL_H_WITH_BASEMAP 780
 
 #define COLOR_PANEL  lv_color_hex(0x14142a)
 #define COLOR_ACCENT lv_color_hex(0x00cc66)
@@ -21,6 +23,11 @@
 static lv_obj_t *_overlay = nullptr;
 static lv_obj_t *_panel = nullptr;
 static lv_obj_t *_len_label = nullptr;
+static lv_obj_t *_bm_opa_label = nullptr;
+static lv_obj_t *_bm_style_lbl = nullptr;
+static lv_obj_t *_bm_opa_slider = nullptr;
+static lv_obj_t *_wx_opa_label = nullptr;
+static lv_obj_t *_wx_opa_slider = nullptr;
 
 static void close_overlay() {
     if (_overlay) {
@@ -41,6 +48,11 @@ static void close_overlay() {
         _overlay = nullptr;
         _panel = nullptr;
         _len_label = nullptr;
+        _bm_opa_label = nullptr;
+        _bm_style_lbl = nullptr;
+        _bm_opa_slider = nullptr;
+        _wx_opa_label = nullptr;
+        _wx_opa_slider = nullptr;
     }
 }
 
@@ -102,10 +114,17 @@ static void open_overlay() {
     // top-left position unrelated to where the chip actually is -- clamped
     // so it can't run off the right edge of the screen.
     int px = status_bar_get_view_chip_x();
+#if !defined(ARDUINO)
+    // Basemap controls are Pi + Map only (Radar has no tile underlay).
+    const bool show_basemap = (views_get_active_index() == VIEW_MAP);
+#else
+    const bool show_basemap = false;
+#endif
+    const int panel_h = show_basemap ? PANEL_H_WITH_BASEMAP : PANEL_H;
     if (px + PANEL_W > LCD_H_RES - 8) px = LCD_H_RES - PANEL_W - 8;
 
     _panel = lv_obj_create(_overlay);
-    lv_obj_set_size(_panel, PANEL_W, PANEL_H);
+    lv_obj_set_size(_panel, PANEL_W, panel_h);
     lv_obj_set_pos(_panel, px, 8);
     lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
@@ -227,8 +246,137 @@ static void open_overlay() {
     // ============================================================
     section_header(_panel, "LOCATIONS", 290);
     toggle_row(_panel, "Other Airports", 318, secondary_locations_shown(), [](lv_event_t *e) {
-        secondary_locations_toggle();
+        // Match Show trails / Show basemap: only flip config when the switch
+        // state actually disagrees (avoids desync if VALUE_CHANGED fires
+        // without a real user toggle).
+        if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != secondary_locations_shown())
+            secondary_locations_toggle();
+        int v = views_get_active_index();
+        if (v == VIEW_MAP) map_view_update();
+        else if (v == VIEW_RADAR) radar_view_update();
     });
+
+    int alerts_y = 352;
+#if !defined(ARDUINO)
+    if (show_basemap) {
+        // ============================================================
+        // Basemap -- Carto dark / FAA VFR sectional under Map.
+        // Style: Dark → Dark NL → Light (Voyager) → Light NL → Topo → Sectional.
+        // Opacity is per-style (10-100%); each style remembers its own.
+        // ============================================================
+        section_header(_panel, "BASEMAP", 352);
+        toggle_row(_panel, "Show basemap", 380, map_basemap_shown(), [](lv_event_t *e) {
+            if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != map_basemap_shown())
+                map_basemap_toggle();
+            map_view_update();
+        });
+
+        lv_obj_t *style_btn = lv_obj_create(_panel);
+        lv_obj_set_size(style_btn, PANEL_W - 20, 32);
+        lv_obj_set_pos(style_btn, 0, 414);
+        lv_obj_set_style_bg_color(style_btn, COLOR_ROW, 0);
+        lv_obj_set_style_border_color(style_btn, COLOR_ACCENT, 0);
+        lv_obj_set_style_border_width(style_btn, 1, 0);
+        lv_obj_set_style_radius(style_btn, 6, 0);
+        lv_obj_set_style_pad_all(style_btn, 0, 0);
+        lv_obj_clear_flag(style_btn, LV_OBJ_FLAG_SCROLLABLE);
+        _bm_style_lbl = lv_label_create(style_btn);
+        lv_label_set_text_fmt(_bm_style_lbl, "Style: %s", map_basemap_style_name());
+        lv_obj_set_style_text_color(_bm_style_lbl, COLOR_ACCENT, 0);
+        lv_obj_set_style_text_font(_bm_style_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_center(_bm_style_lbl);
+        lv_obj_add_event_cb(style_btn, [](lv_event_t *e) {
+            map_basemap_style_cycle();
+            if (_bm_style_lbl)
+                lv_label_set_text_fmt(_bm_style_lbl, "Style: %s", map_basemap_style_name());
+            // Each style remembers its own opacity — refresh slider/label.
+            int opa = map_basemap_opa();
+            if (_bm_opa_label) lv_label_set_text_fmt(_bm_opa_label, "%d%%", opa);
+            if (_bm_opa_slider) lv_slider_set_value(_bm_opa_slider, opa, LV_ANIM_OFF);
+            // Re-request tiles for the new style (clears stale front buffer).
+            map_view_on_show();
+        }, LV_EVENT_CLICKED, nullptr);
+
+        lv_obj_t *opa_lbl = lv_label_create(_panel);
+        lv_label_set_text(opa_lbl, "Opacity");
+        lv_obj_set_style_text_font(opa_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(opa_lbl, COLOR_DIM, 0);
+        lv_obj_set_pos(opa_lbl, 0, 456);
+
+        _bm_opa_label = lv_label_create(_panel);
+        lv_label_set_text_fmt(_bm_opa_label, "%d%%", map_basemap_opa());
+        lv_obj_set_style_text_color(_bm_opa_label, lv_color_white(), 0);
+        lv_obj_set_style_text_font(_bm_opa_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_pos(_bm_opa_label, PANEL_W - 20 - 50, 456);
+
+        _bm_opa_slider = lv_slider_create(_panel);
+        lv_obj_set_size(_bm_opa_slider, PANEL_W - 20, 10);
+        lv_obj_set_pos(_bm_opa_slider, 0, 480);
+        lv_slider_set_range(_bm_opa_slider, 10, 100);
+        lv_slider_set_value(_bm_opa_slider, map_basemap_opa(), LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(_bm_opa_slider, lv_color_hex(0x333366), 0);
+        lv_obj_set_style_bg_color(_bm_opa_slider, COLOR_ACCENT, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(_bm_opa_slider, COLOR_ACCENT, LV_PART_KNOB);
+        lv_obj_add_event_cb(_bm_opa_slider, [](lv_event_t *e) {
+            int val = lv_slider_get_value(lv_event_get_target_obj(e));
+            map_basemap_opa_set(val);
+            lv_label_set_text_fmt(_bm_opa_label, "%d%%", val);
+            map_view_update();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_add_event_cb(_bm_opa_slider, [](lv_event_t *e) {
+            storage_save_config(g_config);
+        }, LV_EVENT_RELEASED, nullptr);
+        lv_obj_add_event_cb(_bm_opa_slider, [](lv_event_t *e) {
+            storage_save_config(g_config);
+        }, LV_EVENT_PRESS_LOST, nullptr);
+
+        // ============================================================
+        // Weather -- RainViewer precip radar (public API, no key).
+        // ============================================================
+        section_header(_panel, "WEATHER", 512);
+        toggle_row(_panel, "Show weather", 540, map_weather_shown(), [](lv_event_t *e) {
+            if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != map_weather_shown())
+                map_weather_toggle();
+            map_view_on_show(); // kick fetch when enabling
+            map_view_update();
+        });
+
+        lv_obj_t *wx_opa_lbl = lv_label_create(_panel);
+        lv_label_set_text(wx_opa_lbl, "Opacity");
+        lv_obj_set_style_text_font(wx_opa_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(wx_opa_lbl, COLOR_DIM, 0);
+        lv_obj_set_pos(wx_opa_lbl, 0, 574);
+
+        _wx_opa_label = lv_label_create(_panel);
+        lv_label_set_text_fmt(_wx_opa_label, "%d%%", map_weather_opa());
+        lv_obj_set_style_text_color(_wx_opa_label, lv_color_white(), 0);
+        lv_obj_set_style_text_font(_wx_opa_label, &lv_font_montserrat_14, 0);
+        lv_obj_set_pos(_wx_opa_label, PANEL_W - 20 - 50, 574);
+
+        _wx_opa_slider = lv_slider_create(_panel);
+        lv_obj_set_size(_wx_opa_slider, PANEL_W - 20, 10);
+        lv_obj_set_pos(_wx_opa_slider, 0, 598);
+        lv_slider_set_range(_wx_opa_slider, 10, 100);
+        lv_slider_set_value(_wx_opa_slider, map_weather_opa(), LV_ANIM_OFF);
+        lv_obj_set_style_bg_color(_wx_opa_slider, lv_color_hex(0x333366), 0);
+        lv_obj_set_style_bg_color(_wx_opa_slider, COLOR_ACCENT, LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(_wx_opa_slider, COLOR_ACCENT, LV_PART_KNOB);
+        lv_obj_add_event_cb(_wx_opa_slider, [](lv_event_t *e) {
+            int val = lv_slider_get_value(lv_event_get_target_obj(e));
+            map_weather_opa_set(val);
+            lv_label_set_text_fmt(_wx_opa_label, "%d%%", val);
+            map_view_update();
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_add_event_cb(_wx_opa_slider, [](lv_event_t *e) {
+            storage_save_config(g_config);
+        }, LV_EVENT_RELEASED, nullptr);
+        lv_obj_add_event_cb(_wx_opa_slider, [](lv_event_t *e) {
+            storage_save_config(g_config);
+        }, LV_EVENT_PRESS_LOST, nullptr);
+
+        alerts_y = 630;
+    }
+#endif
 
     // ============================================================
     // Alerts -- military/emergency toast popups. Deliberately global
@@ -238,12 +386,12 @@ static void open_overlay() {
     // you're looking at Map and not Radar. Moved here from Settings, which
     // now has one less thing.
     // ============================================================
-    section_header(_panel, "ALERTS", 352);
-    toggle_row(_panel, "Military", 380, g_config.alert_military, [](lv_event_t *e) {
+    section_header(_panel, "ALERTS", alerts_y);
+    toggle_row(_panel, "Military", alerts_y + 28, g_config.alert_military, [](lv_event_t *e) {
         g_config.alert_military = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
         storage_save_config(g_config);
     });
-    toggle_row(_panel, "Emergency", 414, g_config.alert_emergency, [](lv_event_t *e) {
+    toggle_row(_panel, "Emergency", alerts_y + 62, g_config.alert_emergency, [](lv_event_t *e) {
         g_config.alert_emergency = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
         storage_save_config(g_config);
     });

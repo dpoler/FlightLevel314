@@ -5,8 +5,7 @@
 #include "../data/aircraft.h"
 #include "../data/storage.h"
 #include "../pins_config.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
+#include "../platform/platform.h"
 #include <cstring>
 
 // Aircraft list reference for tap-to-detail
@@ -38,7 +37,7 @@ struct PendingAlert {
 static PendingAlert _queue[ALERT_QUEUE_SIZE];
 static volatile int _queue_head = 0;
 static volatile int _queue_tail = 0;
-static SemaphoreHandle_t _queue_mutex = nullptr;
+static platform_mutex_t _queue_mutex = nullptr;
 
 static lv_color_t alert_color(AlertType type) {
     switch (type) {
@@ -85,21 +84,21 @@ static void dismiss_toast(lv_timer_t *t) {
 // already in view on the first fetch would only ever show the last one.
 static void process_queue(lv_timer_t *t) {
     if (_toast_active) return;
-    if (xSemaphoreTake(_queue_mutex, 0) != pdTRUE) return;
+    if (!platform_mutex_lock(_queue_mutex, 0)) return;
 
     if (_queue_head != _queue_tail) {
         PendingAlert pa = _queue[_queue_tail]; // copy out before releasing the mutex
         _queue_tail = (_queue_tail + 1) % ALERT_QUEUE_SIZE;
-        xSemaphoreGive(_queue_mutex);
+        platform_mutex_unlock(_queue_mutex);
         alerts_show(pa.type, pa.title, pa.detail, pa.icao_hex);
         return;
     }
 
-    xSemaphoreGive(_queue_mutex);
+    platform_mutex_unlock(_queue_mutex);
 }
 
 void alerts_init(lv_obj_t *parent) {
-    _queue_mutex = xSemaphoreCreateMutex();
+    _queue_mutex = platform_mutex_create();
 
     _toast = lv_obj_create(parent);
     lv_obj_set_size(_toast, TOAST_W, TOAST_H);
@@ -199,7 +198,7 @@ void alerts_dismiss() {
 void alerts_queue(AlertType type, const char *title, const char *detail,
                   const char *icao_hex) {
     if (!_queue_mutex) return;
-    if (xSemaphoreTake(_queue_mutex, pdMS_TO_TICKS(10)) != pdTRUE) return;
+    if (!platform_mutex_lock(_queue_mutex, pdMS_TO_TICKS(10))) return;
 
     int next = (_queue_head + 1) % ALERT_QUEUE_SIZE;
     if (next != _queue_tail) { // not full
@@ -217,5 +216,5 @@ void alerts_queue(AlertType type, const char *title, const char *detail,
         _queue_head = next;
     }
 
-    xSemaphoreGive(_queue_mutex);
+    platform_mutex_unlock(_queue_mutex);
 }
