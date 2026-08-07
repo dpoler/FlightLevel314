@@ -9,6 +9,9 @@
 #include <cstdio> // snprintf -- not reliably transitive under libstdc++ (Pi build)
 
 static lv_obj_t *_card = nullptr;
+#if LCD_H_RES >= 1280
+static lv_obj_t *_summary_box = nullptr; // identity panel, upper-left on wide cards
+#endif
 
 // Header
 static lv_obj_t *_callsign_label = nullptr;
@@ -58,37 +61,57 @@ static bool _visible = false;
 static Aircraft _current_ac;
 static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syncs _current_ac from this every tick
 
-// Layout: originally tuned for jc1060's 1024x600. On the Pi's 1280x800 we
-// reserve a right-hand photo column and put the 6-col telemetry grid
-// *below* that band so STATUS/SIGNAL/QNH never collide with the image.
-// Card height is sized to fit everything with scrolling disabled.
+// Layout: jc1060 keeps the compact full-width stack. On the Pi's 1280x800
+// the card is three columns — summary box (left), telemetry (middle),
+// photo (right) — so stats aren't crushed into a single row under the
+// image with the last line kissing the screen edge.
 #if LCD_H_RES >= 1280
-#define CARD_H        400
-#define PHOTO_SLOT_W  440
-#define PHOTO_SLOT_H  236
-#define IDENTITY_MAX_W (LCD_H_RES - 32 - PHOTO_SLOT_W - 16)
-#define GRID_Y0       268
-#define GRID_COL_W    ((LCD_H_RES - 32) / 6)
+#define CARD_H         340
+#define CARD_PAD       16
+#define SUMMARY_W      360
+#define SUMMARY_H      168
+#define PHOTO_SLOT_W   400
+#define PHOTO_SLOT_H   220
+#define STATS_GAP      16
+#define STATS_X        (SUMMARY_W + STATS_GAP)
+#define STATS_W        (LCD_H_RES - 2 * CARD_PAD - SUMMARY_W - STATS_GAP - PHOTO_SLOT_W - STATS_GAP)
+#define IDENTITY_MAX_W (SUMMARY_W - 24)
+#define GRID_Y0        10
+#define GRID_ROW_H     42
+#define GRID_COL_W     (STATS_W / 3)
+#define GRID_COLS      3
 #else
-#define CARD_H        310
-#define PHOTO_SLOT_W  0
-#define PHOTO_SLOT_H  0
+#define CARD_H         310
+#define CARD_PAD       16
+#define PHOTO_SLOT_W   0
+#define PHOTO_SLOT_H   0
+#define STATS_X        0
 #define IDENTITY_MAX_W (LCD_H_RES - 32)
-#define GRID_Y0       148
-#define GRID_COL_W    160
+#define GRID_Y0        148
+#define GRID_ROW_H     42
+#define GRID_COL_W     160
+#define GRID_COLS      6
 #endif
 
 #define CARD_BG lv_color_hex(0x141428)
+#define CARD_SUMMARY_BG lv_color_hex(0x1a1a32)
+#define CARD_SUMMARY_BORDER lv_color_hex(0x2a2a4a)
 #define CARD_TEXT lv_color_hex(0xccccdd)
 #define CARD_ACCENT lv_color_hex(0x4488ff)
 #define CARD_DIM lv_color_hex(0x666688)
 
-#define COL1 (0 * GRID_COL_W)
-#define COL2 (1 * GRID_COL_W)
-#define COL3 (2 * GRID_COL_W)
-#define COL4 (3 * GRID_COL_W)
-#define COL5 (4 * GRID_COL_W)
-#define COL6 (5 * GRID_COL_W)
+// ASCII separator — montserrat doesn't include U+00B7 (·), which rendered
+// as empty rectangular tofu between summary fields.
+#define SEP "  |  "
+
+#define COL1 (STATS_X + 0 * GRID_COL_W)
+#define COL2 (STATS_X + 1 * GRID_COL_W)
+#define COL3 (STATS_X + 2 * GRID_COL_W)
+#if GRID_COLS >= 6
+#define COL4 (STATS_X + 3 * GRID_COL_W)
+#define COL5 (STATS_X + 4 * GRID_COL_W)
+#define COL6 (STATS_X + 5 * GRID_COL_W)
+#endif
 
 static const char *decode_category(const char *cat) {
     if (!cat[0]) return "";
@@ -135,7 +158,7 @@ static const char *decode_squawk(uint16_t sq) {
     }
 }
 
-// Type line: "Desc (CODE)  ·  Cat A3: Large" — keeps category with the
+// Type line: "Desc (CODE)  |  Cat A3: Large" — keeps category with the
 // aircraft identity instead of floating alone at a fixed x=500.
 static void set_type_and_category(const char *desc_or_type, const char *type_code,
                                   const char *category) {
@@ -154,7 +177,7 @@ static void set_type_and_category(const char *desc_or_type, const char *type_cod
 
     const char *cat_desc = decode_category(category ? category : "");
     if (category && category[0]) {
-        if (pos > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, "  ·  ");
+        if (pos > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, SEP);
         if (cat_desc[0])
             snprintf(buf + pos, sizeof(buf) - pos, "Cat %s: %s", category, cat_desc);
         else
@@ -180,17 +203,17 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         pos += snprintf(detail + pos, sizeof(detail) - pos, "%s", data->manufacturer);
     }
     if (data->registered_country[0]) {
-        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, "  ·  ");
+        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, SEP);
         pos += snprintf(detail + pos, sizeof(detail) - pos, "%s", data->registered_country);
         if (data->year_built > 0) {
             pos += snprintf(detail + pos, sizeof(detail) - pos, " %d", data->year_built);
         }
     } else if (data->year_built > 0) {
-        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, "  ·  ");
+        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, SEP);
         pos += snprintf(detail + pos, sizeof(detail) - pos, "Built %d", data->year_built);
     }
     if (data->engine_count > 0 && data->engine_type[0]) {
-        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, "  ·  ");
+        if (pos > 0) pos += snprintf(detail + pos, sizeof(detail) - pos, SEP);
         snprintf(detail + pos, sizeof(detail) - pos, "%dx %s", data->engine_count, data->engine_type);
     }
     if (detail[0]) lv_label_set_text(_aircraft_detail_label, detail);
@@ -207,7 +230,7 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         _photo_dsc.data = data->photo_rgb565;
         lv_image_set_src(_photo_img, &_photo_dsc);
         lv_obj_set_size(_photo_img, data->photo_w, data->photo_h);
-        lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 0);
+        lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 8);
         lv_obj_clear_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
         strlcpy(_photo_shown_icao, _current_ac.icao_hex, sizeof(_photo_shown_icao));
 
@@ -223,7 +246,11 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         // ESP32 (or Pi with metadata but no pixels): credit under identity.
         lv_label_set_text_fmt(_photo_credit_label, "Photo: %s", data->photo_photographer);
         lv_obj_clear_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
+#if LCD_H_RES >= 1280
+        lv_obj_set_pos(_photo_credit_label, 10, SUMMARY_H - 22);
+#else
         lv_obj_set_pos(_photo_credit_label, 0, 118);
+#endif
         lv_obj_set_style_text_align(_photo_credit_label, LV_TEXT_ALIGN_LEFT, 0);
     }
 }
@@ -410,9 +437,9 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_bg_opa(_card, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(_card, 0, 0);
     lv_obj_set_style_radius(_card, 12, 0);
-    lv_obj_set_style_pad_all(_card, 16, 0);
+    lv_obj_set_style_pad_all(_card, CARD_PAD, 0);
     lv_obj_set_style_clip_corner(_card, true, 0);
-    // Sized to fit — no scroll/scrollbar (photo used to overflow CARD_H).
+    // Sized to fit — no scroll/scrollbar.
     lv_obj_clear_flag(_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(_card, LV_SCROLLBAR_MODE_OFF);
 
@@ -425,47 +452,77 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_border_width(handle, 0, 0);
     lv_obj_align(handle, LV_ALIGN_TOP_MID, 0, -8);
 
-    // === HEADER (left column; photo owns the right on wide screens) ===
-    _callsign_label = lv_label_create(_card);
+#if LCD_H_RES >= 1280
+    // Summary box — visually separates identity from the telemetry column.
+    _summary_box = lv_obj_create(_card);
+    lv_obj_set_size(_summary_box, SUMMARY_W, SUMMARY_H);
+    lv_obj_set_pos(_summary_box, 0, 8);
+    lv_obj_set_style_bg_color(_summary_box, CARD_SUMMARY_BG, 0);
+    lv_obj_set_style_bg_opa(_summary_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(_summary_box, CARD_SUMMARY_BORDER, 0);
+    lv_obj_set_style_border_width(_summary_box, 1, 0);
+    lv_obj_set_style_radius(_summary_box, 8, 0);
+    lv_obj_set_style_pad_all(_summary_box, 10, 0);
+    lv_obj_clear_flag(_summary_box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(_summary_box, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(_summary_box, LV_OBJ_FLAG_CLICKABLE); // taps fall through to card close
+
+    lv_obj_t *id_parent = _summary_box;
+    const int id_x = 0;
+    const int y_call = 0;
+    const int y_reg = 32;
+    const int y_op = 54;
+    const int y_type = 76;
+    const int y_detail = 98;
+#else
+    lv_obj_t *id_parent = _card;
+    const int id_x = 0;
+    const int y_call = 0;
+    const int y_reg = 34;
+    const int y_op = 56;
+    const int y_type = 78;
+    const int y_detail = 98;
+#endif
+
+    // === HEADER / IDENTITY ===
+    _callsign_label = lv_label_create(id_parent);
     lv_obj_set_style_text_font(_callsign_label, &lv_font_montserrat_28, 0);
     lv_obj_set_style_text_color(_callsign_label, lv_color_white(), 0);
-    lv_obj_set_pos(_callsign_label, 0, 0);
+    lv_obj_set_pos(_callsign_label, id_x, y_call);
     lv_obj_set_width(_callsign_label, IDENTITY_MAX_W - 120);
     lv_label_set_long_mode(_callsign_label, LV_LABEL_LONG_CLIP);
 
-    _badge_label = lv_label_create(_card);
+    _badge_label = lv_label_create(id_parent);
     lv_obj_set_style_text_font(_badge_label, &lv_font_montserrat_14, 0);
     lv_obj_align_to(_badge_label, _callsign_label, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
     lv_label_set_text(_badge_label, "");
 
-    // Sub-header: Reg | ICAO | Squawk
-    _reg_label = lv_label_create(_card);
+    _reg_label = lv_label_create(id_parent);
     lv_obj_set_style_text_font(_reg_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_reg_label, CARD_DIM, 0);
-    lv_obj_set_pos(_reg_label, 0, 34);
+    lv_obj_set_pos(_reg_label, id_x, y_reg);
     lv_obj_set_width(_reg_label, IDENTITY_MAX_W);
     lv_label_set_long_mode(_reg_label, LV_LABEL_LONG_CLIP);
 
-    // === IDENTITY ===
-    _operator_label = lv_label_create(_card);
+    _operator_label = lv_label_create(id_parent);
     lv_obj_set_style_text_font(_operator_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(_operator_label, CARD_ACCENT, 0);
-    lv_obj_set_pos(_operator_label, 0, 56);
+    lv_obj_set_pos(_operator_label, id_x, y_op);
     lv_obj_set_width(_operator_label, IDENTITY_MAX_W);
     lv_label_set_long_mode(_operator_label, LV_LABEL_LONG_CLIP);
 
-    _type_label = lv_label_create(_card);
+    _type_label = lv_label_create(id_parent);
     lv_obj_set_style_text_font(_type_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_type_label, CARD_TEXT, 0);
-    lv_obj_set_pos(_type_label, 0, 78);
+    lv_obj_set_pos(_type_label, id_x, y_type);
     lv_obj_set_width(_type_label, IDENTITY_MAX_W);
     lv_label_set_long_mode(_type_label, LV_LABEL_LONG_CLIP);
 
-    _aircraft_detail_label = lv_label_create(_card);
+    _aircraft_detail_label = lv_label_create(id_parent);
     lv_label_set_text(_aircraft_detail_label, "");
     lv_obj_set_style_text_font(_aircraft_detail_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_aircraft_detail_label, CARD_DIM, 0);
-    lv_obj_set_pos(_aircraft_detail_label, 0, 98);
+    lv_obj_set_pos(_aircraft_detail_label, id_x, y_detail);
     lv_obj_set_width(_aircraft_detail_label, IDENTITY_MAX_W);
     lv_label_set_long_mode(_aircraft_detail_label, LV_LABEL_LONG_CLIP);
 
@@ -477,16 +534,42 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 
 #if !defined(ARDUINO) && LCD_H_RES >= 1280
-    // Reserved right column for planespotters thumbnail — telemetry grid
-    // starts below PHOTO_SLOT_H so fields never sit under the image.
     _photo_img = lv_image_create(_card);
     lv_obj_set_size(_photo_img, PHOTO_SLOT_W, PHOTO_SLOT_H);
-    lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 8);
     lv_obj_add_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(_photo_img, LV_OBJ_FLAG_CLICKABLE);
 #endif
 
-    // === DATA GRID — full width, below identity/photo band ===
+    // === DATA GRID ===
+    // Wide: 3 columns × 6 rows in the middle band (beside summary + photo).
+    // Narrow: original 6 columns × 3 rows under the identity block.
+#if LCD_H_RES >= 1280
+    int y0 = GRID_Y0;
+    make_data_row(_card, "ALTITUDE", COL1, y0 + 0 * GRID_ROW_H, &_alt_label);
+    make_data_row(_card, "GND SPD",  COL2, y0 + 0 * GRID_ROW_H, &_spd_label);
+    make_data_row(_card, "HEADING",  COL3, y0 + 0 * GRID_ROW_H, &_hdg_label);
+
+    make_data_row(_card, "V/S",      COL1, y0 + 1 * GRID_ROW_H, &_vrate_label);
+    make_data_row(_card, "SQUAWK",   COL2, y0 + 1 * GRID_ROW_H, &_squawk_label);
+    make_data_row(_card, "STATUS",   COL3, y0 + 1 * GRID_ROW_H, &_status_label);
+
+    make_data_row(_card, "DISTANCE", COL1, y0 + 2 * GRID_ROW_H, &_dist_label);
+    make_data_row(_card, "BEARING",  COL2, y0 + 2 * GRID_ROW_H, &_bearing_label);
+    make_data_row(_card, "LAT",      COL3, y0 + 2 * GRID_ROW_H, &_lat_label);
+
+    make_data_row(_card, "LON",      COL1, y0 + 3 * GRID_ROW_H, &_lon_label);
+    make_data_row(_card, "TRACKED",  COL2, y0 + 3 * GRID_ROW_H, &_track_label);
+    make_data_row(_card, "SIGNAL",   COL3, y0 + 3 * GRID_ROW_H, &_signal_label);
+
+    make_data_row(_card, "MACH",     COL1, y0 + 4 * GRID_ROW_H, &_mach_label);
+    make_data_row(_card, "IAS",      COL2, y0 + 4 * GRID_ROW_H, &_ias_label);
+    make_data_row(_card, "TAS",      COL3, y0 + 4 * GRID_ROW_H, &_tas_label);
+
+    make_data_row(_card, "NAV ALT",  COL1, y0 + 5 * GRID_ROW_H, &_nav_alt_label);
+    make_data_row(_card, "ROLL",     COL2, y0 + 5 * GRID_ROW_H, &_roll_label);
+    make_data_row(_card, "QNH",      COL3, y0 + 5 * GRID_ROW_H, &_qnh_label);
+#else
     int y1 = GRID_Y0;
     make_data_row(_card, "ALTITUDE", COL1, y1, &_alt_label);
     make_data_row(_card, "GND SPD", COL2, y1, &_spd_label);
@@ -495,7 +578,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     make_data_row(_card, "SQUAWK", COL5, y1, &_squawk_label);
     make_data_row(_card, "STATUS", COL6, y1, &_status_label);
 
-    int y2 = GRID_Y0 + 42;
+    int y2 = GRID_Y0 + GRID_ROW_H;
     make_data_row(_card, "DISTANCE", COL1, y2, &_dist_label);
     make_data_row(_card, "BEARING", COL2, y2, &_bearing_label);
     make_data_row(_card, "LAT", COL3, y2, &_lat_label);
@@ -503,13 +586,14 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     make_data_row(_card, "TRACKED", COL5, y2, &_track_label);
     make_data_row(_card, "SIGNAL", COL6, y2, &_signal_label);
 
-    int y3 = GRID_Y0 + 84;
+    int y3 = GRID_Y0 + 2 * GRID_ROW_H;
     make_data_row(_card, "MACH", COL1, y3, &_mach_label);
     make_data_row(_card, "IAS", COL2, y3, &_ias_label);
     make_data_row(_card, "TAS", COL3, y3, &_tas_label);
     make_data_row(_card, "NAV ALT", COL4, y3, &_nav_alt_label);
     make_data_row(_card, "ROLL", COL5, y3, &_roll_label);
     make_data_row(_card, "QNH", COL6, y3, &_qnh_label);
+#endif
 
     // Tap to close
     lv_obj_add_event_cb(_card, [](lv_event_t *e) {
@@ -546,10 +630,10 @@ void detail_card_show(const Aircraft *ac) {
     // Sub-header: Reg | ICAO | Squawk with decode
     const char *sq_decode = decode_squawk(ac->squawk);
     if (sq_decode[0]) {
-        lv_label_set_text_fmt(_reg_label, "%s  ·  %s  ·  Sq %04d (%s)",
+        lv_label_set_text_fmt(_reg_label, "%s" SEP "%s" SEP "Sq %04d (%s)",
                               ac->registration, ac->icao_hex, ac->squawk, sq_decode);
     } else {
-        lv_label_set_text_fmt(_reg_label, "%s  ·  %s  ·  Sq %04d",
+        lv_label_set_text_fmt(_reg_label, "%s" SEP "%s" SEP "Sq %04d",
                               ac->registration, ac->icao_hex, ac->squawk);
     }
 
