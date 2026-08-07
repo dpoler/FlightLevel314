@@ -172,6 +172,62 @@ static void draw_rings(lv_layer_t *layer) {
     lv_draw_line(layer, &line);
 }
 
+#if !defined(ARDUINO)
+// Pi-exclusive richer sweep -- jc1060's 6-line banded fade (kept verbatim
+// below) was sized for the P4's weaker GPU/heap budget; the Pi has real
+// compute to spare at this view's 10fps redraw (radar_view_init()'s
+// timer), so this draws a smooth ~160-segment comet tail with an eased
+// falloff (fast-then-long, like real phosphor decay, not a flat linear
+// ramp) plus a bloomed leading edge (wide dim line under a bright thin
+// core, simulating glow) and a small pulsing hub glow at the origin.
+// Purely visual -- doesn't change _sweep_angle's own update logic, sweep
+// timing, or aircraft-boost math in draw_blips() at all.
+static void draw_sweep(lv_layer_t *layer) {
+    float rad = _sweep_angle * M_PI / 180.0f;
+    int ex = RADAR_CX + (int)(RADAR_R * sinf(rad));
+    int ey = RADAR_CY - (int)(RADAR_R * cosf(rad));
+
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = COLOR_SWEEP;
+
+    // Comet tail: many thin segments over a wide arc, opacity following
+    // an eased (squared) falloff instead of discrete steps.
+    const float TAIL_DEG = 80.0f;
+    const int TAIL_SEGMENTS = 160;
+    for (int i = TAIL_SEGMENTS; i >= 1; i--) {
+        float t = (float)i / TAIL_SEGMENTS;   // 1.0 (far) .. ~0 (near sweep)
+        float trail_rad = (_sweep_angle - t * TAIL_DEG) * M_PI / 180.0f;
+        int tx = RADAR_CX + (int)(RADAR_R * sinf(trail_rad));
+        int ty = RADAR_CY - (int)(RADAR_R * cosf(trail_rad));
+        float fade = (1.0f - t) * (1.0f - t);
+        line.opa = (lv_opa_t)(fade * LV_OPA_50);
+        line.width = 1;
+        line.p1 = {RADAR_CX, RADAR_CY};
+        line.p2 = {(lv_value_precise_t)tx, (lv_value_precise_t)ty};
+        lv_draw_line(layer, &line);
+    }
+
+    // Bloomed leading edge -- wide/dim under narrow/bright.
+    line.p1 = {RADAR_CX, RADAR_CY};
+    line.p2 = {(lv_value_precise_t)ex, (lv_value_precise_t)ey};
+    line.opa = LV_OPA_20; line.width = 7; lv_draw_line(layer, &line);
+    line.opa = LV_OPA_40; line.width = 4; lv_draw_line(layer, &line);
+    line.opa = LV_OPA_COVER; line.width = 2; lv_draw_line(layer, &line);
+
+    // Center hub glow -- small pulsing halo at the origin.
+    lv_draw_rect_dsc_t hub;
+    lv_draw_rect_dsc_init(&hub);
+    hub.bg_color = COLOR_SWEEP;
+    hub.radius = LV_RADIUS_CIRCLE;
+    for (int r = 6; r >= 2; r -= 2) {
+        hub.bg_opa = (lv_opa_t)(LV_OPA_20 * (8 - r) / 2);
+        lv_area_t ha = {(lv_coord_t)(RADAR_CX - r), (lv_coord_t)(RADAR_CY - r),
+                         (lv_coord_t)(RADAR_CX + r), (lv_coord_t)(RADAR_CY + r)};
+        lv_draw_rect(layer, &hub, &ha);
+    }
+}
+#else
 static void draw_sweep(lv_layer_t *layer) {
     float rad = _sweep_angle * M_PI / 180.0f;
     int ex = RADAR_CX + (int)(RADAR_R * sinf(rad));
@@ -199,6 +255,7 @@ static void draw_sweep(lv_layer_t *layer) {
         lv_draw_line(layer, &line);
     }
 }
+#endif
 
 static void draw_blips(lv_layer_t *layer) {
     if (!_list->lock(pdMS_TO_TICKS(5))) return; // short timeout: skip frame if data locked
@@ -273,6 +330,33 @@ static void draw_blips(lv_layer_t *layer) {
             }
         }
 
+#if !defined(ARDUINO)
+        // Pi-exclusive glowing blip -- concentric fading halo under a
+        // bright core dot, instead of jc1060's flat filled square (kept
+        // verbatim in the #else below). Cheap at this view's ~60-aircraft/
+        // 10fps budget (a handful of extra small circle draws per blip).
+        lv_draw_rect_dsc_t glow;
+        lv_draw_rect_dsc_init(&glow);
+        glow.bg_color = color;
+        glow.radius = LV_RADIUS_CIRCLE;
+        static const int GLOW_R[3] = {9, 7, 5};
+        static const uint8_t GLOW_PCT[3] = {20, 35, 55};
+        for (int gi = 0; gi < 3; gi++) {
+            int r = GLOW_R[gi];
+            glow.bg_opa = (uint8_t)((opa * GLOW_PCT[gi]) / 100);
+            lv_area_t ga = {(lv_coord_t)(sx - r), (lv_coord_t)(sy - r),
+                            (lv_coord_t)(sx + r), (lv_coord_t)(sy + r)};
+            lv_draw_rect(layer, &glow, &ga);
+        }
+        lv_draw_rect_dsc_t dot;
+        lv_draw_rect_dsc_init(&dot);
+        dot.bg_color = color;
+        dot.bg_opa = opa;
+        dot.radius = LV_RADIUS_CIRCLE;
+        lv_area_t area = {(lv_coord_t)(sx - 3), (lv_coord_t)(sy - 3),
+                          (lv_coord_t)(sx + 3), (lv_coord_t)(sy + 3)};
+        lv_draw_rect(layer, &dot, &area);
+#else
         // Blip dot — larger for better visibility
         lv_draw_rect_dsc_t dot;
         lv_draw_rect_dsc_init(&dot);
@@ -282,6 +366,7 @@ static void draw_blips(lv_layer_t *layer) {
         lv_area_t area = {(lv_coord_t)(sx - 4), (lv_coord_t)(sy - 4),
                           (lv_coord_t)(sx + 4), (lv_coord_t)(sy + 4)};
         lv_draw_rect(layer, &dot, &area);
+#endif
 
         // Labels — two zones: paint detail (0-45deg) and condensed
         // (45-240deg). Each of Flight ID / Alt-Speed / Type is independently
