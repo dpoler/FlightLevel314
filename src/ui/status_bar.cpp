@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include "../platform/platform.h" // millis()/strlcpy compatibility shims on non-Arduino builds
 #include "status_bar.h"
 #include "views.h"
 #include "range.h"
@@ -6,6 +6,9 @@
 #include "../pins_config.h"
 #include "../data/fetcher.h"
 #include "../data/storage.h"
+#if !defined(ARDUINO)
+#include "basemap.h"
+#endif
 
 static lv_obj_t *wifi_icon;
 static lv_obj_t *ac_count_label;
@@ -203,7 +206,16 @@ void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircra
         lv_label_set_text_fmt(ac_count_label, "%d AC", aircraft_count);
     }
 
-    // Last update
+    // Last update age — or basemap build progress while Map tiles are fetching.
+    // Replaces the "%lus" counter for the duration of a network basemap build
+    // so there's one upper-right status, not a second chrome overlay.
+#if !defined(ARDUINO)
+    int bm_pct = 0;
+    if (basemap_updating(&bm_pct)) {
+        lv_label_set_text_fmt(update_label, "Map %d%%", bm_pct);
+        return;
+    }
+#endif
     if (last_update_ms == 0) {
         lv_label_set_text(update_label, "No data");
     } else {

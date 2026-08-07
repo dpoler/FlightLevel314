@@ -33,3 +33,31 @@ void tag_type_toggle();
 // Other saved/static airports + the HOME-elsewhere marker.
 bool secondary_locations_shown();
 void secondary_locations_toggle();
+
+// Pi Map basemap (VIEW menu, Map only). Opacity is 10-100 percent and is
+// stored per style (each remembers its own). map_basemap_opa_set() does not
+// persist — caller saves on slider release (same split as trails_amount_set).
+// Styles: 0=dark, 1=dark no labels, 2=sectional, 3=light (Carto Voyager cream),
+// 4=light no labels, 5=OpenTopoMap (labels baked into tiles).
+#define MAP_BASEMAP_STYLE_DARK 0
+#define MAP_BASEMAP_STYLE_DARK_NOLABELS 1
+#define MAP_BASEMAP_STYLE_SECTIONAL 2
+#define MAP_BASEMAP_STYLE_LIGHT 3
+#define MAP_BASEMAP_STYLE_LIGHT_NOLABELS 4
+#define MAP_BASEMAP_STYLE_TOPO 5
+#define MAP_BASEMAP_STYLE_COUNT 6
+
+bool map_basemap_shown();
+void map_basemap_toggle();
+int map_basemap_opa();              // opacity for the active style
+void map_basemap_opa_set(int pct);  // sets opacity for the active style
+int map_basemap_style();
+const char *map_basemap_style_name();
+void map_basemap_style_cycle();
+
+// Pi Map weather overlay (RainViewer precip radar). Opacity 10-100%;
+// map_weather_opa_set() does not persist — caller saves on slider release.
+bool map_weather_shown();
+void map_weather_toggle();
+int map_weather_opa();
+void map_weather_opa_set(int pct);

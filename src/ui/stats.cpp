@@ -1,4 +1,4 @@
-#include <Arduino.h>
+#include "../platform/platform.h" // millis()/strlcpy compatibility shims on non-Arduino builds
 #include "stats.h"
 #include "geo.h"
 #include "../data/locations.h"

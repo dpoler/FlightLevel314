@@ -71,6 +71,8 @@ static AircraftEnrichment *get_or_create_cache_entry(const char *icao_hex) {
         if (strcmp(_cache_keys[i], icao_hex) == 0) return &_cache[i];
     }
     int idx = _cache_count < MAX_CACHE ? _cache_count++ : 0;
+    // photo_rgb565 is Pi-only; ESP32 never allocates it, but clear the
+    // pointer fields so a reused slot can't look like it owns a buffer.
     memset(&_cache[idx], 0, sizeof(AircraftEnrichment));
     strlcpy(_cache_keys[idx], icao_hex, 7);
     return &_cache[idx];
@@ -155,6 +157,9 @@ static void run_stage2(AircraftEnrichment *entry) {
         HTTPClient http;
         http.begin(client, url);
         http.setTimeout(5000);
+        // Planespotters rejects generic library User-Agents with HTTP 403
+        // (see https://www.planespotters.net/photo/api).
+        http.setUserAgent("adsb/0.1 (+https://github.com/dpoler/adsb)");
         int code = http.GET();
         if (code == HTTP_CODE_OK) {
             JsonDocument doc(&_enrich_alloc);
