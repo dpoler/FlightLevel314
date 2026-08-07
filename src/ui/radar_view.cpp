@@ -222,17 +222,24 @@ static void draw_rings(lv_layer_t *layer) {
 
 #if !defined(ARDUINO)
 // Pi-exclusive richer sweep -- jc1060's 6-line banded fade (kept verbatim
-// below) was sized for the P4's weaker GPU/heap budget. pi/lv_conf.h has
-// LV_DRAW_SW_DRAW_UNIT_CNT=1 (single-threaded software rasterizer, not
-// using the Pi's other 3 cores), and each lv_draw_* call carries real
-// dispatch/clip overhead beyond the pixels it touches -- two rounds of
-// draw-count cuts still reported jumpy, so guessing at counts stopped
-// being useful. Per-phase profiling added instead (profile_record()/
-// profile_maybe_log() below, journalctl -u adsb-pi) -- deliberately
-// turned this back UP to a demanding level (was cut down to 12/36 in the
-// last round) so the profiling data actually shows something under real
-// load instead of measuring the already-trimmed case. Tune from the
-// logged numbers, not blind, once they're in.
+// below) was sized for the P4's weaker GPU/heap budget. Real profiling
+// on the Pi (journalctl, three rounds) found the actual constraint:
+// sweep.trail (120 lines) cost 530-726ms, sweep.bloomhub (6 draws: 3
+// bloom lines + 3 hub circles) cost 7-24ms -- dividing out, both land on
+// the same ~4.5-6ms *per single lv_draw_* call*, uniformly, on this
+// hardware's DRM rendering path (rings' steady ~27ms for ~10-12 draws
+// matches too). Not an "overlapping lines near one point" penalty as
+// first suspected -- just a much higher flat per-draw-call cost than
+// expected from any software rasterizer, and it applies to every draw
+// call, not something specific to this effect. Budget: rings alone
+// already costs ~27ms of the ~100ms/frame target (10fps), so the sweep
+// needs to stay under roughly 10-12 total draw calls to add well under
+// 50ms. Landed on 8 trail segments (up from jc1060's 6, close to the
+// same 3deg/segment angular density, but with a smooth eased quadratic
+// falloff instead of jc1060's linear per-band steps -- same draw count,
+// better-looking curve, zero extra cost) plus a 2-line bloom (down from
+// 3) and no hub glow (dropped entirely) -- 10 total draws vs. jc1060's
+// 7, comfortably inside budget instead of the 130 tried initially.
 static void draw_sweep(lv_layer_t *layer) {
     float rad = _sweep_angle * M_PI / 180.0f;
     int ex = RADAR_CX + (int)(RADAR_R * sinf(rad));
@@ -242,10 +249,10 @@ static void draw_sweep(lv_layer_t *layer) {
     lv_draw_line_dsc_init(&line);
     line.color = COLOR_SWEEP;
 
-    // Comet tail: many thin segments over a wide arc, opacity following
-    // an eased (squared) falloff instead of discrete steps.
-    const float TAIL_DEG = 80.0f;
-    const int TAIL_SEGMENTS = 120;
+    // Comet tail: same angular density as jc1060 (3deg/segment), just an
+    // eased (squared) opacity falloff instead of discrete linear steps.
+    const float TAIL_DEG = 24.0f;
+    const int TAIL_SEGMENTS = 8;
     uint32_t t0 = millis();
     for (int i = TAIL_SEGMENTS; i >= 1; i--) {
         float t = (float)i / TAIL_SEGMENTS;   // 1.0 (far) .. ~0 (near sweep)
@@ -262,24 +269,12 @@ static void draw_sweep(lv_layer_t *layer) {
     uint32_t t1 = millis();
     profile_record(_prof_trail, t1 - t0);
 
-    // Bloomed leading edge -- wide/dim under narrow/bright.
+    // Bloomed leading edge -- wide/dim under narrow/bright, 2 draws
+    // instead of the original 3 (dropped the widest/dimmest one).
     line.p1 = {RADAR_CX, RADAR_CY};
     line.p2 = {(lv_value_precise_t)ex, (lv_value_precise_t)ey};
-    line.opa = LV_OPA_20; line.width = 7; lv_draw_line(layer, &line);
-    line.opa = LV_OPA_40; line.width = 4; lv_draw_line(layer, &line);
+    line.opa = LV_OPA_30; line.width = 4; lv_draw_line(layer, &line);
     line.opa = LV_OPA_COVER; line.width = 2; lv_draw_line(layer, &line);
-
-    // Center hub glow -- small pulsing halo at the origin.
-    lv_draw_rect_dsc_t hub;
-    lv_draw_rect_dsc_init(&hub);
-    hub.bg_color = COLOR_SWEEP;
-    hub.radius = LV_RADIUS_CIRCLE;
-    for (int r = 6; r >= 2; r -= 2) {
-        hub.bg_opa = (lv_opa_t)(LV_OPA_20 * (8 - r) / 2);
-        lv_area_t ha = {(lv_coord_t)(RADAR_CX - r), (lv_coord_t)(RADAR_CY - r),
-                         (lv_coord_t)(RADAR_CX + r), (lv_coord_t)(RADAR_CY + r)};
-        lv_draw_rect(layer, &hub, &ha);
-    }
     profile_record(_prof_bloom_hub, millis() - t1);
 }
 #else
@@ -386,27 +381,24 @@ static void draw_blips(lv_layer_t *layer) {
         }
 
 #if !defined(ARDUINO)
-        // Pi-exclusive glowing blip -- concentric fading halo under a
-        // bright core dot, instead of jc1060's flat filled square (kept
-        // verbatim in the #else below). Turned back up to 3 rings for the
-        // profiling pass (draw_sweep()'s comment) -- was cut to 1 then
-        // removed entirely across two rounds of blind guessing without
-        // resolving "jumpy"; restoring the demanding version so the
-        // per-phase timing log actually shows what this costs instead of
-        // measuring the already-trimmed case.
+        // Pi-exclusive glowing blip -- one soft halo ring under a bright
+        // core dot, instead of jc1060's flat filled square (kept verbatim
+        // in the #else below). Real profiling confirmed ~5ms per single
+        // lv_draw_* call on this hardware (see draw_sweep()'s comment) --
+        // this test run happened to have most tracked aircraft grounded
+        // and filtered out of Radar, so a 3-ring version measured cheap
+        // by luck, not because it actually is; with real airborne traffic
+        // (dozens of aircraft x up to 4 draws each) that per-call cost
+        // adds up fast. One ring keeps the per-aircraft cost to 2 draws
+        // (vs. jc1060's 1) instead of 4.
         lv_draw_rect_dsc_t glow;
         lv_draw_rect_dsc_init(&glow);
         glow.bg_color = color;
         glow.radius = LV_RADIUS_CIRCLE;
-        static const int GLOW_R[3] = {9, 7, 5};
-        static const uint8_t GLOW_PCT[3] = {20, 35, 55};
-        for (int gi = 0; gi < 3; gi++) {
-            int r = GLOW_R[gi];
-            glow.bg_opa = (uint8_t)((opa * GLOW_PCT[gi]) / 100);
-            lv_area_t ga = {(lv_coord_t)(sx - r), (lv_coord_t)(sy - r),
-                            (lv_coord_t)(sx + r), (lv_coord_t)(sy + r)};
-            lv_draw_rect(layer, &glow, &ga);
-        }
+        glow.bg_opa = (uint8_t)((opa * 35) / 100);
+        lv_area_t ga = {(lv_coord_t)(sx - 7), (lv_coord_t)(sy - 7),
+                        (lv_coord_t)(sx + 7), (lv_coord_t)(sy + 7)};
+        lv_draw_rect(layer, &glow, &ga);
         lv_draw_rect_dsc_t dot;
         lv_draw_rect_dsc_init(&dot);
         dot.bg_color = color;
