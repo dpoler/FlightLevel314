@@ -1,6 +1,6 @@
 #pragma once
 
-// Pi-only live/cached dark OSM basemap under Map view.
+// Pi-only live/cached basemap under Map view (Carto dark / FAA VFR sectional).
 // ESP32 keeps optional compile-in static_map_data.h; this path is Linux-only.
 
 #include "lvgl.h"

@@ -1,14 +1,19 @@
-// Pi Map basemap: CartoDB dark_all tiles, disk-cached RGB565, async fetch.
-// Lives under pi/ so PlatformIO never compiles it into the jc1060 firmware.
+// Pi Map basemap: multi-style tile mosaic (Carto dark / FAA VFR sectional),
+// disk-cached RGB565, async fetch. Lives under pi/ so PlatformIO never
+// compiles it into the jc1060 firmware.
 //
 // Threading model (important — two past crash sources):
 // 1) Never call LVGL alloc/decode from the worker. LVGL's heap is not safe
 //    off the LVGL thread; the bundled lodepng is patched to use it. Decode
-//    PNGs with stb_image (plain malloc) on the worker instead.
+//    with stb_image (plain malloc) on the worker instead (PNG + JPEG).
 // 2) Never mutate the drawn buffer while LVGL SW draw units may still be
 //    reading it (LV_DRAW_SW_DRAW_UNIT_CNT>1 queues work). Worker publishes
 //    into an inbox; the LVGL thread installs it via basemap_poll_swap()
 //    between frames.
+//
+// Cache: one RGB565 file per (style, lat, lon, range, canvas geometry).
+// Freshness is mtime vs a per-style TTL (OSM/Carto ~30d; sectionals ~40d
+// so we refetch ahead of the ~56-day chart cycle).
 
 #include "basemap.h"
 
@@ -19,6 +24,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -27,6 +33,7 @@
 #include <cstdlib>
 
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
 #define STBI_NO_THREAD_LOCALS
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/stb_image.h"
@@ -34,8 +41,10 @@
 namespace {
 
 constexpr int TILE_PX = 256;
-constexpr const char *TILE_URL_FMT =
-    "https://basemaps.cartocdn.com/dark_all/%d/%d/%d.png";
+
+// FAA ArcGIS VFR_Sectional MapServer only publishes LOD 8..12.
+constexpr int SECTIONAL_Z_MIN = 8;
+constexpr int SECTIONAL_Z_MAX = 12;
 
 struct BasemapSlot {
     std::vector<uint8_t> rgb565;
@@ -44,6 +53,7 @@ struct BasemapSlot {
     int w = 0, h = 0;
     int geo_cy = 0;
     int bullseye_r = 0;
+    int style = MAP_BASEMAP_STYLE_DARK;
     bool valid = false;
 
     void bind_dsc() {
@@ -64,14 +74,39 @@ bool g_inbox_ready = false;
 bool g_worker_busy = false;
 float g_req_lat = 0, g_req_lon = 0, g_req_radius = 0;
 int g_req_w = 0, g_req_h = 0, g_req_cy = 0, g_req_br = 0;
+int g_req_style = MAP_BASEMAP_STYLE_DARK;
 uint32_t g_req_gen = 0;
 
 bool slot_matches(const BasemapSlot &s, float lat, float lon, float radius_nm,
-                  int w, int h, int cy, int br) {
-    return s.valid &&
+                  int w, int h, int cy, int br, int style) {
+    return s.valid && s.style == style &&
            fabsf(s.lat - lat) < 1e-4f && fabsf(s.lon - lon) < 1e-4f &&
            fabsf(s.radius_nm - radius_nm) < 0.5f &&
            s.w == w && s.h == h && s.geo_cy == cy && s.bullseye_r == br;
+}
+
+const char *style_cache_tag(int style) {
+    switch (style) {
+    case MAP_BASEMAP_STYLE_DARK_NOLABELS: return "darknl";
+    case MAP_BASEMAP_STYLE_SECTIONAL:     return "vfrsec";
+    case MAP_BASEMAP_STYLE_DARK:
+    default:                              return "dark";
+    }
+}
+
+// Days before a cached mosaic is considered stale and refetched.
+int style_cache_ttl_days(int style) {
+    switch (style) {
+    case MAP_BASEMAP_STYLE_SECTIONAL:
+        // Chart cycle is ~56 days; refresh a bit early so we don't sit on
+        // an expired edition for long after the next one publishes.
+        return 40;
+    case MAP_BASEMAP_STYLE_DARK:
+    case MAP_BASEMAP_STYLE_DARK_NOLABELS:
+    default:
+        // OSM/Carto roads/labels change slowly for a personal kiosk.
+        return 30;
+    }
 }
 
 struct CurlBuf {
@@ -120,6 +155,36 @@ int osm_zoom_for_radius(float radius_nm, int usable_h, float center_lat) {
     return best_z;
 }
 
+int zoom_for_style(int style, float radius_nm, int usable_h, float center_lat) {
+    int z = osm_zoom_for_radius(radius_nm, usable_h, center_lat);
+    if (style == MAP_BASEMAP_STYLE_SECTIONAL) {
+        if (z < SECTIONAL_Z_MIN) z = SECTIONAL_Z_MIN;
+        if (z > SECTIONAL_Z_MAX) z = SECTIONAL_Z_MAX;
+    }
+    return z;
+}
+
+void format_tile_url(char *buf, size_t buflen, int style, int z, int x, int y) {
+    switch (style) {
+    case MAP_BASEMAP_STYLE_DARK_NOLABELS:
+        snprintf(buf, buflen,
+                 "https://basemaps.cartocdn.com/dark_nolabels/%d/%d/%d.png", z, x, y);
+        break;
+    case MAP_BASEMAP_STYLE_SECTIONAL:
+        // ArcGIS MapServer tile path is /tile/{z}/{y}/{x} (y before x).
+        snprintf(buf, buflen,
+                 "https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/"
+                 "VFR_Sectional/MapServer/tile/%d/%d/%d",
+                 z, y, x);
+        break;
+    case MAP_BASEMAP_STYLE_DARK:
+    default:
+        snprintf(buf, buflen,
+                 "https://basemaps.cartocdn.com/dark_all/%d/%d/%d.png", z, x, y);
+        break;
+    }
+}
+
 void pixel_of_coord(float lat, float lon, int z, double &px, double &py) {
     int n = 1 << z;
     px = (lon + 180.0) / 360.0 * n * TILE_PX;
@@ -157,14 +222,30 @@ void ensure_dir(const std::string &path) {
     mkdir(path.c_str(), 0755);
 }
 
-std::string cache_path(float lat, float lon, float radius_nm, int w, int h, int cy, int br) {
-    char name[192];
-    snprintf(name, sizeof(name), "%s/%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
-             cache_dir().c_str(), lat, lon, radius_nm, w, h, cy, br);
+std::string cache_path(int style, float lat, float lon, float radius_nm,
+                       int w, int h, int cy, int br) {
+    char name[220];
+    snprintf(name, sizeof(name), "%s/%s_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
+             cache_dir().c_str(), style_cache_tag(style),
+             lat, lon, radius_nm, w, h, cy, br);
     return name;
 }
 
+bool cache_fresh(const std::string &path, int ttl_days) {
+    struct stat st{};
+    if (stat(path.c_str(), &st) != 0) return false;
+    time_t now = time(nullptr);
+    if (now < st.st_mtime) return true; // clock skew — treat as fresh
+    const time_t age = now - st.st_mtime;
+    return age < (time_t)ttl_days * 86400;
+}
+
 bool load_cache(const std::string &path, BasemapSlot &slot) {
+    if (!cache_fresh(path, style_cache_ttl_days(slot.style))) {
+        platform_log("Basemap: cache expired %s (ttl=%dd)\n",
+                     path.c_str(), style_cache_ttl_days(slot.style));
+        return false;
+    }
     FILE *f = fopen(path.c_str(), "rb");
     if (!f) return false;
     fseek(f, 0, SEEK_END);
@@ -187,10 +268,10 @@ void save_cache(const std::string &path, const BasemapSlot &slot) {
     fclose(f);
 }
 
-bool decode_png_tile(const std::vector<uint8_t> &png, std::vector<uint8_t> &rgba,
-                     unsigned &tw, unsigned &th) {
+bool decode_tile_image(const std::vector<uint8_t> &bytes, std::vector<uint8_t> &rgba,
+                       unsigned &tw, unsigned &th) {
     int w = 0, h = 0, comp = 0;
-    unsigned char *out = stbi_load_from_memory(png.data(), (int)png.size(),
+    unsigned char *out = stbi_load_from_memory(bytes.data(), (int)bytes.size(),
                                                &w, &h, &comp, 4);
     if (!out) return false;
     tw = (unsigned)w;
@@ -225,7 +306,7 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     const int usable_h = slot.bullseye_r * 2;
     if (usable_h <= 0 || slot.w <= 0 || slot.h <= 0) return false;
 
-    int z = osm_zoom_for_radius(slot.radius_nm, usable_h, slot.lat);
+    int z = zoom_for_style(slot.style, slot.radius_nm, usable_h, slot.lat);
     double cx, cy;
     pixel_of_coord(slot.lat, slot.lon, z, cx, cy);
 
@@ -256,20 +337,20 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
             if (wtx < 0) wtx += n;
             if (ty < 0 || ty >= n) continue;
 
-            char url[256];
-            snprintf(url, sizeof(url), TILE_URL_FMT, z, wtx, ty);
-            std::vector<uint8_t> png;
-            if (!http_get(url, png)) continue;
+            char url[320];
+            format_tile_url(url, sizeof(url), slot.style, z, wtx, ty);
+            std::vector<uint8_t> bytes;
+            if (!http_get(url, bytes)) continue;
 
             std::vector<uint8_t> rgba;
             unsigned tw = 0, th = 0;
-            if (png.empty()) {
+            if (bytes.empty()) {
                 rgba.assign((size_t)TILE_PX * TILE_PX * 4, 0);
                 for (size_t i = 0; i < rgba.size(); i += 4) {
                     rgba[i] = 0x0a; rgba[i + 1] = 0x0a; rgba[i + 2] = 0x1a; rgba[i + 3] = 255;
                 }
                 tw = th = TILE_PX;
-            } else if (!decode_png_tile(png, rgba, tw, th)) {
+            } else if (!decode_tile_image(bytes, rgba, tw, th)) {
                 continue;
             }
 
@@ -295,10 +376,11 @@ void worker_main(uint32_t gen) {
         local.h = g_req_h;
         local.geo_cy = g_req_cy;
         local.bullseye_r = g_req_br;
+        local.style = g_req_style;
     }
     local.rgb565.assign((size_t)local.w * local.h * 2, 0);
 
-    std::string path = cache_path(local.lat, local.lon, local.radius_nm,
+    std::string path = cache_path(local.style, local.lat, local.lon, local.radius_nm,
                                   local.w, local.h, local.geo_cy, local.bullseye_r);
     bool ok = false;
     if (load_cache(path, local)) {
@@ -307,7 +389,8 @@ void worker_main(uint32_t gen) {
         ok = true;
         platform_log("Basemap: cache hit %s\n", path.c_str());
     } else {
-        platform_log("Basemap: fetching (%.4f,%.4f) r=%.0fnm %dx%d\n",
+        platform_log("Basemap: fetching style=%s (%.4f,%.4f) r=%.0fnm %dx%d\n",
+                     style_cache_tag(local.style),
                      local.lat, local.lon, local.radius_nm, local.w, local.h);
         ok = build_basemap(local, gen);
         if (ok) save_cache(path, local);
@@ -316,7 +399,6 @@ void worker_main(uint32_t gen) {
     {
         std::lock_guard<std::mutex> lock(g_mu);
         if (ok && gen == g_req_gen) {
-            // Publish to inbox only — LVGL thread installs into g_front.
             g_inbox = std::move(local);
             g_inbox.bind_dsc();
             g_inbox_ready = true;
@@ -331,21 +413,20 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
                      int geo_center_y, int bullseye_r_px) {
     if (canvas_w <= 0 || canvas_h <= 0 || bullseye_r_px <= 0) return;
 
+    const int style = map_basemap_style();
+
     std::lock_guard<std::mutex> lock(g_mu);
     const bool front_ok = slot_matches(g_front, lat, lon, radius_nm,
-                                       canvas_w, canvas_h, geo_center_y, bullseye_r_px);
-    // Skip if front already matches and nothing is in flight / pending.
+                                       canvas_w, canvas_h, geo_center_y, bullseye_r_px,
+                                       style);
     if (front_ok && !g_worker_busy && !g_inbox_ready) {
         return;
     }
 
-    // Projection already moved to the new location/range. Drop any basemap that
-    // doesn't match so runways/aircraft aren't drawn over the wrong geography
-    // while the replacement fetch runs (solid canvas bg until ready).
     if (!front_ok) {
         g_front.valid = false;
     }
-    g_inbox_ready = false; // discard a pending publish for the previous request
+    g_inbox_ready = false;
 
     g_req_lat = lat;
     g_req_lon = lon;
@@ -354,6 +435,7 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     g_req_h = canvas_h;
     g_req_cy = geo_center_y;
     g_req_br = bullseye_r_px;
+    g_req_style = style;
     g_req_gen++;
     if (g_worker_busy) return;
     g_worker_busy = true;
@@ -379,10 +461,8 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
 bool basemap_poll_swap(void) {
     std::lock_guard<std::mutex> lock(g_mu);
     if (!g_inbox_ready) return false;
-    // Only install if inbox still matches the latest request (location/range
-    // may have changed again while the worker was finishing).
     if (!slot_matches(g_inbox, g_req_lat, g_req_lon, g_req_radius,
-                      g_req_w, g_req_h, g_req_cy, g_req_br)) {
+                      g_req_w, g_req_h, g_req_cy, g_req_br, g_req_style)) {
         g_inbox_ready = false;
         return false;
     }
@@ -393,12 +473,9 @@ bool basemap_poll_swap(void) {
 }
 
 void basemap_draw(lv_layer_t *layer) {
-    // LVGL thread only. g_front is only mutated on this thread via poll_swap /
-    // basemap_request, so draw units can keep reading dsc.data after return.
     if (!map_basemap_shown()) return;
-    // Refuse a front buffer that doesn't match the current projection.
     if (!slot_matches(g_front, g_req_lat, g_req_lon, g_req_radius,
-                      g_req_w, g_req_h, g_req_cy, g_req_br)) {
+                      g_req_w, g_req_h, g_req_cy, g_req_br, g_req_style)) {
         return;
     }
     if (g_front.rgb565.empty()) return;
@@ -419,5 +496,5 @@ void basemap_draw(lv_layer_t *layer) {
 
 bool basemap_ready(void) {
     return slot_matches(g_front, g_req_lat, g_req_lon, g_req_radius,
-                        g_req_w, g_req_h, g_req_cy, g_req_br);
+                        g_req_w, g_req_h, g_req_cy, g_req_br, g_req_style);
 }
