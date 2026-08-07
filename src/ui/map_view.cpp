@@ -1392,6 +1392,7 @@ void map_view_on_show() {
     sync_active_location();
 #if !defined(ARDUINO)
     map_basemap_sync();
+    basemap_poll_swap();
 #endif
     if (_canvas) lv_obj_invalidate(_canvas);
 }
