@@ -81,6 +81,27 @@ int g_req_w = 0, g_req_h = 0, g_req_cy = 0, g_req_br = 0;
 int g_req_style = MAP_BASEMAP_STYLE_DARK;
 uint32_t g_req_gen = 0;
 
+// UI progress (network/build only — cache hits stay silent).
+bool g_prog_visible = false;
+int g_prog_pct = 0; // 0..100
+
+void progress_set(uint32_t gen, bool visible, int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (gen != g_req_gen) return;
+    g_prog_visible = visible;
+    g_prog_pct = pct;
+}
+
+void progress_clear_if_gen(uint32_t gen) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (gen == g_req_gen) {
+        g_prog_visible = false;
+        g_prog_pct = 0;
+    }
+}
+
 bool slot_matches(const BasemapSlot &s, float lat, float lon, float radius_nm,
                   int w, int h, int cy, int br, int style) {
     return s.valid && s.style == style &&
@@ -503,6 +524,11 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         mosaic[i + 3] = 255;
     }
 
+    const int tile_total = tiles_w * tiles_h;
+    int tile_done = 0;
+    // Tile downloads dominate wall time (esp. sectional JPEG); warp is the rest.
+    constexpr int FETCH_PCT_END = 80;
+
     for (int ty = ty0; ty <= ty1; ty++) {
         for (int tx = tx0; tx <= tx1; tx++) {
             {
@@ -515,15 +541,25 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
             char url[320];
             format_tile_url(url, sizeof(url), slot.style, z, wtx, ty);
             std::vector<uint8_t> bytes;
-            if (!http_get(url, bytes) || bytes.empty()) continue;
+            if (!http_get(url, bytes) || bytes.empty()) {
+                tile_done++;
+                progress_set(gen, true, (tile_done * FETCH_PCT_END) / tile_total);
+                continue;
+            }
 
             std::vector<uint8_t> rgba;
             unsigned tw = 0, th = 0;
-            if (!decode_tile_image(bytes, rgba, tw, th)) continue;
+            if (!decode_tile_image(bytes, rgba, tw, th)) {
+                tile_done++;
+                progress_set(gen, true, (tile_done * FETCH_PCT_END) / tile_total);
+                continue;
+            }
 
             int dst_x = (tx - tx0) * TILE_PX;
             int dst_y = (ty - ty0) * TILE_PX;
             blit_tile_rgba(mosaic, mosaic_w, mosaic_h, rgba, dst_x, dst_y);
+            tile_done++;
+            progress_set(gen, true, (tile_done * FETCH_PCT_END) / tile_total);
         }
     }
 
@@ -539,6 +575,7 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     if (slot.style == MAP_BASEMAP_STYLE_SECTIONAL) {
         box_blur_3x3(mosaic, mosaic_w, mosaic_h);
     }
+    progress_set(gen, true, FETCH_PCT_END);
 
     const double origin_mx = (double)tx0 * TILE_PX;
     const double origin_my = (double)ty0 * TILE_PX;
@@ -553,6 +590,9 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         if ((sy & 31) == 0) {
             std::lock_guard<std::mutex> lock(g_mu);
             if (gen != g_req_gen) return false;
+            // Warp phase: 80% → 99% (leave 100 for publish).
+            g_prog_visible = true;
+            g_prog_pct = FETCH_PCT_END + (sy * (99 - FETCH_PCT_END)) / slot.h;
         }
         for (int sx = 0; sx < slot.w; sx++) {
             float lat, lon, lat_r, lon_r, lat_d, lon_d;
@@ -611,13 +651,19 @@ void worker_main(uint32_t gen) {
         local.bind_dsc();
         local.valid = true;
         ok = true;
+        // Cache hit: don't flash the "Updating map..." chrome.
+        progress_clear_if_gen(gen);
         platform_log("Basemap: cache hit %s\n", path.c_str());
     } else {
+        progress_set(gen, true, 1);
         platform_log("Basemap: fetching style=%s (%.4f,%.4f) r=%.0fnm %dx%d\n",
                      style_cache_tag(local.style),
                      local.lat, local.lon, local.radius_nm, local.w, local.h);
         ok = build_basemap(local, gen);
-        if (ok) save_cache(path, local);
+        if (ok) {
+            progress_set(gen, true, 100);
+            save_cache(path, local);
+        }
     }
 
     {
@@ -626,6 +672,12 @@ void worker_main(uint32_t gen) {
             g_inbox = std::move(local);
             g_inbox.bind_dsc();
             g_inbox_ready = true;
+            g_prog_visible = false;
+            g_prog_pct = 0;
+        } else if (gen == g_req_gen) {
+            // Failed or cancelled for the current request — hide the bar.
+            g_prog_visible = false;
+            g_prog_pct = 0;
         }
         g_worker_busy = false;
     }
@@ -723,6 +775,12 @@ bool basemap_ready(void) {
                         g_req_w, g_req_h, g_req_cy, g_req_br, g_req_style);
 }
 
+bool basemap_updating(int *out_pct) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (out_pct) *out_pct = g_prog_pct;
+    return g_prog_visible;
+}
+
 int basemap_cache_clear(void) {
     // Drop in-memory mosaics first so draw doesn't keep showing deleted disk.
     {
@@ -731,6 +789,8 @@ int basemap_cache_clear(void) {
         g_inbox = BasemapSlot{};
         g_inbox_ready = false;
         g_req_gen++; // supersede any in-flight worker publish
+        g_prog_visible = false;
+        g_prog_pct = 0;
     }
 
     std::string dir = cache_dir();
