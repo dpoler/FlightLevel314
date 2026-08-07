@@ -15,8 +15,9 @@ system (add/remove/reorder, ICAO or plain lat/lon), and a scoped-down
 Settings screen. Real DSI hardware bring-up (DRM/KMS + libinput) is
 confirmed working against physical hardware (Pi 3B+, Waveshare 10.1"
 panel) — touch, swipe, and the full network fetch/render loop all
-verified. Not yet ported: metar/airlines/enrichment (detail card falls
-back to the aircraft's own fields fine without these). No on-device way
+verified. Not yet ported: metar/enrichment (detail card falls
+back to the aircraft's own fields fine without enrichment; airline
+names load from dpoler/AirlinesCSV at app start). No on-device way
 to set the airportdb.io token yet (ESP32's USB-serial `TOKEN=` mechanism
 wasn't ported) — hand-edit `~/.config/adsb/config.json`'s `apt_tok` key
 directly with the app stopped, for now.
@@ -110,7 +111,7 @@ Logs: `journalctl -u adsb-pi -f`.
   releases. If a fresh jc1060 build resolves a newer version and something
   here stops compiling, re-check that before assuming it's this port's bug.
 - `pi/app_stubs.cpp` holds temporary link-satisfying implementations for
-  everything not yet ported (currently just metar/airlines/enrichment) —
+  everything not yet ported (currently just metar/enrichment) —
   each gets deleted as the real thing lands.
 - `src/data/fetcher.cpp` (jc1060's WiFi/C6-co-processor fetch loop) is
   deliberately untouched and not shared — see its own extensive comments
