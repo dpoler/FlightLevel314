@@ -203,6 +203,7 @@ static void draw_rings(lv_layer_t *layer) {
         lv_area_t area = {(lv_coord_t)lx, (lv_coord_t)ly,
                           (lv_coord_t)(lx + 20), (lv_coord_t)(ly + 16)};
         lbl.text = dirs[i];
+        lbl.text_static = 1; // string literal; safe without text_local
         lv_draw_label(layer, &lbl, &area);
     }
 
@@ -435,6 +436,11 @@ static void draw_blips(lv_layer_t *layer) {
                 // === PAINT ZONE: expanded detail -- stack whichever of the
                 // 3 fields are on, top to bottom ===
                 int line_y = sy - 28;
+                // text_local=1: with LV_DRAW_SW_DRAW_UNIT_CNT>1 (Pi pthread
+                // SW draw), label tasks run on worker threads after this
+                // stack frame / AircraftList unlock returns -- without a
+                // copy, stack buffers and ac.* fields are use-after-free
+                // and tags render as empty vertical rectangles.
                 if (tag_id_shown()) {
                     char line1[48];
                     strlcpy(line1, id_text, sizeof(line1));
@@ -444,6 +450,7 @@ static void draw_blips(lv_layer_t *layer) {
                     l1.font = &lv_font_montserrat_14;
                     l1.opa = LV_OPA_COVER;
                     l1.text = line1;
+                    l1.text_local = 1;
                     lv_area_t a1 = {(lv_coord_t)(sx + 8), (lv_coord_t)line_y,
                                     (lv_coord_t)(sx + 280), (lv_coord_t)(line_y + 14)};
                     lv_draw_label(layer, &l1, &a1);
@@ -461,6 +468,7 @@ static void draw_blips(lv_layer_t *layer) {
                     l2.font = &lv_font_montserrat_14;
                     l2.opa = (uint8_t)(LV_OPA_COVER * 3 / 4);
                     l2.text = line2;
+                    l2.text_local = 1;
                     lv_area_t a2 = {(lv_coord_t)(sx + 8), (lv_coord_t)line_y,
                                     (lv_coord_t)(sx + 280), (lv_coord_t)(line_y + 14)};
                     lv_draw_label(layer, &l2, &a2);
@@ -481,6 +489,7 @@ static void draw_blips(lv_layer_t *layer) {
                     l3.font = &lv_font_montserrat_14;
                     l3.opa = (uint8_t)(LV_OPA_COVER * 2 / 3);
                     l3.text = line3;
+                    l3.text_local = 1;
                     lv_area_t a3 = {(lv_coord_t)(sx + 8), (lv_coord_t)line_y,
                                     (lv_coord_t)(sx + 280), (lv_coord_t)(line_y + 14)};
                     lv_draw_label(layer, &l3, &a3);
@@ -498,6 +507,7 @@ static void draw_blips(lv_layer_t *layer) {
                     lbl.font = &lv_font_montserrat_14;
                     lbl.opa = lbl_opa;
                     lbl.text = top;
+                    lbl.text_local = 1;
                     lv_area_t la1 = {(lv_coord_t)(sx + 8), (lv_coord_t)line_y,
                                       (lv_coord_t)(sx + 200), (lv_coord_t)(line_y + 14)};
                     lv_draw_label(layer, &lbl, &la1);
@@ -522,6 +532,7 @@ static void draw_blips(lv_layer_t *layer) {
                     il.font = &lv_font_montserrat_14;
                     il.opa = (uint8_t)(lbl_opa * 3 / 4);
                     il.text = info;
+                    il.text_local = 1;
                     lv_area_t la2 = {(lv_coord_t)(sx + 8), (lv_coord_t)line_y,
                                       (lv_coord_t)(sx + 160), (lv_coord_t)(line_y + 14)};
                     lv_draw_label(layer, &il, &la2);
@@ -597,6 +608,7 @@ static void place_radar_runway_label(lv_layer_t *layer, lv_draw_label_dsc_t *lbl
         if (!placed.overlaps(farther)) area = farther;
     }
     lbl->text = text;
+    lbl->text_local = 1; // runway/ICAO strings may not outlive unlock+async draw
     lv_draw_label(layer, lbl, &area);
     placed.add(area);
 }
@@ -672,6 +684,7 @@ static void draw_radar_airport_glyph(lv_layer_t *layer, int sx, int sy, const ch
     lbl.font = &lv_font_montserrat_14;
     lbl.opa = LV_OPA_80;
     lbl.text = label;
+    lbl.text_local = 1;
     lv_area_t area = {(lv_coord_t)(sx + RADAR_GLYPH_R + 2), (lv_coord_t)(sy - 8),
                        (lv_coord_t)(sx + RADAR_GLYPH_R + 60), (lv_coord_t)(sy + 8)};
     lv_draw_label(layer, &lbl, &area);
@@ -869,6 +882,7 @@ static void draw_radar_icon_legend(lv_layer_t *layer) {
         lbl.font = &lv_font_montserrat_14;
         lbl.opa = LV_OPA_80;
         lbl.text = entries[i].label;
+        lbl.text_static = 1;
         lv_area_t la = {(lv_coord_t)(x + 16), (lv_coord_t)(y - 1),
                         (lv_coord_t)(x + 60), (lv_coord_t)(y + 14)};
         lv_draw_label(layer, &lbl, &la);
@@ -906,6 +920,7 @@ static void draw_radar_altitude_legend(lv_layer_t *layer) {
         lbl.font = &lv_font_montserrat_14;
         lbl.opa = LV_OPA_80;
         lbl.text = entries[i].label;
+        lbl.text_static = 1;
         lv_area_t la = {(lv_coord_t)(x + 12), (lv_coord_t)(y - 2),
                         (lv_coord_t)(x + 60), (lv_coord_t)(y + 12)};
         lv_draw_label(layer, &lbl, &la);
@@ -925,6 +940,7 @@ static void draw_filter_label(lv_layer_t *layer) {
     lbl.font = &lv_font_montserrat_14;
     lbl.opa = LV_OPA_COVER;
     lbl.text = buf;
+    lbl.text_local = 1;
     lv_area_t la = {(lv_coord_t)8, (lv_coord_t)4,
                     (lv_coord_t)300, (lv_coord_t)20};
     lv_draw_label(layer, &lbl, &la);
