@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <algorithm>
 #include <mutex>
 #include <string>
 #include <thread>
