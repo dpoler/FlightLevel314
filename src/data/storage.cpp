@@ -41,6 +41,8 @@ UserConfig storage_load_config() {
         cfg.view_show_tag_type[i] = false;
         cfg.view_show_secondary_locations[i] = true;
     }
+    cfg.map_basemap_enabled = true;
+    cfg.map_basemap_opa = 50;
     cfg.last_view_idx = 0;   // VIEW_MAP
     cfg.last_range_idx = 0;  // widest preset
     cfg.last_location_name[0] = '\0'; // nothing selected
@@ -88,6 +90,10 @@ UserConfig storage_load_config() {
     cfg.view_show_tag_type[1] = _prefs.getBool("tag_type1", cfg.view_show_tag_type[1]);
     cfg.view_show_secondary_locations[0] = _prefs.getBool("show2loc0", cfg.view_show_secondary_locations[0]);
     cfg.view_show_secondary_locations[1] = _prefs.getBool("show2loc1", cfg.view_show_secondary_locations[1]);
+    cfg.map_basemap_enabled = _prefs.getBool("bm_on", cfg.map_basemap_enabled);
+    cfg.map_basemap_opa = _prefs.getInt("bm_opa", cfg.map_basemap_opa);
+    if (cfg.map_basemap_opa < 10) cfg.map_basemap_opa = 10;
+    if (cfg.map_basemap_opa > 100) cfg.map_basemap_opa = 100;
     cfg.last_view_idx = _prefs.getInt("last_view", cfg.last_view_idx);
     cfg.last_range_idx = _prefs.getInt("last_rng", cfg.last_range_idx);
     if (_prefs.isKey("last_loc"))
@@ -138,6 +144,8 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putBool("tag_type1", cfg.view_show_tag_type[1]);
     _prefs.putBool("show2loc0", cfg.view_show_secondary_locations[0]);
     _prefs.putBool("show2loc1", cfg.view_show_secondary_locations[1]);
+    _prefs.putBool("bm_on", cfg.map_basemap_enabled);
+    _prefs.putInt("bm_opa", cfg.map_basemap_opa);
     _prefs.putInt("last_view", cfg.last_view_idx);
     _prefs.putInt("last_rng", cfg.last_range_idx);
     _prefs.putString("last_loc", cfg.last_location_name);

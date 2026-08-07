@@ -61,6 +61,8 @@ static UserConfig defaults() {
         cfg.view_show_tag_type[i] = false;
         cfg.view_show_secondary_locations[i] = true;
     }
+    cfg.map_basemap_enabled = true;
+    cfg.map_basemap_opa = 50;
     cfg.last_view_idx = 0;
     cfg.last_range_idx = 0;
     cfg.last_location_name[0] = '\0';
@@ -130,6 +132,10 @@ UserConfig storage_load_config() {
     cfg.view_show_tag_type[1] = doc["tag_type1"] | cfg.view_show_tag_type[1];
     cfg.view_show_secondary_locations[0] = doc["show2loc0"] | cfg.view_show_secondary_locations[0];
     cfg.view_show_secondary_locations[1] = doc["show2loc1"] | cfg.view_show_secondary_locations[1];
+    cfg.map_basemap_enabled = doc["bm_on"] | cfg.map_basemap_enabled;
+    cfg.map_basemap_opa = doc["bm_opa"] | cfg.map_basemap_opa;
+    if (cfg.map_basemap_opa < 10) cfg.map_basemap_opa = 10;
+    if (cfg.map_basemap_opa > 100) cfg.map_basemap_opa = 100;
     cfg.last_view_idx = doc["last_view"] | cfg.last_view_idx;
     cfg.last_range_idx = doc["last_rng"] | cfg.last_range_idx;
     strlcpy(cfg.last_location_name, doc["last_loc"] | cfg.last_location_name, sizeof(cfg.last_location_name));
@@ -179,6 +185,8 @@ void storage_save_config(const UserConfig &cfg) {
     doc["tag_type1"] = cfg.view_show_tag_type[1];
     doc["show2loc0"] = cfg.view_show_secondary_locations[0];
     doc["show2loc1"] = cfg.view_show_secondary_locations[1];
+    doc["bm_on"] = cfg.map_basemap_enabled;
+    doc["bm_opa"] = cfg.map_basemap_opa;
     doc["last_view"] = cfg.last_view_idx;
     doc["last_rng"] = cfg.last_range_idx;
     doc["last_loc"] = cfg.last_location_name;

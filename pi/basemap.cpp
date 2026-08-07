@@ -13,6 +13,7 @@
 #include "basemap.h"
 
 #include "../src/platform/platform.h"
+#include "../src/ui/display_prefs.h"
 
 #include <curl/curl.h>
 #include <cmath>
@@ -35,7 +36,6 @@ namespace {
 constexpr int TILE_PX = 256;
 constexpr const char *TILE_URL_FMT =
     "https://basemaps.cartocdn.com/dark_all/%d/%d/%d.png";
-constexpr lv_opa_t BASEMAP_DRAW_OPA = LV_OPA_50; // keep aircraft readable on top
 
 struct BasemapSlot {
     std::vector<uint8_t> rgb565;
@@ -395,6 +395,7 @@ bool basemap_poll_swap(void) {
 void basemap_draw(lv_layer_t *layer) {
     // LVGL thread only. g_front is only mutated on this thread via poll_swap /
     // basemap_request, so draw units can keep reading dsc.data after return.
+    if (!map_basemap_shown()) return;
     // Refuse a front buffer that doesn't match the current projection.
     if (!slot_matches(g_front, g_req_lat, g_req_lon, g_req_radius,
                       g_req_w, g_req_h, g_req_cy, g_req_br)) {
@@ -404,10 +405,14 @@ void basemap_draw(lv_layer_t *layer) {
 
     g_front.bind_dsc();
 
+    int pct = map_basemap_opa();
+    if (pct < 10) pct = 10;
+    if (pct > 100) pct = 100;
+
     lv_draw_image_dsc_t img;
     lv_draw_image_dsc_init(&img);
     img.src = &g_front.dsc;
-    img.opa = BASEMAP_DRAW_OPA;
+    img.opa = (lv_opa_t)((pct * 255) / 100);
     lv_area_t a = {0, 0, (lv_coord_t)(g_front.w - 1), (lv_coord_t)(g_front.h - 1)};
     lv_draw_image(layer, &img, &a);
 }

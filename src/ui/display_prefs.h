@@ -33,3 +33,11 @@ void tag_type_toggle();
 // Other saved/static airports + the HOME-elsewhere marker.
 bool secondary_locations_shown();
 void secondary_locations_toggle();
+
+// Pi Map basemap (VIEW menu, Map only). Opacity is 10-100 percent;
+// map_basemap_opa_set() does not persist — caller saves on slider release
+// (same split as trails_amount_set).
+bool map_basemap_shown();
+void map_basemap_toggle();
+int map_basemap_opa();
+void map_basemap_opa_set(int pct);
