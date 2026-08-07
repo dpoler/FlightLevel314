@@ -116,11 +116,25 @@ static void profile_maybe_log() {
 #define COLOR_TEXT lv_color_hex(0x00cc33)
 #define COLOR_BG lv_color_hex(0x000800)
 
+#if !defined(ARDUINO)
+// Pi-exclusive CRT phosphor fade: blip/label/trail opacity tracks how far
+// the sweep arm has gone past this bearing. Full bright at paint, eases
+// down to near-invisible over nearly a full rotation, then snaps bright
+// again when the arm comes back. Aircraft positions still update from
+// ADS-B every fetch -- only drawn alpha follows the sweep. jc1060 keeps
+// the short "boost then stay bright" curve below (draw-budget / look).
+#define PHOSPHOR_BRIGHT_DEG  15.0f    // brief full-bright flash at paint
+#define PHOSPHOR_FADE_DEG   350.0f    // nearly full circle before floor
+#define PHOSPHOR_MIN_OPA    ((lv_opa_t)38)  // ~15% — almost invisible before repaint
+#define PAINT_DETAIL_DEG    45.0f     // expanded tag stack right after paint
+#define PHOSPHOR_LABEL_MIN  LV_OPA_20 // hide tags once phosphor is this dim
+#else
 #define SWEEP_BRIGHT_DEG 60.0f        // full brightness boost zone
 #define SWEEP_FADE_DEG   180.0f       // fade boost back to normal
 #define BLIP_NORMAL_OPA  LV_OPA_90    // normal blip brightness
 #define PAINT_DETAIL_DEG 45.0f        // expanded detail zone right after sweep
 #define LABEL_VISIBLE_DEG 240.0f      // callsign label visibility zone
+#endif
 
 static MapProjection _proj;
 
@@ -323,9 +337,25 @@ static void draw_blips(lv_layer_t *layer) {
         int sx, sy;
         if (!to_radar_screen(ac.lat, ac.lon, sx, sy)) continue;
 
-        // Sweep boost: brief brightness flash when sweep passes, otherwise normal
+        // Sweep-driven opacity. Pi: full-rotation phosphor fade. ESP32:
+        // brief boost then stay at BLIP_NORMAL_OPA (see constants above).
         float behind = angle_behind_sweep(blip_angle(sx, sy));
         uint8_t sweep_opa;
+#if !defined(ARDUINO)
+        if (behind < PHOSPHOR_BRIGHT_DEG) {
+            sweep_opa = LV_OPA_COVER;
+        } else if (behind < PHOSPHOR_FADE_DEG) {
+            float t = (behind - PHOSPHOR_BRIGHT_DEG) /
+                      (PHOSPHOR_FADE_DEG - PHOSPHOR_BRIGHT_DEG);
+            // Ease-out: linger brighter early, drop faster late -- closer to
+            // CRT phosphor than a linear ramp.
+            float u = 1.0f - (1.0f - t) * (1.0f - t);
+            sweep_opa = (uint8_t)(LV_OPA_COVER -
+                (u * (float)(LV_OPA_COVER - PHOSPHOR_MIN_OPA)));
+        } else {
+            sweep_opa = PHOSPHOR_MIN_OPA;
+        }
+#else
         if (behind < SWEEP_BRIGHT_DEG) {
             sweep_opa = LV_OPA_COVER;
         } else if (behind < SWEEP_FADE_DEG) {
@@ -334,6 +364,7 @@ static void draw_blips(lv_layer_t *layer) {
         } else {
             sweep_opa = BLIP_NORMAL_OPA;
         }
+#endif
 
         // Combine sweep brightness with ghost fade (stale aircraft fade out)
         uint8_t opa = (uint8_t)((sweep_opa * ghost_opa) / 255);
@@ -420,15 +451,20 @@ static void draw_blips(lv_layer_t *layer) {
         lv_draw_rect(layer, &dot, &area);
 #endif
 
-        // Labels — two zones: paint detail (0-45deg) and condensed
-        // (45-240deg). Each of Flight ID / Alt-Speed / Type is independently
-        // toggled by the status bar's VIEW menu (view_menu.cpp). Flight ID
-        // falls back callsign -> registration -> ICAO hex, and never shows
-        // registration once a callsign is showing (Type would otherwise
-        // redundantly repeat it) -- so there's no separate "registration"
-        // line anymore, unlike before this existed.
+        // Labels — two zones: paint detail (0-45deg) and condensed after.
+        // Each of Flight ID / Alt-Speed / Type is independently toggled by
+        // the status bar's VIEW menu (view_menu.cpp). Flight ID falls back
+        // callsign -> registration -> ICAO hex, and never shows registration
+        // once a callsign is showing (Type would otherwise redundantly
+        // repeat it) -- so there's no separate "registration" line anymore.
+#if !defined(ARDUINO)
+        // Pi: tags ride the same phosphor curve as the blip; hide once dim.
+        if (opa >= PHOSPHOR_LABEL_MIN && (tag_id_shown() || tag_data_shown() || tag_type_shown())) {
+            uint8_t lbl_opa = opa;
+#else
         if (behind < LABEL_VISIBLE_DEG && (tag_id_shown() || tag_data_shown() || tag_type_shown())) {
             uint8_t lbl_opa = opa > LV_OPA_50 ? LV_OPA_80 : opa;
+#endif
             const char *id_text = ac.callsign[0] ? ac.callsign :
                                   (ac.registration[0] ? ac.registration : ac.icao_hex);
 
@@ -448,7 +484,11 @@ static void draw_blips(lv_layer_t *layer) {
                     lv_draw_label_dsc_init(&l1);
                     l1.color = color;
                     l1.font = &lv_font_montserrat_14;
+#if !defined(ARDUINO)
+                    l1.opa = lbl_opa;
+#else
                     l1.opa = LV_OPA_COVER;
+#endif
                     l1.text = line1;
                     l1.text_local = 1;
                     lv_area_t a1 = {(lv_coord_t)(sx + 8), (lv_coord_t)line_y,
@@ -466,7 +506,11 @@ static void draw_blips(lv_layer_t *layer) {
                     lv_draw_label_dsc_init(&l2);
                     l2.color = color;
                     l2.font = &lv_font_montserrat_14;
+#if !defined(ARDUINO)
+                    l2.opa = (uint8_t)((lbl_opa * 3) / 4);
+#else
                     l2.opa = (uint8_t)(LV_OPA_COVER * 3 / 4);
+#endif
                     l2.text = line2;
                     l2.text_local = 1;
                     lv_area_t a2 = {(lv_coord_t)(sx + 8), (lv_coord_t)line_y,
@@ -487,7 +531,11 @@ static void draw_blips(lv_layer_t *layer) {
                     lv_draw_label_dsc_init(&l3);
                     l3.color = color;
                     l3.font = &lv_font_montserrat_14;
+#if !defined(ARDUINO)
+                    l3.opa = (uint8_t)((lbl_opa * 2) / 3);
+#else
                     l3.opa = (uint8_t)(LV_OPA_COVER * 2 / 3);
+#endif
                     l3.text = line3;
                     l3.text_local = 1;
                     lv_area_t a3 = {(lv_coord_t)(sx + 8), (lv_coord_t)line_y,
