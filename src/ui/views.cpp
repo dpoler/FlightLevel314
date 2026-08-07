@@ -45,6 +45,13 @@ void views_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_size(tileview, LCD_H_RES, CONTENT_H);
     lv_obj_set_style_bg_color(tileview, lv_color_hex(0x0a0a1a), 0);
     lv_obj_set_style_bg_opa(tileview, LV_OPA_COVER, 0);
+    // Hide the horizontal "swipe bar" scrollbar. Against the old solid
+    // #0a0a1a map canvas it was invisible; with a live basemap it reads as
+    // a dark-blue strip along the bottom over the tiles (and over
+    // bullseye/aircraft that reach that edge).
+    lv_obj_set_scrollbar_mode(tileview, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(tileview, LV_OPA_TRANSP, LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(tileview, LV_OPA_TRANSP, LV_PART_SCROLLBAR | LV_STATE_SCROLLED);
 
     // Create 4 horizontal tiles — all get opaque backgrounds to prevent bleed-through during scroll animation.
     // Runway diagrams live inside Map view now (see map_view.cpp draw_saved_airports) —
