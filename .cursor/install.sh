@@ -38,6 +38,11 @@ fi
 # Exception to "user handles builds": environment-setup may run pio to prove tooling.
 pio run -e jc1060
 
+# Optional but required for VIEW → Other Airports glyphs on Map/Radar.
+if [[ -f tools/generate_airports_db.py ]]; then
+  python3 tools/generate_airports_db.py
+fi
+
 # Pi / Linux SDL simulator (only on branches that include the pi/ tree, e.g. pi-port).
 if [[ -f CMakeLists.txt && -d pi ]]; then
   cmake -S . -B build -DPI_DISPLAY_BACKEND=SDL

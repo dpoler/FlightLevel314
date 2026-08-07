@@ -33,6 +33,9 @@
 #if __has_include("airports_db.h")
 #include "airports_db.h"
 #define HAS_AIRPORTS_DB 1
+#elif __has_include("ui/airports_db.h")
+#include "ui/airports_db.h"
+#define HAS_AIRPORTS_DB 1
 #else
 #define HAS_AIRPORTS_DB 0
 #endif
@@ -1214,6 +1217,11 @@ static void canvas_draw_cb(lv_event_t *e) {
 
 void map_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
+
+#if !HAS_AIRPORTS_DB
+    platform_log("Map: airports_db.h missing — VIEW Other Airports has no static glyphs "
+                 "(run: python3 tools/generate_airports_db.py)\n");
+#endif
 
     // Falls back to 0,0 if nothing's selected yet (fresh install) --
     // harmless, sync_active_location() re-centers for real the moment a

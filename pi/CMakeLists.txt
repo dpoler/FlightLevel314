@@ -61,6 +61,27 @@ target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
 find_package(Threads REQUIRED)
 target_link_libraries(lvgl PUBLIC Threads::Threads)
 
+# Static large/medium airport glyph DB (gitignored). Without it, VIEW →
+# Other Airports has nothing to draw beyond saved locations. Generate at
+# configure time if missing so Pi builds match ESP32's usual local codegen.
+set(AIRPORTS_DB_H "${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/airports_db.h")
+if(NOT EXISTS "${AIRPORTS_DB_H}")
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    message(STATUS "Generating ${AIRPORTS_DB_H} (OurAirports large/medium DB)")
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_airports_db.py"
+                --output "${AIRPORTS_DB_H}"
+        RESULT_VARIABLE _airports_db_rc
+        ERROR_VARIABLE _airports_db_err
+    )
+    if(NOT _airports_db_rc EQUAL 0 OR NOT EXISTS "${AIRPORTS_DB_H}")
+        message(WARNING "airports_db.h generation failed (rc=${_airports_db_rc}): ${_airports_db_err}\n"
+                        "VIEW → Other Airports will not show static airport glyphs. "
+                        "Run: python3 tools/generate_airports_db.py")
+    endif()
+endif()
+
 # Shared with jc1060 (compiled here for Linux, via PlatformIO for ESP32) --
 # see src/data/aircraft.h and each file's own comments for the #if
 # defined(ARDUINO) forks where platform behavior actually differs.
@@ -102,6 +123,7 @@ add_executable(adsb_pi
 target_include_directories(adsb_pi PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui
 )
 target_link_libraries(adsb_pi PRIVATE lvgl ArduinoJson CURL::libcurl)
 

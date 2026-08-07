@@ -242,7 +242,14 @@ static void open_overlay() {
     // ============================================================
     section_header(_panel, "LOCATIONS", 290);
     toggle_row(_panel, "Other Airports", 318, secondary_locations_shown(), [](lv_event_t *e) {
-        secondary_locations_toggle();
+        // Match Show trails / Show basemap: only flip config when the switch
+        // state actually disagrees (avoids desync if VALUE_CHANGED fires
+        // without a real user toggle).
+        if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != secondary_locations_shown())
+            secondary_locations_toggle();
+        int v = views_get_active_index();
+        if (v == VIEW_MAP) map_view_update();
+        else if (v == VIEW_RADAR) radar_view_update();
     });
 
     int alerts_y = 352;
