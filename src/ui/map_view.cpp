@@ -1358,6 +1358,9 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
 #endif
             }
             sync_active_location();
+#if !defined(ARDUINO)
+            basemap_poll_swap();
+#endif
             lv_obj_invalidate(_canvas);
         }
     }, 1000, nullptr);

@@ -469,7 +469,16 @@ mostly chronological.
   `src/ui/` but is explicitly disabled on ESP32 ("tiles broken on ESP32-P4") —
   worth checking if it's closer to reusable on Pi than starting fresh.
   Licensing/sourcing/storage-budget for sectionals not investigated. Not
-  scoped.
+  scoped. (Partial: Pi Map now has a live/cached Carto dark basemap via
+  `pi/basemap.cpp` — see `cursor/pi-map-basemap-7c95` / PR #4.)
+
+- **Map legend backdrop vs basemap (Pi)**: before the basemap, the opaque
+  legend panel (`draw_legend_backdrop` in `map_view.cpp`) was invisible
+  against the solid `#0a0a1a` canvas. With tiles under Map it reads as a
+  solid bar over geography. Prefer making that backdrop transparent (or
+  much lower opacity) so coastlines show through; if that hurts label
+  readability, bump Map bullseye center up a little instead (`MAP_BULLSEYE_CY`
+  on the 800px Pi path) so the rings clear the legend. Noted 2026-08-07.
 
 - **Radar sweep arm — make it smoother/more "radar-like"**: wants improved
   motion, implies something like a fading trail behind the sweep line. Not

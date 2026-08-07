@@ -1,5 +1,14 @@
 // Pi Map basemap: CartoDB dark_all tiles, disk-cached RGB565, async fetch.
 // Lives under pi/ so PlatformIO never compiles it into the jc1060 firmware.
+//
+// Threading model (important — two past crash sources):
+// 1) Never call LVGL alloc/decode from the worker. LVGL's heap is not safe
+//    off the LVGL thread; the bundled lodepng is patched to use it. Decode
+//    PNGs with stb_image (plain malloc) on the worker instead.
+// 2) Never mutate the drawn buffer while LVGL SW draw units may still be
+//    reading it (LV_DRAW_SW_DRAW_UNIT_CNT>1 queues work). Worker publishes
+//    into an inbox; the LVGL thread installs it via basemap_poll_swap()
+//    between frames.
 
 #include "basemap.h"
 
@@ -16,12 +25,10 @@
 #include <sys/stat.h>
 #include <cstdlib>
 
-// LVGL's bundled lodepng is patched: lodepng_decode32 writes an
-// lv_draw_buf_t* (ARGB8888) into *out, not a bare RGBA malloc buffer.
-extern "C" {
-unsigned lodepng_decode32(unsigned char **out, unsigned *w, unsigned *h,
-                          const unsigned char *in, size_t insize);
-}
+#define STBI_ONLY_PNG
+#define STBI_NO_THREAD_LOCALS
+#define STB_IMAGE_IMPLEMENTATION
+#include "third_party/stb_image.h"
 
 namespace {
 
@@ -38,14 +45,26 @@ struct BasemapSlot {
     int geo_cy = 0;
     int bullseye_r = 0;
     bool valid = false;
+
+    void bind_dsc() {
+        memset(&dsc, 0, sizeof(dsc));
+        dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+        dsc.header.w = w;
+        dsc.header.h = h;
+        dsc.header.stride = w * 2;
+        dsc.data_size = (uint32_t)rgb565.size();
+        dsc.data = rgb565.data();
+    }
 };
 
 std::mutex g_mu;
-BasemapSlot g_front;          // drawn
+BasemapSlot g_front;          // LVGL thread only (after install)
+BasemapSlot g_inbox;          // worker → LVGL publish slot
+bool g_inbox_ready = false;
 bool g_worker_busy = false;
 float g_req_lat = 0, g_req_lon = 0, g_req_radius = 0;
 int g_req_w = 0, g_req_h = 0, g_req_cy = 0, g_req_br = 0;
-uint32_t g_req_gen = 0;       // bumped on every request; worker checks for cancel
+uint32_t g_req_gen = 0;
 
 struct CurlBuf {
     std::vector<uint8_t> data;
@@ -115,7 +134,6 @@ std::string cache_dir() {
 }
 
 void ensure_dir(const std::string &path) {
-    // mkdir -p one level at a time
     std::string cur;
     for (size_t i = 0; i < path.size(); i++) {
         cur.push_back(path[i]);
@@ -133,7 +151,6 @@ void ensure_dir(const std::string &path) {
 
 std::string cache_path(float lat, float lon, float radius_nm, int w, int h, int cy, int br) {
     char name[192];
-    // Quantize lat/lon so tiny float noise doesn't miss the cache.
     snprintf(name, sizeof(name), "%s/%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
              cache_dir().c_str(), lat, lon, radius_nm, w, h, cy, br);
     return name;
@@ -164,23 +181,18 @@ void save_cache(const std::string &path, const BasemapSlot &slot) {
 
 bool decode_png_tile(const std::vector<uint8_t> &png, std::vector<uint8_t> &rgba,
                      unsigned &tw, unsigned &th) {
-    lv_draw_buf_t *decoded = nullptr;
-    unsigned w = 0, h = 0;
-    unsigned err = lodepng_decode32(reinterpret_cast<unsigned char **>(&decoded),
-                                    &w, &h, png.data(), png.size());
-    if (err || !decoded) {
-        if (decoded) lv_draw_buf_destroy(decoded);
+    int w = 0, h = 0, comp = 0;
+    unsigned char *out = stbi_load_from_memory(png.data(), (int)png.size(),
+                                               &w, &h, &comp, 4);
+    if (!out) return false;
+    tw = (unsigned)w;
+    th = (unsigned)h;
+    if (tw != (unsigned)TILE_PX || th != (unsigned)TILE_PX) {
+        stbi_image_free(out);
         return false;
     }
-    tw = w;
-    th = h;
-    if (tw != (unsigned)TILE_PX || th != (unsigned)TILE_PX || !decoded->data) {
-        lv_draw_buf_destroy(decoded);
-        return false;
-    }
-    // postProcessScanlines writes RGBA byte order into the draw-buf payload.
-    rgba.assign(decoded->data, decoded->data + (size_t)tw * th * 4);
-    lv_draw_buf_destroy(decoded);
+    rgba.assign(out, out + (size_t)tw * th * 4);
+    stbi_image_free(out);
     return true;
 }
 
@@ -209,7 +221,6 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     double cx, cy;
     pixel_of_coord(slot.lat, slot.lon, z, cx, cy);
 
-    // Geo center sits at (w/2, geo_cy) on the canvas — matches MapProjection.
     double vp_left = cx - slot.w / 2.0;
     double vp_top = cy - slot.geo_cy;
     double vp_right = vp_left + slot.w;
@@ -221,7 +232,6 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     int ty1 = (int)floor((vp_bottom - 1) / TILE_PX);
     int n = 1 << z;
 
-    // Fill with Map's BG_COLOR (#0a0a1a) so missing tiles blend in.
     uint16_t bg = rgb888_to_rgb565(0x0a, 0x0a, 0x1a);
     for (size_t i = 0; i < slot.rgb565.size(); i += 2) {
         slot.rgb565[i] = (uint8_t)(bg & 0xFF);
@@ -246,7 +256,6 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
             std::vector<uint8_t> rgba;
             unsigned tw = 0, th = 0;
             if (png.empty()) {
-                // 404 blank tile
                 rgba.assign((size_t)TILE_PX * TILE_PX * 4, 0);
                 for (size_t i = 0; i < rgba.size(); i += 4) {
                     rgba[i] = 0x0a; rgba[i + 1] = 0x0a; rgba[i + 2] = 0x1a; rgba[i + 3] = 255;
@@ -262,13 +271,7 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         }
     }
 
-    memset(&slot.dsc, 0, sizeof(slot.dsc));
-    slot.dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-    slot.dsc.header.w = slot.w;
-    slot.dsc.header.h = slot.h;
-    slot.dsc.header.stride = slot.w * 2;
-    slot.dsc.data_size = (uint32_t)slot.rgb565.size();
-    slot.dsc.data = slot.rgb565.data();
+    slot.bind_dsc();
     slot.valid = true;
     return true;
 }
@@ -291,13 +294,7 @@ void worker_main(uint32_t gen) {
                                   local.w, local.h, local.geo_cy, local.bullseye_r);
     bool ok = false;
     if (load_cache(path, local)) {
-        memset(&local.dsc, 0, sizeof(local.dsc));
-        local.dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-        local.dsc.header.w = local.w;
-        local.dsc.header.h = local.h;
-        local.dsc.header.stride = local.w * 2;
-        local.dsc.data_size = (uint32_t)local.rgb565.size();
-        local.dsc.data = local.rgb565.data();
+        local.bind_dsc();
         local.valid = true;
         ok = true;
         platform_log("Basemap: cache hit %s\n", path.c_str());
@@ -311,9 +308,10 @@ void worker_main(uint32_t gen) {
     {
         std::lock_guard<std::mutex> lock(g_mu);
         if (ok && gen == g_req_gen) {
-            g_front = std::move(local);
-            // data pointer must point into g_front's vector after move
-            g_front.dsc.data = g_front.rgb565.data();
+            // Publish to inbox only — LVGL thread installs into g_front.
+            g_inbox = std::move(local);
+            g_inbox.bind_dsc();
+            g_inbox_ready = true;
         }
         g_worker_busy = false;
     }
@@ -326,8 +324,8 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     if (canvas_w <= 0 || canvas_h <= 0 || bullseye_r_px <= 0) return;
 
     std::lock_guard<std::mutex> lock(g_mu);
-    // Skip if front already matches and nothing is in flight.
-    if (g_front.valid && !g_worker_busy &&
+    // Skip if front already matches and nothing is in flight / pending.
+    if (g_front.valid && !g_worker_busy && !g_inbox_ready &&
         fabsf(g_front.lat - lat) < 1e-4f && fabsf(g_front.lon - lon) < 1e-4f &&
         fabsf(g_front.radius_nm - radius_nm) < 0.5f &&
         g_front.w == canvas_w && g_front.h == canvas_h &&
@@ -342,16 +340,11 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     g_req_cy = geo_center_y;
     g_req_br = bullseye_r_px;
     g_req_gen++;
-    if (g_worker_busy) return; // worker will see new gen on next check... actually
-                               // worker only checks gen during build; start a new
-                               // one when free. If busy, just update request;
-                               // spawn when current finishes via... we need to
-                               // either queue or always detach a new thread.
+    if (g_worker_busy) return;
     g_worker_busy = true;
     uint32_t gen = g_req_gen;
     std::thread([gen]() {
         worker_main(gen);
-        // If a newer request arrived while we worked, kick another worker.
         uint32_t latest = 0;
         bool need = false;
         {
@@ -368,12 +361,21 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     }).detach();
 }
 
-void basemap_draw(lv_layer_t *layer) {
+bool basemap_poll_swap(void) {
     std::lock_guard<std::mutex> lock(g_mu);
+    if (!g_inbox_ready) return false;
+    g_front = std::move(g_inbox);
+    g_front.bind_dsc();
+    g_inbox_ready = false;
+    return g_front.valid;
+}
+
+void basemap_draw(lv_layer_t *layer) {
+    // LVGL thread only. g_front is only mutated on this thread via poll_swap,
+    // so draw units can keep reading dsc.data after this returns.
     if (!g_front.valid || g_front.rgb565.empty()) return;
 
-    // Re-bind data pointer in case vector reallocated (shouldn't after valid).
-    g_front.dsc.data = g_front.rgb565.data();
+    g_front.bind_dsc();
 
     lv_draw_image_dsc_t img;
     lv_draw_image_dsc_init(&img);
@@ -384,6 +386,5 @@ void basemap_draw(lv_layer_t *layer) {
 }
 
 bool basemap_ready(void) {
-    std::lock_guard<std::mutex> lock(g_mu);
     return g_front.valid;
 }
