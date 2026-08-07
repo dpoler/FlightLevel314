@@ -16,8 +16,11 @@
 #include "../src/ui/settings.h"
 #include "../src/data/error_log.h"
 #include "../src/data/fetcher.h"
+#include "../src/data/locations.h"
 #include "../src/platform/platform.h"
+#include "../src/ui/location_picker.h"
 #include "../src/ui/map_view.h"
+#include "../src/ui/range.h"
 #include "basemap.h"
 #include <cstdio>
 #include <cstdlib>
@@ -37,12 +40,14 @@ static lv_obj_t *_latency_val = nullptr;
 static lv_obj_t *_uptime_val = nullptr;
 static lv_obj_t *_err_count_lbl = nullptr;
 static lv_obj_t *_err_list_lbl = nullptr;
+static lv_obj_t *_factory_lbl = nullptr;
+static uint32_t _factory_confirm_until_ms = 0;
 
 static UserConfig _cfg;
 static settings_changed_cb_t _on_change = nullptr;
 
 #define PANEL_W 370
-#define PANEL_H 470
+#define PANEL_H 540
 #define FIELD_W 280
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
@@ -106,6 +111,22 @@ static void status_refresh(lv_timer_t *t) {
         if (pos > 0) buf[pos - 1] = '\0';
         lv_label_set_text(_err_list_lbl, buf);
     }
+
+    // Expire the two-tap factory-reset confirm if the window elapsed.
+    if (_factory_confirm_until_ms && platform_millis() > _factory_confirm_until_ms) {
+        _factory_confirm_until_ms = 0;
+        if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
+    }
+}
+
+static void apply_cfg_to_fields() {
+    for (int i = 0; i < 4; i++) {
+        char rbuf[8];
+        snprintf(rbuf, sizeof(rbuf), "%d", _cfg.radius_presets[i]);
+        lv_textarea_set_text(_ta_radius[i], rbuf);
+    }
+    if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
+    else lv_obj_clear_state(_sw_metric, LV_STATE_CHECKED);
 }
 
 static void save_and_close(lv_event_t *e) {
@@ -127,6 +148,42 @@ static void save_and_close(lv_event_t *e) {
 
     storage_save_config(_cfg);
     if (_on_change) _on_change(&_cfg);
+    settings_hide();
+}
+
+static void clear_all_caches_cb(lv_event_t *e) {
+    int n = basemap_cache_clear();
+    locations_nearby_cache_clear();
+    platform_log("Settings: cleared all caches (%d basemap file(s) + nearby runways)\n", n);
+    map_view_on_show(); // re-request basemap for current projection if Map is live
+}
+
+static void factory_reset_cb(lv_event_t *e) {
+    uint32_t now = platform_millis();
+    if (!_factory_confirm_until_ms || now > _factory_confirm_until_ms) {
+        // First tap: arm a short confirm window (does not wipe the Pi OS --
+        // only ADS-B config.json, locations.json, and basemap cache).
+        _factory_confirm_until_ms = now + 4000;
+        if (_factory_lbl) lv_label_set_text(_factory_lbl, "Tap again to confirm");
+        return;
+    }
+
+    _factory_confirm_until_ms = 0;
+    if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
+
+    storage_factory_reset();
+    locations_factory_reset();
+    basemap_cache_clear();
+
+    _cfg = storage_load_config(); // compiled defaults (no config.json)
+    g_config = _cfg;
+    storage_save_config(g_config); // persist clean defaults
+    apply_cfg_to_fields();
+    if (_on_change) _on_change(&g_config);
+
+    location_picker_close();
+    map_view_on_show();
+    platform_log("Settings: ADS-B factory defaults restored (config + locations + caches)\n");
     settings_hide();
 }
 
@@ -233,25 +290,36 @@ void settings_init(lv_obj_t *parent) {
     status_refresh(nullptr);
     lv_timer_create(status_refresh, 2000, nullptr);
 
-    // Expire all basemap mosaics (Carto + sectional). Instant action — not
-    // part of Save. Refetch happens the next time Map asks for a basemap.
+    // Basemap mosaics + nearby-runway lists. Instant — not part of Save.
     lv_obj_t *cache_btn = lv_button_create(_panel);
     lv_obj_set_size(cache_btn, FIELD_W + 30, 34);
-    lv_obj_align(cache_btn, LV_ALIGN_BOTTOM_MID, 0, -58);
+    lv_obj_align(cache_btn, LV_ALIGN_BOTTOM_MID, 0, -106);
     lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
     lv_obj_set_style_border_width(cache_btn, 1, 0);
     lv_obj_set_style_radius(cache_btn, 6, 0);
     lv_obj_t *cache_lbl = lv_label_create(cache_btn);
-    lv_label_set_text(cache_lbl, "Clear map cache");
+    lv_label_set_text(cache_lbl, "Clear all caches");
     lv_obj_set_style_text_color(cache_lbl, lv_color_hex(0xffaa66), 0);
     lv_obj_set_style_text_font(cache_lbl, &lv_font_montserrat_14, 0);
     lv_obj_center(cache_lbl);
-    lv_obj_add_event_cb(cache_btn, [](lv_event_t *e) {
-        int n = basemap_cache_clear();
-        platform_log("Settings: cleared %d basemap cache file(s)\n", n);
-        map_view_on_show(); // re-request for current projection if Map is live
-    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(cache_btn, clear_all_caches_cb, LV_EVENT_CLICKED, nullptr);
+
+    // ADS-B app only (config + locations + caches) — never touches the Pi OS.
+    // Two-tap confirm within 4s to avoid an accidental wipe.
+    lv_obj_t *factory_btn = lv_button_create(_panel);
+    lv_obj_set_size(factory_btn, FIELD_W + 30, 34);
+    lv_obj_align(factory_btn, LV_ALIGN_BOTTOM_MID, 0, -58);
+    lv_obj_set_style_bg_color(factory_btn, lv_color_hex(0x2a1a1a), 0);
+    lv_obj_set_style_border_color(factory_btn, lv_color_hex(0x664444), 0);
+    lv_obj_set_style_border_width(factory_btn, 1, 0);
+    lv_obj_set_style_radius(factory_btn, 6, 0);
+    _factory_lbl = lv_label_create(factory_btn);
+    lv_label_set_text(_factory_lbl, "Reset to factory defaults");
+    lv_obj_set_style_text_color(_factory_lbl, lv_color_hex(0xff6666), 0);
+    lv_obj_set_style_text_font(_factory_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(_factory_lbl);
+    lv_obj_add_event_cb(factory_btn, factory_reset_cb, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *save_btn = lv_button_create(_panel);
     lv_obj_set_size(save_btn, 120, 40);
@@ -277,20 +345,18 @@ void settings_show() {
     if (_visible) return;
     _visible = true;
     _shown_at_ms = platform_millis();
+    _factory_confirm_until_ms = 0;
+    if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
     _cfg = storage_load_config();
-    for (int i = 0; i < 4; i++) {
-        char rbuf[8];
-        snprintf(rbuf, sizeof(rbuf), "%d", _cfg.radius_presets[i]);
-        lv_textarea_set_text(_ta_radius[i], rbuf);
-    }
-    if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
-    else lv_obj_clear_state(_sw_metric, LV_STATE_CHECKED);
+    apply_cfg_to_fields();
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
 void settings_hide() {
     if (!_visible) return;
     _visible = false;
+    _factory_confirm_until_ms = 0;
+    if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
     lv_obj_add_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
 }

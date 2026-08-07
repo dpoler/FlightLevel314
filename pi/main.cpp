@@ -19,6 +19,7 @@
 #include "../src/ui/location_picker.h"
 #include "basemap.h"
 #include <chrono>
+#include <cstring>
 #include <thread>
 
 // Milestone 6 of the Pi port (see project_pi_port memory / pi-port
@@ -114,6 +115,18 @@ int main() {
 
     settings_init(screen);
     status_bar_set_gear_callback([](lv_event_t *) { settings_show(); });
+
+    settings_set_change_callback([](const UserConfig *cfg) {
+        bool presets_changed = (memcmp(cfg->radius_presets, g_config.radius_presets,
+                                       sizeof(g_config.radius_presets)) != 0);
+        g_config = *cfg;
+        range_set_levels(cfg->radius_presets, 4);
+        if (presets_changed) {
+            range_set_default(cfg->radius_nm);
+            g_config.last_range_idx = range_get_index();
+            storage_save_config(g_config);
+        }
+    });
 
     // Periodic status bar update -- same aircraft-count logic as ESP32's
     // main.cpp (opacity/filter/hide_ground/radius, matching what a view
