@@ -1,0 +1,8 @@
+{
+  "name": "adsb",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "install": "bash .cursor/install.sh"
+}
