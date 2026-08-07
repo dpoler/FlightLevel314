@@ -14,8 +14,8 @@
 // Cache: one RGB565 file per (style, lat, lon, range, canvas geometry).
 // Freshness is mtime vs a per-style TTL (OSM/Carto ~30d; sectionals ~40d
 // so we refetch ahead of the ~56-day chart cycle). Filename includes an
-// `eq2` tag for the equirectangular warp + anti-alias filter (invalidates
-// older 1:1 mercator mosaics and the first eq1 warp caches).
+// `eq3` tag: equirectangular warp + anti-alias; bumps past eq2 soft-zoom
+// caches that looked blurry at wide ranges.
 
 #include "basemap.h"
 
@@ -345,19 +345,8 @@ int osm_zoom_for_radius(float radius_nm, int usable_h, float center_lat) {
 int zoom_for_style(int style, float radius_nm, int usable_h, float center_lat) {
     int z = osm_zoom_for_radius(radius_nm, usable_h, center_lat);
     if (style == MAP_BASEMAP_STYLE_SECTIONAL) {
-        // Screen-pixel matching at 50nm wants z~10 (~140 tiles). Sectional
-        // chart paper doesn't need that - coarser LODs read fine and cut
-        // download count dramatically (z=8 ~9-25 tiles).
-        if (radius_nm >= 40.0f) z = SECTIONAL_Z_MIN;
-        else if (radius_nm >= 15.0f) {
-            if (z > 9) z = 9;
-        }
         if (z < SECTIONAL_Z_MIN) z = SECTIONAL_Z_MIN;
         if (z > SECTIONAL_Z_MAX) z = SECTIONAL_Z_MAX;
-    } else if (radius_nm >= 40.0f && z > 4) {
-        // Matching zoom at 50nm is still ~100 OSM tiles; one level coarser
-        // is plenty under warp/opacity and ~4x fewer downloads.
-        z--;
     }
     return z;
 }
@@ -438,7 +427,7 @@ void ensure_dir(const std::string &path) {
 std::string cache_path(int style, float lat, float lon, float radius_nm,
                        int w, int h, int cy, int br) {
     char name[220];
-    snprintf(name, sizeof(name), "%s/%s_eq2_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
+    snprintf(name, sizeof(name), "%s/%s_eq3_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
              cache_dir().c_str(), style_cache_tag(style),
              lat, lon, radius_nm, w, h, cy, br);
     return name;
@@ -641,10 +630,10 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         }
     }
 
-    int tx0 = (int)floor(min_mx / TILE_PX);
-    int tx1 = (int)floor(max_mx / TILE_PX);
-    int ty0 = (int)floor(min_my / TILE_PX);
-    int ty1 = (int)floor(max_my / TILE_PX);
+    int tx0 = (int)floor(min_mx / TILE_PX) - 1;
+    int tx1 = (int)floor(max_mx / TILE_PX) + 1;
+    int ty0 = (int)floor(min_my / TILE_PX) - 1;
+    int ty1 = (int)floor(max_my / TILE_PX) + 1;
     // Clamp Y to valid mercator tile rows; X wraps.
     if (ty0 < 0) ty0 = 0;
     if (ty1 >= n) ty1 = n - 1;
