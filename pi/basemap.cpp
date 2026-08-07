@@ -13,7 +13,9 @@
 //
 // Cache: one RGB565 file per (style, lat, lon, range, canvas geometry).
 // Freshness is mtime vs a per-style TTL (OSM/Carto ~30d; sectionals ~40d
-// so we refetch ahead of the ~56-day chart cycle).
+// so we refetch ahead of the ~56-day chart cycle). Filename includes an
+// `eq1` tag for the equirectangular warp (invalidates older 1:1 mercator
+// mosaics).
 
 #include "basemap.h"
 
@@ -227,7 +229,7 @@ void ensure_dir(const std::string &path) {
 std::string cache_path(int style, float lat, float lon, float radius_nm,
                        int w, int h, int cy, int br) {
     char name[220];
-    snprintf(name, sizeof(name), "%s/%s_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
+    snprintf(name, sizeof(name), "%s/%s_eq1_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
              cache_dir().c_str(), style_cache_tag(style),
              lat, lon, radius_nm, w, h, cy, br);
     return name;
@@ -287,41 +289,142 @@ bool decode_tile_image(const std::vector<uint8_t> &bytes, std::vector<uint8_t> &
     return true;
 }
 
-void blit_tile_rgb565(BasemapSlot &slot, const std::vector<uint8_t> &rgba,
-                      int dst_x0, int dst_y0) {
+void blit_tile_rgba(std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
+                    const std::vector<uint8_t> &rgba, int dst_x0, int dst_y0) {
     for (int ty = 0; ty < TILE_PX; ty++) {
         int dy = dst_y0 + ty;
-        if (dy < 0 || dy >= slot.h) continue;
+        if (dy < 0 || dy >= mosaic_h) continue;
         for (int tx = 0; tx < TILE_PX; tx++) {
             int dx = dst_x0 + tx;
-            if (dx < 0 || dx >= slot.w) continue;
+            if (dx < 0 || dx >= mosaic_w) continue;
             const uint8_t *p = &rgba[((size_t)ty * TILE_PX + tx) * 4];
-            uint16_t pix = rgb888_to_rgb565(p[0], p[1], p[2]);
-            size_t off = ((size_t)dy * slot.w + dx) * 2;
-            slot.rgb565[off] = (uint8_t)(pix & 0xFF);
-            slot.rgb565[off + 1] = (uint8_t)(pix >> 8);
+            uint8_t *d = &mosaic[((size_t)dy * mosaic_w + dx) * 4];
+            d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = p[3];
         }
     }
 }
 
+// Bilinear sample of an RGBA mosaic. Out of bounds → dark Map bg.
+void sample_mosaic_rgb(const std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
+                       double u, double v, uint8_t &r, uint8_t &g, uint8_t &b) {
+    if (u < 0 || v < 0 || u >= mosaic_w - 1 || v >= mosaic_h - 1) {
+        r = 0x0a; g = 0x0a; b = 0x1a;
+        return;
+    }
+    int x0 = (int)floor(u);
+    int y0 = (int)floor(v);
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+    double fx = u - x0;
+    double fy = v - y0;
+    auto at = [&](int x, int y) -> const uint8_t * {
+        return &mosaic[((size_t)y * mosaic_w + x) * 4];
+    };
+    const uint8_t *p00 = at(x0, y0);
+    const uint8_t *p10 = at(x1, y0);
+    const uint8_t *p01 = at(x0, y1);
+    const uint8_t *p11 = at(x1, y1);
+    auto lerp = [](double a, double b, double t) { return a + (b - a) * t; };
+    r = (uint8_t)(lerp(lerp(p00[0], p10[0], fx), lerp(p01[0], p11[0], fx), fy) + 0.5);
+    g = (uint8_t)(lerp(lerp(p00[1], p10[1], fx), lerp(p01[1], p11[1], fx), fy) + 0.5);
+    b = (uint8_t)(lerp(lerp(p00[2], p10[2], fx), lerp(p01[2], p11[2], fx), fy) + 0.5);
+}
+
+// Build a basemap warped into MapProjection's local equirectangular frame so
+// runways/aircraft (to_screen) land on the same geography as the tiles.
+// Mercator tiles are fetched into a mosaic, then each canvas pixel is inverse-
+// projected to lat/lon and sampled — fixes the center-only alignment of a
+// 1:1 mercator blit.
 bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     const int usable_h = slot.bullseye_r * 2;
-    if (usable_h <= 0 || slot.w <= 0 || slot.h <= 0) return false;
+    if (usable_h <= 0 || slot.w <= 0 || slot.h <= 0 || slot.radius_nm <= 0)
+        return false;
+
+    // Matches MapProjection::to_screen with screen_h=geo_cy+R, top_margin=geo_cy-R.
+    const float scale = (float)slot.bullseye_r / slot.radius_nm;
+    const float cos_lat = cosf(slot.lat * (float)M_PI / 180.0f);
+    if (scale <= 0.0f || fabsf(cos_lat) < 1e-4f) return false;
+
+    auto screen_to_ll = [&](float sx, float sy, float &lat, float &lon) {
+        float dx_nm = (sx - slot.w * 0.5f) / scale;
+        float dy_nm = (slot.geo_cy - sy) / scale;
+        lat = slot.lat + dy_nm / 60.0f;
+        lon = slot.lon + dx_nm / (60.0f * cos_lat);
+    };
 
     int z = zoom_for_style(slot.style, slot.radius_nm, usable_h, slot.lat);
-    double cx, cy;
-    pixel_of_coord(slot.lat, slot.lon, z, cx, cy);
-
-    double vp_left = cx - slot.w / 2.0;
-    double vp_top = cy - slot.geo_cy;
-    double vp_right = vp_left + slot.w;
-    double vp_bottom = vp_top + slot.h;
-
-    int tx0 = (int)floor(vp_left / TILE_PX);
-    int tx1 = (int)floor((vp_right - 1) / TILE_PX);
-    int ty0 = (int)floor(vp_top / TILE_PX);
-    int ty1 = (int)floor((vp_bottom - 1) / TILE_PX);
     int n = 1 << z;
+
+    // Mercator AABB covering the equirectangular canvas (corners + edge mids).
+    double min_mx = 1e300, min_my = 1e300, max_mx = -1e300, max_my = -1e300;
+    const float xs[] = {0.f, (float)(slot.w - 1), (float)(slot.w / 2)};
+    const float ys[] = {0.f, (float)(slot.h - 1), (float)(slot.h / 2)};
+    for (float sy : ys) {
+        for (float sx : xs) {
+            float lat, lon;
+            screen_to_ll(sx, sy, lat, lon);
+            if (lat > 85.0f) lat = 85.0f;
+            if (lat < -85.0f) lat = -85.0f;
+            double mx, my;
+            pixel_of_coord(lat, lon, z, mx, my);
+            if (mx < min_mx) min_mx = mx;
+            if (my < min_my) min_my = my;
+            if (mx > max_mx) max_mx = mx;
+            if (my > max_my) max_my = my;
+        }
+    }
+
+    int tx0 = (int)floor(min_mx / TILE_PX) - 1;
+    int tx1 = (int)floor(max_mx / TILE_PX) + 1;
+    int ty0 = (int)floor(min_my / TILE_PX) - 1;
+    int ty1 = (int)floor(max_my / TILE_PX) + 1;
+    // Clamp Y to valid mercator tile rows; X wraps.
+    if (ty0 < 0) ty0 = 0;
+    if (ty1 >= n) ty1 = n - 1;
+    if (ty1 < ty0) return false;
+
+    int tiles_w = tx1 - tx0 + 1;
+    int tiles_h = ty1 - ty0 + 1;
+    // Guard against pathological zoom/AABB (keeps worker memory bounded).
+    if (tiles_w <= 0 || tiles_h <= 0 || tiles_w * tiles_h > 300) {
+        platform_log("Basemap: tile AABB too large (%dx%d at z=%d), abort\n",
+                     tiles_w, tiles_h, z);
+        return false;
+    }
+
+    const int mosaic_w = tiles_w * TILE_PX;
+    const int mosaic_h = tiles_h * TILE_PX;
+    std::vector<uint8_t> mosaic((size_t)mosaic_w * mosaic_h * 4);
+    for (size_t i = 0; i < mosaic.size(); i += 4) {
+        mosaic[i] = 0x0a; mosaic[i + 1] = 0x0a; mosaic[i + 2] = 0x1a; mosaic[i + 3] = 255;
+    }
+
+    for (int ty = ty0; ty <= ty1; ty++) {
+        for (int tx = tx0; tx <= tx1; tx++) {
+            {
+                std::lock_guard<std::mutex> lock(g_mu);
+                if (gen != g_req_gen) return false;
+            }
+            int wtx = tx % n;
+            if (wtx < 0) wtx += n;
+
+            char url[320];
+            format_tile_url(url, sizeof(url), slot.style, z, wtx, ty);
+            std::vector<uint8_t> bytes;
+            if (!http_get(url, bytes) || bytes.empty()) continue;
+
+            std::vector<uint8_t> rgba;
+            unsigned tw = 0, th = 0;
+            if (!decode_tile_image(bytes, rgba, tw, th)) continue;
+
+            int dst_x = (tx - tx0) * TILE_PX;
+            int dst_y = (ty - ty0) * TILE_PX;
+            blit_tile_rgba(mosaic, mosaic_w, mosaic_h, rgba, dst_x, dst_y);
+        }
+    }
+
+    const double origin_mx = (double)tx0 * TILE_PX;
+    const double origin_my = (double)ty0 * TILE_PX;
 
     uint16_t bg = rgb888_to_rgb565(0x0a, 0x0a, 0x1a);
     for (size_t i = 0; i < slot.rgb565.size(); i += 2) {
@@ -329,36 +432,25 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         slot.rgb565[i + 1] = (uint8_t)(bg >> 8);
     }
 
-    for (int ty = ty0; ty <= ty1; ty++) {
-        for (int tx = tx0; tx <= tx1; tx++) {
-            {
-                std::lock_guard<std::mutex> lock(g_mu);
-                if (gen != g_req_gen) return false; // superseded
-            }
-            int wtx = tx % n;
-            if (wtx < 0) wtx += n;
-            if (ty < 0 || ty >= n) continue;
-
-            char url[320];
-            format_tile_url(url, sizeof(url), slot.style, z, wtx, ty);
-            std::vector<uint8_t> bytes;
-            if (!http_get(url, bytes)) continue;
-
-            std::vector<uint8_t> rgba;
-            unsigned tw = 0, th = 0;
-            if (bytes.empty()) {
-                rgba.assign((size_t)TILE_PX * TILE_PX * 4, 0);
-                for (size_t i = 0; i < rgba.size(); i += 4) {
-                    rgba[i] = 0x0a; rgba[i + 1] = 0x0a; rgba[i + 2] = 0x1a; rgba[i + 3] = 255;
-                }
-                tw = th = TILE_PX;
-            } else if (!decode_tile_image(bytes, rgba, tw, th)) {
-                continue;
-            }
-
-            int dst_x = (int)((tx * TILE_PX) - vp_left);
-            int dst_y = (int)((ty * TILE_PX) - vp_top);
-            blit_tile_rgb565(slot, rgba, dst_x, dst_y);
+    for (int sy = 0; sy < slot.h; sy++) {
+        if ((sy & 31) == 0) {
+            std::lock_guard<std::mutex> lock(g_mu);
+            if (gen != g_req_gen) return false;
+        }
+        for (int sx = 0; sx < slot.w; sx++) {
+            float lat, lon;
+            screen_to_ll(sx + 0.5f, sy + 0.5f, lat, lon);
+            if (lat > 85.0f) lat = 85.0f;
+            if (lat < -85.0f) lat = -85.0f;
+            double mx, my;
+            pixel_of_coord(lat, lon, z, mx, my);
+            uint8_t r, g, b;
+            sample_mosaic_rgb(mosaic, mosaic_w, mosaic_h,
+                              mx - origin_mx, my - origin_my, r, g, b);
+            uint16_t pix = rgb888_to_rgb565(r, g, b);
+            size_t off = ((size_t)sy * slot.w + sx) * 2;
+            slot.rgb565[off] = (uint8_t)(pix & 0xFF);
+            slot.rgb565[off + 1] = (uint8_t)(pix >> 8);
         }
     }
 
