@@ -480,6 +480,20 @@ mostly chronological.
   readability, bump Map bullseye center up a little instead (`MAP_BULLSEYE_CY`
   on the 800px Pi path) so the rings clear the legend. Noted 2026-08-07.
 
+- **Basemap vs runway/aircraft alignment (Pi)**: airportdb green runway lines
+  (and aircraft) are plotted with `MapProjection` — local equirectangular nm
+  using `cos(center_lat)` — while the Carto basemap is a cropped **Web
+  Mercator** tile mosaic blitted 1:1 into screen pixels (`pi/basemap.cpp`).
+  Scale is matched near the bullseye center; away from center (and more at
+  higher latitudes / wider ranges) the painted OSM runway and the overlay
+  diverge, sometimes by a fair bit. Same class of issue as the ESP32 static
+  map path (`tools/generate_static_map.py`). Not a simple bug: fixing it
+  means either (a) resampling/warping each basemap into equirectangular to
+  match `to_screen()`, or (b) switching Map (and Radar?) overlays to Mercator.
+  Secondary, smaller contributor: OSM vs airportdb runway endpoint definitions
+  can differ even under a perfect projection. User noted 2026-08-07; treating
+  as known limitation unless we scope a reprojection pass.
+
 - **Radar sweep arm — make it smoother/more "radar-like"**: wants improved
   motion, implies something like a fading trail behind the sweep line. Not
   scoped yet — current implementation not re-examined against this request.
