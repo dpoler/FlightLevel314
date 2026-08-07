@@ -54,7 +54,7 @@ static uint32_t _trails_cleared_at = 0;
 // directly, unlike map_view.cpp where the rings and _proj.screen_h are
 // separate.
 #if LCD_V_RES == 800
-#define RADAR_CY 400
+#define RADAR_CY 420
 #define RADAR_R  342
 #else
 #define RADAR_CY 310
