@@ -620,6 +620,32 @@ const Location *locations_nearby_get_active(int *count) {
     return _nearby_all[_active_index];
 }
 
+void locations_nearby_cache_clear() {
+    int restart_idx = -1;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (int i = 0; i < _count; i++) {
+            memset(_nearby_all[i], 0, sizeof(_nearby_all[i]));
+            _nearby_all_count[i] = 0;
+            _locations[i].nearby_count = 0;
+        }
+        if (_count > 0) save_all_locked();
+
+        // Re-kick a scan for the active location if its eye toggle is still
+        // on -- otherwise the map stays empty until the user toggles it.
+        if (_active_index >= 0 && _active_index < _count &&
+            _locations[_active_index].nearby_enabled) {
+            restart_idx = _active_index;
+        }
+        platform_log("Locations: nearby-airport caches cleared\n");
+    }
+
+    if (restart_idx < 0) return;
+    // off→on reuses the existing fetch path (set_enabled no-ops if already on).
+    locations_nearby_set_enabled(restart_idx, false);
+    locations_nearby_set_enabled(restart_idx, true);
+}
+
 void locations_factory_reset() {
     std::lock_guard<std::mutex> lock(_mutex);
     _count = 0;

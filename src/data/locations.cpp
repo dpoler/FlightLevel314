@@ -953,6 +953,31 @@ const Location* locations_nearby_get_active(int *count) {
     return _nearby;
 }
 
+void locations_nearby_cache_clear() {
+    _prefs.begin("adsb_locs", false);
+    for (int i = 0; i < _count; i++) {
+        char key[16];
+        nearby_nvs_key(i, key, sizeof(key));
+        if (_prefs.isKey(key)) _prefs.remove(key);
+        _locations[i].nearby_count = 0;
+    }
+    _prefs.end();
+
+    _nearby_loaded_count = 0;
+    _nearby_loaded_for = -2;
+    memset(_nearby, 0, sizeof(_nearby));
+    // Drop any in-flight / pending nearby fetch -- results would just
+    // repopulate what the user asked to clear.
+    _nearby_queue_active = false;
+    _nearby_queue_len = 0;
+    _nearby_queue_pos = 0;
+    _nearby_fetch_buf_count = 0;
+    _nearby_pending_count = 0;
+
+    save_all();
+    Serial.println("Locations: nearby-airport caches cleared");
+}
+
 void locations_factory_reset() {
     _prefs.begin("adsb_locs", false);
     _prefs.clear(); // takes every nb_<hash> nearby-cache blob with it too, same namespace
