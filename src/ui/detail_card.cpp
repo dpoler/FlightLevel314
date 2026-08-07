@@ -22,6 +22,12 @@ static lv_obj_t *_operator_label = nullptr;
 static lv_obj_t *_type_label = nullptr;
 static lv_obj_t *_cat_label = nullptr;
 static lv_obj_t *_aircraft_detail_label = nullptr;
+static lv_obj_t *_photo_credit_label = nullptr;
+#if !defined(ARDUINO)
+static lv_obj_t *_photo_img = nullptr;
+static lv_image_dsc_t _photo_dsc;
+static char _photo_shown_icao[7] = {};
+#endif
 // Data grid row 1 — flight state
 static lv_obj_t *_alt_label = nullptr;
 static lv_obj_t *_spd_label = nullptr;
@@ -146,6 +152,33 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         snprintf(detail + pos, sizeof(detail) - pos, "%dx %s", data->engine_count, data->engine_type);
     }
     if (detail[0]) lv_label_set_text(_aircraft_detail_label, detail);
+
+    if (data->photo_photographer[0]) {
+        lv_label_set_text_fmt(_photo_credit_label, "Photo: %s", data->photo_photographer);
+        lv_obj_clear_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
+    }
+
+#if !defined(ARDUINO)
+    // Real aircraft photo (planespotters thumbnail) -- Pi only. ESP32's
+    // PSRAM image path is broken (README Known Issues); credit text above
+    // is all it shows.
+    if (data->photo_rgb565 && data->photo_w > 0 && data->photo_h > 0 && _photo_img) {
+        memset(&_photo_dsc, 0, sizeof(_photo_dsc));
+        _photo_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+        _photo_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+        _photo_dsc.header.w = data->photo_w;
+        _photo_dsc.header.h = data->photo_h;
+        _photo_dsc.header.stride = (uint32_t)data->photo_w * 2;
+        _photo_dsc.data_size = (uint32_t)data->photo_w * (uint32_t)data->photo_h * 2;
+        _photo_dsc.data = data->photo_rgb565;
+        lv_image_set_src(_photo_img, &_photo_dsc);
+        lv_obj_set_size(_photo_img, data->photo_w, data->photo_h);
+        lv_obj_clear_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
+        strlcpy(_photo_shown_icao, _current_ac.icao_hex, sizeof(_photo_shown_icao));
+        // Credit under the photo on the right
+        lv_obj_align_to(_photo_credit_label, _photo_img, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
+    }
+#endif
 }
 
 static lv_obj_t *make_data_row(lv_obj_t *parent, const char *label_text,
@@ -385,6 +418,22 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_text_color(_aircraft_detail_label, CARD_DIM, 0);
     lv_obj_set_pos(_aircraft_detail_label, 0, 98);
 
+    _photo_credit_label = lv_label_create(_card);
+    lv_label_set_text(_photo_credit_label, "");
+    lv_obj_set_style_text_font(_photo_credit_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_photo_credit_label, CARD_DIM, 0);
+    lv_obj_set_pos(_photo_credit_label, 0, 118);
+    lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
+
+#if !defined(ARDUINO)
+    // Right-side photo slot (planespotters thumbnail). Hidden until
+    // enrichment_linux fills photo_rgb565.
+    _photo_img = lv_image_create(_card);
+    lv_obj_set_pos(_photo_img, LCD_H_RES - 16 - 260, 4);
+    lv_obj_add_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(_photo_img, LV_OBJ_FLAG_CLICKABLE);
+#endif
+
     // === DATA GRID ROW 1 — flight state ===
     int y1 = 178;
     make_data_row(_card, "ALTITUDE", COL1, y1, &_alt_label);
@@ -487,6 +536,14 @@ void detail_card_show(const Aircraft *ac) {
 
     // Clear enrichment fields
     lv_label_set_text(_aircraft_detail_label, "");
+    lv_label_set_text(_photo_credit_label, "");
+    lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
+#if !defined(ARDUINO)
+    if (_photo_img) {
+        lv_obj_add_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
+        _photo_shown_icao[0] = '\0';
+    }
+#endif
 
     render_grid(ac);
 
@@ -507,17 +564,24 @@ void detail_card_show(const Aircraft *ac) {
     // Start live update timer
     lv_timer_resume(_update_timer);
 
-    // Enrichment (adsbdb + planespotters) fills manufacturer / model /
-    // engines when ready. No spinner — on Pi enrichment is still stubbed
-    // so a spinner would spin forever, and even on ESP32 it wasn't clear
-    // what activity it represented (live telemetry already updates via
-    // the timer above). Fields just appear when the callback fires.
+    // Enrichment (adsbdb + planespotters). On Pi this also downloads and
+    // decodes the photo thumbnail into the detail card; on ESP32 only the
+    // text fields / photographer credit update (image path is broken).
     enrichment_fetch(ac->icao_hex, ac->registration, on_enrichment_ready);
 }
 
 void detail_card_hide() {
     if (!_visible) return;
     _visible = false;
+
+#if !defined(ARDUINO)
+    // Drop the image src before any cache slot can free photo_rgb565.
+    if (_photo_img) {
+        lv_obj_add_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
+        lv_image_set_src(_photo_img, nullptr);
+        _photo_shown_icao[0] = '\0';
+    }
+#endif
 
     // Pause live updates
     lv_timer_pause(_update_timer);

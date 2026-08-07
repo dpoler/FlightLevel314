@@ -119,6 +119,7 @@ add_executable(adsb_pi
     platform_linux/fetcher_stats_linux.cpp
     platform_linux/locations_linux.cpp
     platform_linux/airlines_linux.cpp
+    platform_linux/enrichment_linux.cpp
     ${SHARED_SOURCES}
 )
 target_include_directories(adsb_pi PRIVATE

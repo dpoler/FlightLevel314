@@ -7,6 +7,7 @@
 #include "../src/data/fetcher.h"
 #include "../src/data/locations.h"
 #include "../src/data/airlines.h"
+#include "../src/data/enrichment.h"
 #include "../src/ui/views.h"
 #include "../src/ui/detail_card.h"
 #include "../src/ui/range.h"
@@ -90,6 +91,8 @@ int main() {
 
     lv_display_t *disp = pi_display_init();
     pi_input_init(disp);
+
+    enrichment_init();
 
     lv_obj_t *screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x0a0a1a), 0);
