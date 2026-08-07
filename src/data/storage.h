@@ -66,11 +66,10 @@ struct UserConfig {
     // Pi Map basemap (Carto / FAA sectional tiles under Map). Unused on ESP32
     // / Radar but kept in the shared UserConfig so Pi JSON and ESP32 NVS key
     // sets stay aligned. Defaults: on at 50% opacity, Carto dark_all.
-    // Style: 0=Carto dark, 1=Carto dark (no labels), 2=FAA VFR sectional.
-    // Opacity is per-style (sectionals are denser — users typically want them
-    // dimmer than Carto dark, and that preference should stick per style).
+    // Style: 0=Carto dark, 1=Carto dark (no labels), 2=FAA VFR sectional,
+    // 3=Carto light. Opacity is per-style.
     bool map_basemap_enabled;
-    int map_basemap_opa[3];         // 10-100 percent per style (default 50)
+    int map_basemap_opa[4];         // 10-100 percent per style (default 50)
     int map_basemap_style;          // see display_prefs / basemap styles
 
     // Resume-on-boot state -- all written from discrete, human-paced actions

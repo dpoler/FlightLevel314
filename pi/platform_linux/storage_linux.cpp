@@ -62,7 +62,7 @@ static UserConfig defaults() {
         cfg.view_show_secondary_locations[i] = true;
     }
     cfg.map_basemap_enabled = true;
-    for (int i = 0; i < 3; i++) cfg.map_basemap_opa[i] = 50;
+    for (int i = 0; i < 4; i++) cfg.map_basemap_opa[i] = 50;
     cfg.map_basemap_style = 0;
     cfg.last_view_idx = 0;
     cfg.last_range_idx = 0;
@@ -138,7 +138,7 @@ UserConfig storage_load_config() {
     int legacy_opa = doc["bm_opa"] | 50;
     if (legacy_opa < 10) legacy_opa = 10;
     if (legacy_opa > 100) legacy_opa = 100;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         char key[12];
         snprintf(key, sizeof(key), "bm_opa%d", i);
         cfg.map_basemap_opa[i] = doc[key] | legacy_opa;
@@ -147,7 +147,7 @@ UserConfig storage_load_config() {
     }
     cfg.map_basemap_style = doc["bm_style"] | cfg.map_basemap_style;
     if (cfg.map_basemap_style < 0) cfg.map_basemap_style = 0;
-    if (cfg.map_basemap_style > 2) cfg.map_basemap_style = 2;
+    if (cfg.map_basemap_style > 3) cfg.map_basemap_style = 3;
     cfg.last_view_idx = doc["last_view"] | cfg.last_view_idx;
     cfg.last_range_idx = doc["last_rng"] | cfg.last_range_idx;
     strlcpy(cfg.last_location_name, doc["last_loc"] | cfg.last_location_name, sizeof(cfg.last_location_name));
@@ -198,7 +198,7 @@ void storage_save_config(const UserConfig &cfg) {
     doc["show2loc0"] = cfg.view_show_secondary_locations[0];
     doc["show2loc1"] = cfg.view_show_secondary_locations[1];
     doc["bm_on"] = cfg.map_basemap_enabled;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         char key[12];
         snprintf(key, sizeof(key), "bm_opa%d", i);
         doc[key] = cfg.map_basemap_opa[i];

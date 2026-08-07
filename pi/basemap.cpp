@@ -93,6 +93,7 @@ const char *style_cache_tag(int style) {
     switch (style) {
     case MAP_BASEMAP_STYLE_DARK_NOLABELS: return "darknl";
     case MAP_BASEMAP_STYLE_SECTIONAL:     return "vfrsec";
+    case MAP_BASEMAP_STYLE_LIGHT:         return "light";
     case MAP_BASEMAP_STYLE_DARK:
     default:                              return "dark";
     }
@@ -107,6 +108,7 @@ int style_cache_ttl_days(int style) {
         return 40;
     case MAP_BASEMAP_STYLE_DARK:
     case MAP_BASEMAP_STYLE_DARK_NOLABELS:
+    case MAP_BASEMAP_STYLE_LIGHT:
     default:
         // OSM/Carto roads/labels change slowly for a personal kiosk.
         return 30;
@@ -173,6 +175,10 @@ void format_tile_url(char *buf, size_t buflen, int style, int z, int x, int y) {
     case MAP_BASEMAP_STYLE_DARK_NOLABELS:
         snprintf(buf, buflen,
                  "https://basemaps.cartocdn.com/dark_nolabels/%d/%d/%d.png", z, x, y);
+        break;
+    case MAP_BASEMAP_STYLE_LIGHT:
+        snprintf(buf, buflen,
+                 "https://basemaps.cartocdn.com/light_all/%d/%d/%d.png", z, x, y);
         break;
     case MAP_BASEMAP_STYLE_SECTIONAL:
         // ArcGIS MapServer tile path is /tile/{z}/{y}/{x} (y before x).

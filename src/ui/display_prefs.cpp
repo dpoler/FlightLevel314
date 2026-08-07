@@ -74,13 +74,21 @@ const char *map_basemap_style_name() {
     switch (g_config.map_basemap_style) {
     case MAP_BASEMAP_STYLE_DARK_NOLABELS: return "Dark (no labels)";
     case MAP_BASEMAP_STYLE_SECTIONAL:     return "VFR Sectional";
+    case MAP_BASEMAP_STYLE_LIGHT:         return "Light";
     case MAP_BASEMAP_STYLE_DARK:
     default:                              return "Dark";
     }
 }
 
 void map_basemap_style_cycle() {
-    g_config.map_basemap_style =
-        (g_config.map_basemap_style + 1) % MAP_BASEMAP_STYLE_COUNT;
+    // Order: Dark → Dark (no labels) → Light → VFR Sectional → …
+    // Light is index 3 so existing saved style=2 (Sectional) stays valid.
+    switch (g_config.map_basemap_style) {
+    case MAP_BASEMAP_STYLE_DARK:          g_config.map_basemap_style = MAP_BASEMAP_STYLE_DARK_NOLABELS; break;
+    case MAP_BASEMAP_STYLE_DARK_NOLABELS: g_config.map_basemap_style = MAP_BASEMAP_STYLE_LIGHT; break;
+    case MAP_BASEMAP_STYLE_LIGHT:         g_config.map_basemap_style = MAP_BASEMAP_STYLE_SECTIONAL; break;
+    case MAP_BASEMAP_STYLE_SECTIONAL:
+    default:                             g_config.map_basemap_style = MAP_BASEMAP_STYLE_DARK; break;
+    }
     storage_save_config(g_config);
 }
