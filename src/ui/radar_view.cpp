@@ -902,20 +902,6 @@ static void draw_radar_active_location_marker(lv_layer_t *layer) {
 #define LEGEND_ALT_Y  (LCD_V_RES - 28)
 #define LEGEND_BOTTOM (LCD_V_RES - 14)
 
-// Solid backdrop behind both legend rows -- see map_view.cpp's
-// draw_legend_backdrop() for the full rationale (an airport/aircraft label
-// rendering underneath would otherwise read as jumbled overlapping text).
-static void draw_radar_legend_backdrop(lv_layer_t *layer) {
-    lv_draw_rect_dsc_t bg;
-    lv_draw_rect_dsc_init(&bg);
-    bg.bg_color = COLOR_BG;
-    bg.bg_opa = LV_OPA_COVER;
-    bg.radius = 6;
-    lv_area_t a = {(lv_coord_t)LEGEND_X0, (lv_coord_t)(LEGEND_ICON_Y - 6),
-                   (lv_coord_t)(LEGEND_X0 + LEGEND_W), (lv_coord_t)LEGEND_BOTTOM};
-    lv_draw_rect(layer, &bg, &a);
-}
-
 static void draw_radar_icon_legend(lv_layer_t *layer) {
     int y = LEGEND_ICON_Y;
 
@@ -1033,7 +1019,7 @@ static void radar_draw_cb(lv_event_t *e) {
 #if !defined(ARDUINO)
     t = millis(); profile_record(_prof_blips, t - t_start); t_start = t;
 #endif
-    draw_radar_legend_backdrop(layer);
+    // Legend on the map with no panel (matches map_view).
     draw_radar_icon_legend(layer);
     draw_radar_altitude_legend(layer);
     draw_filter_label(layer);
