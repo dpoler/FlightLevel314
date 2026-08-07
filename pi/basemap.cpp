@@ -14,8 +14,8 @@
 // Cache: one RGB565 file per (style, lat, lon, range, canvas geometry).
 // Freshness is mtime vs a per-style TTL (OSM/Carto ~30d; sectionals ~40d
 // so we refetch ahead of the ~56-day chart cycle). Filename includes an
-// `eq1` tag for the equirectangular warp (invalidates older 1:1 mercator
-// mosaics).
+// `eq2` tag for the equirectangular warp + anti-alias filter (invalidates
+// older 1:1 mercator mosaics and the first eq1 warp caches).
 
 #include "basemap.h"
 
@@ -229,7 +229,7 @@ void ensure_dir(const std::string &path) {
 std::string cache_path(int style, float lat, float lon, float radius_nm,
                        int w, int h, int cy, int br) {
     char name[220];
-    snprintf(name, sizeof(name), "%s/%s_eq1_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
+    snprintf(name, sizeof(name), "%s/%s_eq2_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
              cache_dir().c_str(), style_cache_tag(style),
              lat, lon, radius_nm, w, h, cy, br);
     return name;
@@ -304,6 +304,31 @@ void blit_tile_rgba(std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
     }
 }
 
+// Soften JPEG / engraved-chart scan structure before warping. Without this,
+// Mercator→equirectangular resampling aliases fine horizontal texture into
+// thick "corduroy" bands in flat chart paper / dark ocean fill.
+void box_blur_3x3(std::vector<uint8_t> &img, int w, int h) {
+    if (w < 3 || h < 3) return;
+    std::vector<uint8_t> src = img;
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int rs = 0, gs = 0, bs = 0;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    const uint8_t *p = &src[((size_t)(y + dy) * w + (x + dx)) * 4];
+                    rs += p[0];
+                    gs += p[1];
+                    bs += p[2];
+                }
+            }
+            uint8_t *d = &img[((size_t)y * w + x) * 4];
+            d[0] = (uint8_t)(rs / 9);
+            d[1] = (uint8_t)(gs / 9);
+            d[2] = (uint8_t)(bs / 9);
+        }
+    }
+}
+
 // Bilinear sample of an RGBA mosaic. Out of bounds → dark Map bg.
 void sample_mosaic_rgb(const std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
                        double u, double v, uint8_t &r, uint8_t &g, uint8_t &b) {
@@ -328,6 +353,37 @@ void sample_mosaic_rgb(const std::vector<uint8_t> &mosaic, int mosaic_w, int mos
     r = (uint8_t)(lerp(lerp(p00[0], p10[0], fx), lerp(p01[0], p11[0], fx), fy) + 0.5);
     g = (uint8_t)(lerp(lerp(p00[1], p10[1], fx), lerp(p01[1], p11[1], fx), fy) + 0.5);
     b = (uint8_t)(lerp(lerp(p00[2], p10[2], fx), lerp(p01[2], p11[2], fx), fy) + 0.5);
+}
+
+// Average several bilinear taps over the screen-pixel footprint in mosaic space
+// (cheap area filter — kills moiré when upsampling chart paper).
+void sample_mosaic_area(const std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
+                        double u, double v, double du, double dv,
+                        uint8_t &r, uint8_t &g, uint8_t &b) {
+    double span = du > dv ? du : dv;
+    int n = 1;
+    if (span > 1.25) n = 2;
+    if (span > 2.5) n = 3;
+    if (n == 1) {
+        sample_mosaic_rgb(mosaic, mosaic_w, mosaic_h, u, v, r, g, b);
+        return;
+    }
+    double rs = 0, gs = 0, bs = 0;
+    double u0 = u - 0.5 * du;
+    double v0 = v - 0.5 * dv;
+    for (int j = 0; j < n; j++) {
+        for (int i = 0; i < n; i++) {
+            double uu = u0 + (i + 0.5) * du / n;
+            double vv = v0 + (j + 0.5) * dv / n;
+            uint8_t rr, gg, bb;
+            sample_mosaic_rgb(mosaic, mosaic_w, mosaic_h, uu, vv, rr, gg, bb);
+            rs += rr; gs += gg; bs += bb;
+        }
+    }
+    double inv = 1.0 / (n * n);
+    r = (uint8_t)(rs * inv + 0.5);
+    g = (uint8_t)(gs * inv + 0.5);
+    b = (uint8_t)(bs * inv + 0.5);
 }
 
 // Build a basemap warped into MapProjection's local equirectangular frame so
@@ -423,6 +479,19 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         }
     }
 
+    // Anti-alias before the nonlinear warp. Critical for two reasons:
+    // 1) Mercator tile *row* boundaries are constant-latitude → exact
+    //    horizontal lines in MapProjection; hard seams read as thick
+    //    scanlines across flat chart paper / dark fill.
+    // 2) JPEG / engraved-chart texture aliases into corduroy without a
+    //    low-pass before resampling.
+    box_blur_3x3(mosaic, mosaic_w, mosaic_h);
+    box_blur_3x3(mosaic, mosaic_w, mosaic_h);
+    box_blur_3x3(mosaic, mosaic_w, mosaic_h);
+    if (slot.style == MAP_BASEMAP_STYLE_SECTIONAL) {
+        box_blur_3x3(mosaic, mosaic_w, mosaic_h);
+    }
+
     const double origin_mx = (double)tx0 * TILE_PX;
     const double origin_my = (double)ty0 * TILE_PX;
 
@@ -438,15 +507,27 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
             if (gen != g_req_gen) return false;
         }
         for (int sx = 0; sx < slot.w; sx++) {
-            float lat, lon;
+            float lat, lon, lat_r, lon_r, lat_d, lon_d;
             screen_to_ll(sx + 0.5f, sy + 0.5f, lat, lon);
+            screen_to_ll(sx + 1.5f, sy + 0.5f, lat_r, lon_r);
+            screen_to_ll(sx + 0.5f, sy + 1.5f, lat_d, lon_d);
             if (lat > 85.0f) lat = 85.0f;
             if (lat < -85.0f) lat = -85.0f;
-            double mx, my;
+            if (lat_r > 85.0f) lat_r = 85.0f;
+            if (lat_r < -85.0f) lat_r = -85.0f;
+            if (lat_d > 85.0f) lat_d = 85.0f;
+            if (lat_d < -85.0f) lat_d = -85.0f;
+            double mx, my, mx_r, my_r, mx_d, my_d;
             pixel_of_coord(lat, lon, z, mx, my);
+            pixel_of_coord(lat_r, lon_r, z, mx_r, my_r);
+            pixel_of_coord(lat_d, lon_d, z, mx_d, my_d);
+            double du = fabs(mx_r - mx);
+            double dv = fabs(my_d - my);
+            if (du < 1.0) du = 1.0;
+            if (dv < 1.0) dv = 1.0;
             uint8_t r, g, b;
-            sample_mosaic_rgb(mosaic, mosaic_w, mosaic_h,
-                              mx - origin_mx, my - origin_my, r, g, b);
+            sample_mosaic_area(mosaic, mosaic_w, mosaic_h,
+                               mx - origin_mx, my - origin_my, du, dv, r, g, b);
             uint16_t pix = rgb888_to_rgb565(r, g, b);
             size_t off = ((size_t)sy * slot.w + sx) * 2;
             slot.rgb565[off] = (uint8_t)(pix & 0xFF);
