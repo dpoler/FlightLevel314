@@ -347,6 +347,18 @@ mostly chronological.
 
 ### 7.1 Genuinely open / not started
 
+- **Basemap / sectional coverage outside the US (esp. UK)**: FAA VFR
+  sectional style is US-charting only — expected empty/useless for UK and
+  other non-US regions; either gate the style by geography or label it
+  US-only in the VIEW menu. Separately, at EGLL (~51.47N) with dark_nolabels
+  @ 10 nm the basemap worker aborts: `tile AABB too large (25x18 at z=13)`
+  (`pi/basemap.cpp` guard `tiles_w * tiles_h > 300`) after cache TTL expiry,
+  so the map never rebuilds. Mercator AABB vs equirectangular canvas grows
+  with latitude; need a zoom/AABB fix and a pass verifying **all** basemap
+  styles at representative worldwide locations (low / mid / high lat, both
+  hemispheres). **Do not start until explicitly asked** — reported
+  2026-08-08.
+
 - **Include small airports in the static on-device airport DB**: today's
   `tools/generate_airports_db.py` keeps only OurAirports `large_airport` +
   `medium_airport` (~5k entries, ~0.4 MB const with `name[64]`). Adding
