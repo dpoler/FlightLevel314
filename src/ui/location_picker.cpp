@@ -11,8 +11,10 @@
 #include <cctype>
 #include <cstdio> // snprintf -- not reliably transitive under libstdc++ (Pi build)
 
-#define PANEL_W    360
+// Wide enough for "KJFK  John F. Kennedy International" + icon cluster.
+#define PANEL_W    540
 #define ROW_H      56   // was 44 -- felt cramped once the reorder handle was added (reported)
+#define ROW_ICON_RESERVE 110 // eye + grip + close on the right
 #define BTN_W      60   // matches status_bar.cpp's CHIP_W -- same width as every other button in the bar (nav tabs, range/TRAIL/TAG chips)
 #define BTN_H      24   // matches status_bar.cpp's CHIP_H (and the nav tabs' own height)
 #define ADD_MATCH_MAX 5
@@ -176,17 +178,16 @@ static void add_nearby_toggle(lv_obj_t *row, int idx) {
     lv_obj_set_ext_click_area(eye, 10);
     lv_obj_add_event_cb(eye, nearby_toggle_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
 
-    // Only shown once a fetch has actually landed something -- confirms the
-    // cache worked without needing to switch to Map/Radar and look.
+    // Second line under the ICAO/name — never overlaid on the primary label.
     int count = locations_nearby_count(idx);
     if (locations_nearby_enabled(idx) && count > 0) {
         lv_obj_t *badge = lv_label_create(row);
-        char txt[20];
+        char txt[24];
         snprintf(txt, sizeof(txt), "+%d nearby", count);
         lv_label_set_text(badge, txt);
         lv_obj_set_style_text_font(badge, &lv_font_montserrat_10, 0);
         lv_obj_set_style_text_color(badge, COLOR_ACCENT, 0);
-        lv_obj_align(badge, LV_ALIGN_LEFT_MID, 66, 0);
+        lv_obj_align(badge, LV_ALIGN_BOTTOM_LEFT, 10, -6);
         lv_obj_clear_flag(badge, LV_OBJ_FLAG_CLICKABLE);
     }
 }
@@ -347,10 +348,11 @@ static void build_list_view() {
 
         lv_obj_t *lbl = lv_label_create(row);
         // Airports: show ICAO + looked-up name. Waypoints keep loc->name.
+        const bool show_nearby = locations_nearby_enabled(i) && locations_nearby_count(i) > 0;
         if (loc->icao[0]) {
             const StaticAirport *ap = airports_lookup_icao(loc->icao);
             if (ap && ap->name[0]) {
-                char line[64];
+                char line[72];
                 snprintf(line, sizeof(line), "%s  %s", loc->icao, ap->name);
                 lv_label_set_text(lbl, line);
             } else {
@@ -361,8 +363,11 @@ static void build_list_view() {
         }
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl, COLOR_TEXT, 0);
-        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 10, 0);
-        lv_obj_set_width(lbl, PANEL_W - 100);
+        // When a nearby badge sits on the second line, pin the name to the
+        // top so the two don't collide mid-row.
+        if (show_nearby) lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 10, 6);
+        else lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 10, 0);
+        lv_obj_set_width(lbl, PANEL_W - ROW_ICON_RESERVE - 16);
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
         lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
 
