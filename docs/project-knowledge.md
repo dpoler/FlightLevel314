@@ -347,6 +347,21 @@ mostly chronological.
 
 ### 7.1 Genuinely open / not started
 
+- **Include small airports in the static on-device airport DB**: today's
+  `tools/generate_airports_db.py` keeps only OurAirports `large_airport` +
+  `medium_airport` (~5k entries, ~0.4 MB const with `name[64]`). Adding
+  `small_airport` (ident ≤4, same filter) is ~+25.6k rows → ~30.6k total and
+  ~2.5 MB aligned const flash (~+2.1 MB). Header text scales similarly
+  (~0.35 → ~2.1 MB). Fine on Pi; painful if the same table stays shared with
+  ESP32. **Do not start until explicitly asked** — sized 2026-08-08.
+
+- **Fork the Pi port into its own project/repo**: Pi-specific surface area
+  (basemap/weather, SDL/DRM, AeroDataBox O/D, AirportDB, settings, photo
+  path, CMake) has diverged enough that sharing `src/ui` + `src/data` with
+  the jc1060 ESP32 tree is getting costly. Plan a clean fork (or extract)
+  so Pi can evolve without `#if !defined(ARDUINO)` / dual-target friction.
+  **Do not start until explicitly asked** — parked 2026-08-08.
+
 - **Pi online app updates (check / notify / pull / restart)**: periodically
   check whether a newer `adsb_pi` (or package) is available, surface a
   non-intrusive "update available" notice in the UI, download it, and restart
