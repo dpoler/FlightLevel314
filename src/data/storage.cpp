@@ -17,6 +17,10 @@ UserConfig storage_load_config() {
     cfg.aerodatabox_key[0] = '\0';
     cfg.aerodatabox_provider = 0; // RapidAPI
     cfg.aerodatabox_enabled = false;
+    cfg.adbox_usage_yyyymm = 0;
+    cfg.adbox_usage_count = 0;
+    cfg.adbox_soft_limit = 0;
+    cfg.adbox_rate_limited = false;
     cfg.radius_nm = 50;
     cfg.radius_presets[0] = 5;
     cfg.radius_presets[1] = 10;
@@ -69,6 +73,10 @@ UserConfig storage_load_config() {
     cfg.aerodatabox_provider = _prefs.getInt("adbox_prov", cfg.aerodatabox_provider);
     if (cfg.aerodatabox_provider < 0 || cfg.aerodatabox_provider > 2) cfg.aerodatabox_provider = 0;
     cfg.aerodatabox_enabled = _prefs.getBool("adbox_en", cfg.aerodatabox_enabled);
+    cfg.adbox_usage_yyyymm = _prefs.getInt("adbox_ym", cfg.adbox_usage_yyyymm);
+    cfg.adbox_usage_count = _prefs.getInt("adbox_n", cfg.adbox_usage_count);
+    cfg.adbox_soft_limit = _prefs.getInt("adbox_lim", cfg.adbox_soft_limit);
+    cfg.adbox_rate_limited = _prefs.getBool("adbox_rl", cfg.adbox_rate_limited);
     cfg.radius_nm = _prefs.getInt("radius", cfg.radius_nm);
     cfg.radius_presets[0] = _prefs.getInt("rad0", cfg.radius_presets[0]);
     cfg.radius_presets[1] = _prefs.getInt("rad1", cfg.radius_presets[1]);
@@ -142,6 +150,10 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putString("adbox_key", cfg.aerodatabox_key);
     _prefs.putInt("adbox_prov", cfg.aerodatabox_provider);
     _prefs.putBool("adbox_en", cfg.aerodatabox_enabled);
+    _prefs.putInt("adbox_ym", cfg.adbox_usage_yyyymm);
+    _prefs.putInt("adbox_n", cfg.adbox_usage_count);
+    _prefs.putInt("adbox_lim", cfg.adbox_soft_limit);
+    _prefs.putBool("adbox_rl", cfg.adbox_rate_limited);
     _prefs.putInt("radius", cfg.radius_nm);
     _prefs.putInt("rad0", cfg.radius_presets[0]);
     _prefs.putInt("rad1", cfg.radius_presets[1]);

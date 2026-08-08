@@ -137,6 +137,55 @@ void today_utc_ymd(char *out, size_t out_sz) {
              tm_utc.tm_year + 1900, tm_utc.tm_mon + 1, tm_utc.tm_mday);
 }
 
+int current_yyyymm() {
+    time_t now = time(nullptr);
+    struct tm tm_utc {};
+    gmtime_r(&now, &tm_utc);
+    return (tm_utc.tm_year + 1900) * 100 + (tm_utc.tm_mon + 1);
+}
+
+// Roll the monthly counter if needed, then record one AeroDataBox HTTP call.
+// On 429 (or soft-limit breach) auto-disables the service and persists.
+void adbox_note_call(long http_status) {
+    int ym = current_yyyymm();
+    if (g_config.adbox_usage_yyyymm != ym) {
+        g_config.adbox_usage_yyyymm = ym;
+        g_config.adbox_usage_count = 0;
+        // New billing month — clear sticky rate-limit so the user can try again.
+        if (g_config.adbox_rate_limited) {
+            g_config.adbox_rate_limited = false;
+        }
+    }
+    g_config.adbox_usage_count++;
+
+    bool hit_soft = (g_config.adbox_soft_limit > 0
+                     && g_config.adbox_usage_count >= g_config.adbox_soft_limit);
+    bool hit_429 = (http_status == 429);
+    if ((hit_soft || hit_429) && g_config.aerodatabox_enabled) {
+        g_config.aerodatabox_enabled = false;
+        g_config.adbox_rate_limited = true;
+        platform_log("[Enrich] AeroDataBox auto-disabled (%s, count=%d limit=%d)\n",
+                     hit_429 ? "HTTP 429" : "soft limit",
+                     g_config.adbox_usage_count, g_config.adbox_soft_limit);
+        storage_save_config(g_config);
+    } else if ((g_config.adbox_usage_count % 5) == 0) {
+        // Persist periodically so a crash doesn't lose the whole month's count.
+        storage_save_config(g_config);
+    }
+}
+
+bool adbox_allowed() {
+    if (!g_config.aerodatabox_enabled || !g_config.aerodatabox_key[0]) return false;
+    if (g_config.adbox_rate_limited) return false;
+    int ym = current_yyyymm();
+    if (g_config.adbox_soft_limit > 0
+        && g_config.adbox_usage_yyyymm == ym
+        && g_config.adbox_usage_count >= g_config.adbox_soft_limit) {
+        return false;
+    }
+    return true;
+}
+
 bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
                        char *dest, size_t dest_sz) {
     // Response is a JSON array of FlightContract, or occasionally a single object.
@@ -192,10 +241,16 @@ bool fetch_adbox_route(int provider, const char *key,
         long status = 0;
         if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &status, hdrs)) {
             platform_log("[Enrich] AeroDataBox transport fail: %s\n", url);
+            adbox_note_call(0);
             return false;
         }
+        adbox_note_call(status);
         if (status == 401 || status == 403) {
             platform_log("[Enrich] AeroDataBox auth failed (http=%ld)\n", status);
+            return false;
+        }
+        if (status == 429) {
+            platform_log("[Enrich] AeroDataBox rate limited (http=429)\n");
             return false;
         }
         if (status == 204 || status == 404) {
@@ -261,9 +316,12 @@ bool validate_adbox_key(int provider, const char *key, char *err, size_t err_siz
     char url[256];
     snprintf(url, sizeof(url), "%s/airports/icao/KJFK", adbox_base_url(provider));
     if (!platform_http_get_ex(url, buf, sizeof(buf), &len, &status, hdrs)) {
+        adbox_note_call(0);
         return fail("network error");
     }
+    adbox_note_call(status);
     if (status == 401 || status == 403) return fail("invalid key");
+    if (status == 429) return fail("rate limited");
     if (status < 200 || status >= 300) {
         char msg[48];
         snprintf(msg, sizeof(msg), "http %ld", status);
@@ -475,7 +533,7 @@ void run_enrichment(std::string icao, std::string registration, std::string call
     int adbox_prov = 0;
     bool adbox_on = false;
     {
-        adbox_on = g_config.aerodatabox_enabled && g_config.aerodatabox_key[0];
+        adbox_on = adbox_allowed();
         adbox_prov = g_config.aerodatabox_provider;
         if (adbox_on) strlcpy(adbox_key, g_config.aerodatabox_key, sizeof(adbox_key));
     }
@@ -530,7 +588,7 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
                       void (*callback)(AircraftEnrichment *data)) {
     if (!icao_hex || !icao_hex[0]) return;
 
-    const bool adbox_on = g_config.aerodatabox_enabled && g_config.aerodatabox_key[0];
+    const bool adbox_on = adbox_allowed();
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -593,6 +651,20 @@ bool aerodatabox_verify_result(bool *ok, char *err, size_t err_size) {
     if (err && err_size) strlcpy(err, _verify_result_err, err_size);
     _verify_result_ready = false;
     return true;
+}
+
+void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *rate_limited) {
+    int ym = current_yyyymm();
+    int n = (g_config.adbox_usage_yyyymm == ym) ? g_config.adbox_usage_count : 0;
+    if (yyyymm) *yyyymm = ym;
+    if (count) *count = n;
+    if (soft_limit) *soft_limit = g_config.adbox_soft_limit;
+    if (rate_limited) *rate_limited = g_config.adbox_rate_limited;
+}
+
+void aerodatabox_clear_rate_limit() {
+    g_config.adbox_rate_limited = false;
+    storage_save_config(g_config);
 }
 
 void enrichment_init() {
