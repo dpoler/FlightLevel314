@@ -100,6 +100,7 @@ set(SHARED_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/view_menu.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/alerts.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/location_picker.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/airports_lookup.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/data/http_mutex.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/data/error_log.cpp
 )

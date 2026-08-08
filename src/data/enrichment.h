@@ -55,4 +55,11 @@ void enrichment_clear_cache();
 // request/result shape as locations_request_verify_token().
 void aerodatabox_request_verify();
 bool aerodatabox_verify_result(bool *ok, char *err, size_t err_size);
+
+// Local monthly usage (persisted in UserConfig). Marketplace remaining
+// units are not available via the API key — only this local counter and
+// HTTP 429 / soft-limit auto-disable.
+void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *rate_limited);
+// Clear the sticky rate-limit flag (caller should also re-enable if desired).
+void aerodatabox_clear_rate_limit();
 #endif

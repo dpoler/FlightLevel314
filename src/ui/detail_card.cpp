@@ -5,6 +5,7 @@
 #include "../data/locations.h"
 #include "../data/enrichment.h"
 #include "../data/airlines.h"
+#include "airports_lookup.h"
 #include "../pins_config.h"
 #include <cstdio> // snprintf -- not reliably transitive under libstdc++ (Pi build)
 
@@ -25,6 +26,7 @@ static lv_obj_t *_operator_label = nullptr;
 static lv_obj_t *_type_label = nullptr;
 static lv_obj_t *_aircraft_detail_label = nullptr;
 static lv_obj_t *_route_label = nullptr;
+static lv_obj_t *_route_names_label = nullptr;
 static lv_obj_t *_photo_credit_label = nullptr;
 #if !defined(ARDUINO)
 static lv_obj_t *_photo_img = nullptr;
@@ -70,7 +72,7 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #define CARD_H         340
 #define CARD_PAD       16
 #define SUMMARY_W      360
-#define SUMMARY_H      190
+#define SUMMARY_H      210
 #define PHOTO_SLOT_W   400
 #define PHOTO_SLOT_H   220
 // Telemetry labels/values are short ("ALTITUDE", "FL350") — no need to
@@ -225,8 +227,21 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
     if (data->origin_icao[0] || data->dest_icao[0]) {
         const char *o = data->origin_icao[0] ? data->origin_icao : "----";
         const char *d = data->dest_icao[0] ? data->dest_icao : "----";
-        lv_label_set_text_fmt(_route_label, "%s -> %s", o, d);
+        // LV_SYMBOL_RIGHT is in the bundled FontAwesome set; Unicode → is not
+        // in Montserrat and rendered as empty tofu.
+        lv_label_set_text_fmt(_route_label, "%s  " LV_SYMBOL_RIGHT "  %s", o, d);
         lv_obj_clear_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
+
+        char oname[32] = {}, dname[32] = {};
+        airports_format_name(data->origin_icao, oname, sizeof(oname));
+        airports_format_name(data->dest_icao, dname, sizeof(dname));
+        if (oname[0] || dname[0]) {
+            lv_label_set_text_fmt(_route_names_label, "%s%s%s",
+                                  oname[0] ? oname : "—",
+                                  " / ",
+                                  dname[0] ? dname : "—");
+            lv_obj_clear_flag(_route_names_label, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 
 #if !defined(ARDUINO)
@@ -486,6 +501,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_type = 76;
     const int y_detail = 98;
     const int y_route = 120;
+    const int y_route_names = 142;
 #else
     lv_obj_t *id_parent = _card;
     const int id_x = 0;
@@ -495,6 +511,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_type = 78;
     const int y_detail = 98;
     const int y_route = 118;
+    const int y_route_names = 138;
 #endif
 
     // === HEADER / IDENTITY ===
@@ -547,6 +564,15 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_width(_route_label, IDENTITY_MAX_W);
     lv_label_set_long_mode(_route_label, LV_LABEL_LONG_CLIP);
     lv_obj_add_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
+
+    _route_names_label = lv_label_create(id_parent);
+    lv_label_set_text(_route_names_label, "");
+    lv_obj_set_style_text_font(_route_names_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_route_names_label, CARD_DIM, 0);
+    lv_obj_set_pos(_route_names_label, id_x, y_route_names);
+    lv_obj_set_width(_route_names_label, IDENTITY_MAX_W);
+    lv_label_set_long_mode(_route_names_label, LV_LABEL_LONG_CLIP);
+    lv_obj_add_flag(_route_names_label, LV_OBJ_FLAG_HIDDEN);
 
     _photo_credit_label = lv_label_create(_card);
     lv_label_set_text(_photo_credit_label, "");
@@ -681,6 +707,8 @@ void detail_card_show(const Aircraft *ac) {
     lv_label_set_text(_aircraft_detail_label, "");
     lv_label_set_text(_route_label, "");
     lv_obj_add_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(_route_names_label, "");
+    lv_obj_add_flag(_route_names_label, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(_photo_credit_label, "");
     lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 #if !defined(ARDUINO)

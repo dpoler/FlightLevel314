@@ -214,9 +214,9 @@ Per-view settings (trails, tags, filters, secondary-locations visibility) live i
 | [airportdb.io](https://airportdb.io) | Runway geometry + elevation for saved locations | Free token |
 | [api.adsbdb.com](https://www.adsbdb.com) | Registration, operator, aircraft type enrichment | None |
 | [planespotters.net](https://www.planespotters.net) | Photo credit text (no image rendering on ESP32 — see Known Issues; Pi downloads thumbnails) | None |
-| [AeroDataBox](https://aerodatabox.com) (RapidAPI) | Optional live flight origin/destination on the detail card (Pi) | RapidAPI key |
+| [AeroDataBox](https://aerodatabox.com) (RapidAPI / API.Market / Direct) | Optional live flight origin/destination on the detail card (Pi) | Provider API key |
 
-Static callsign→route tables (adsbdb routes, VRS standing data, etc.) are deliberately **not** used — they're frequently stale for reassigned flight numbers. Optional origin/destination on Pi comes from AeroDataBox's live flight-status API instead (off by default; set `adbox_key` + `adbox_prov` for RapidAPI / API.Market / Direct, then enable in Settings).
+Static callsign→route tables (adsbdb routes, VRS standing data, etc.) are deliberately **not** used — they're frequently stale for reassigned flight numbers. Optional origin/destination on Pi comes from AeroDataBox's live flight-status API instead (off by default; set `adbox_key` + `adbox_prov` for RapidAPI / API.Market / Direct, then enable in Settings). Marketplace remaining-unit quotas are only visible on the provider dashboard — the app tracks local monthly call counts (`adbox_n`) and can soft-cap (`adbox_lim`) or auto-disable on HTTP 429.
 
 ## Architecture
 

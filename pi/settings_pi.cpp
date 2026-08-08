@@ -57,6 +57,7 @@ static lv_obj_t *_adbox_key_val = nullptr;
 static lv_obj_t *_adbox_valid_val = nullptr;
 static lv_obj_t *_sw_adbox_en = nullptr;
 static lv_obj_t *_dd_adbox_prov = nullptr;
+static lv_obj_t *_adbox_usage_val = nullptr;
 
 enum class KeyValid : uint8_t { Unknown, Checking, Valid, Invalid, Missing };
 static KeyValid _apt_valid = KeyValid::Unknown;
@@ -141,6 +142,25 @@ static void set_valid_label(lv_obj_t *lbl, KeyValid v) {
     }
 }
 
+static void refresh_adbox_usage_ui() {
+    if (!_adbox_usage_val) return;
+    int ym = 0, n = 0, lim = 0;
+    bool rl = false;
+    aerodatabox_usage_snapshot(&ym, &n, &lim, &rl);
+    char buf[96];
+    if (rl) {
+        snprintf(buf, sizeof(buf), "%d this mo - AUTO-OFF", n);
+        lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
+    } else if (lim > 0) {
+        snprintf(buf, sizeof(buf), "%d / %d this mo", n, lim);
+        lv_obj_set_style_text_color(_adbox_usage_val, n >= lim ? WARN_COLOR : SYS_COLOR, 0);
+    } else {
+        snprintf(buf, sizeof(buf), "%d this mo", n);
+        lv_obj_set_style_text_color(_adbox_usage_val, SYS_COLOR, 0);
+    }
+    lv_label_set_text(_adbox_usage_val, buf);
+}
+
 static void refresh_key_presence_ui() {
     if (_apt_key_val) {
         if (_cfg.airportdb_token[0]) {
@@ -169,6 +189,7 @@ static void refresh_key_presence_ui() {
         if (_adbox_valid == KeyValid::Valid) lv_obj_clear_state(_sw_adbox_en, LV_STATE_DISABLED);
         else lv_obj_add_state(_sw_adbox_en, LV_STATE_DISABLED);
     }
+    refresh_adbox_usage_ui();
 }
 
 static void start_key_validation() {
@@ -249,7 +270,10 @@ static void poll_key_validation() {
 
 static void status_refresh(lv_timer_t *t) {
     (void)t;
-    if (_visible) poll_key_validation();
+    if (_visible) {
+        poll_key_validation();
+        refresh_adbox_usage_ui();
+    }
     if (!_fetch_val) return;
 
     const FetcherStats *fs = fetcher_get_stats();
@@ -335,6 +359,11 @@ static void save_and_close(lv_event_t *e) {
                         || (_cfg.aerodatabox_provider != g_config.aerodatabox_provider);
     _cfg.airportdb_enabled = apt_en;
     _cfg.aerodatabox_enabled = adbox_en;
+    // Re-enabling clears sticky rate-limit / soft-cap lockout.
+    if (adbox_en && g_config.adbox_rate_limited) {
+        aerodatabox_clear_rate_limit();
+        _cfg.adbox_rate_limited = false;
+    }
 
     storage_save_config(_cfg);
     if (clear_enrich) enrichment_clear_cache();
@@ -537,8 +566,17 @@ void settings_init(lv_obj_t *parent) {
 
     _adbox_key_val = create_inline_row(_content, "KEY", right, 246, 70);
     _adbox_valid_val = create_inline_row(_content, "VALID", right, 266, 70);
-    create_label(_content, "ENABLE", right, 288);
-    _sw_adbox_en = make_enable_switch(_content, right + 80, 286);
+    _adbox_usage_val = create_inline_row(_content, "USAGE", right, 286, 70);
+    create_label(_content, "ENABLE", right, 308);
+    _sw_adbox_en = make_enable_switch(_content, right + 80, 306);
+
+    lv_obj_t *quota_note = lv_label_create(_content);
+    lv_label_set_text(quota_note, "Marketplace remaining units: provider\ndashboard only. Set adbox_lim in\nconfig.json for a local soft cap.");
+    lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(quota_note, right, 340);
+    lv_obj_set_width(quota_note, COL_W - 8);
+    lv_obj_clear_flag(quota_note, LV_OBJ_FLAG_CLICKABLE);
 
     status_refresh(nullptr);
     lv_timer_create(status_refresh, 500, nullptr);
