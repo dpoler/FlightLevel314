@@ -347,6 +347,14 @@ mostly chronological.
 
 ### 7.1 Genuinely open / not started
 
+- **Write a proper FlightLevel314 README.md (with original-author credit)**:
+  the current README is a serviceable port of the Pi docs, but needs a real
+  project README — clearer product pitch, install/build, screenshots later,
+  and an explicit **Credits** section naming the original author (**Neil**,
+  see `LICENSE` copyright) and the upstream lineage (`dpoler/adsb` /
+  ESP32-era work this Pi fork grew from). **Do not start until explicitly
+  asked** — noted 2026-08-08 when `dpoler/FlightLevel314` was created.
+
 - **Detail card photo credit appears before the photo**: photographer credit
   text can pop into the summary/detail area before the aircraft photo has
   finished loading (or when the image path fails / is still decoding). Credit
@@ -382,10 +390,11 @@ mostly chronological.
   ESP32. **Do not start until explicitly asked** — sized 2026-08-08.
 
 - ~~**Fork the Pi port into its own project/repo**~~: **Done 2026-08-08** as
-  **FlightLevel314** (this tree). jc1060 / PlatformIO removed from the build;
-  history retained for cherry-picks. Remaining: create empty GitHub repo
-  `dpoler/FlightLevel314` and push this branch (cloud token cannot create
-  repos). Optional later: strip leftover `#if defined(ARDUINO)` from `src/`.
+  **FlightLevel314**. Repo `dpoler/FlightLevel314` created; jc1060 /
+  PlatformIO removed from this tree; history retained for cherry-picks.
+  Initial push of `cursor/flightlevel314-7c95` → `FlightLevel314:master` may
+  still need a human (cloud token got 403 writing the new repo). Optional
+  later: strip leftover `#if defined(ARDUINO)` from `src/`.
 
 - **Pi online app updates (check / notify / pull / restart)**: periodically
   check whether a newer `adsb_pi` (or package) is available, surface a
