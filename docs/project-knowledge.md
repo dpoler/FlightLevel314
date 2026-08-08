@@ -338,7 +338,7 @@ detail card. See backlog §7 for full scope.
 
 ---
 
-## 7. Full backlog (as of 2026-08-06/07)
+## 7. Full backlog (as of 2026-08-08)
 
 This preserves essentially the full detail of every backlog entry — done items
 are kept for their debugging trail/rationale (useful history), open items are
@@ -346,6 +346,17 @@ what's actually outstanding. Grouped roughly by theme; original memory file is
 mostly chronological.
 
 ### 7.1 Genuinely open / not started
+
+- **Pi online app updates (check / notify / pull / restart)**: periodically
+  check whether a newer `adsb_pi` (or package) is available, surface a
+  non-intrusive "update available" notice in the UI, download it, and restart
+  into the new build. Not designed — open questions include update source
+  (GitHub Releases vs self-hosted URL vs apt), signature/verification,
+  whether the kiosk systemd unit should own the swap, and how aggressive the
+  check cadence should be on a wall-mounted always-on display. Related to the
+  Settings "Device" column / "Check for Update" idea below, but that entry was
+  framed around ESP32 OTA; this is the Pi-native equivalent. **Do not start
+  until explicitly asked** — parked 2026-08-08 so it isn't forgotten.
 
 - **planespotters.net photo fetch — dead on jc1060, revive for Pi**: PSRAM
   cache-coherency erratum on jc1060 corrupts image data (a genuine hardware
