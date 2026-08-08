@@ -70,10 +70,11 @@ static settings_changed_cb_t _on_change = nullptr;
 
 // Wide enough for two columns (ranges/status | API keys) without overlap.
 #define PANEL_W 740
-#define PANEL_H 560
-#define ACTION_H 130
+#define PANEL_H 580
+#define TITLE_H 36
+#define ACTION_H 100
 #define COL_GAP 24
-#define COL_W ((PANEL_W - 40 - COL_GAP) / 2) // pad_all 20 each side
+#define COL_W ((PANEL_W - 40 - COL_GAP) / 2) // pad_all ~20 each side
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
 #define ACCENT_COLOR lv_color_hex(0x00cc66)
@@ -147,15 +148,22 @@ static void refresh_adbox_usage_ui() {
     int ym = 0, n = 0, lim = 0;
     bool rl = false;
     aerodatabox_usage_snapshot(&ym, &n, &lim, &rl);
+    static const char *const MONTHS[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    int month = ym % 100;
+    const char *mon = (month >= 1 && month <= 12) ? MONTHS[month - 1] : "???";
+    // Local UTC calendar-month count — not the marketplace billing cycle.
     char buf[96];
     if (rl) {
-        snprintf(buf, sizeof(buf), "%d this mo - AUTO-OFF", n);
+        snprintf(buf, sizeof(buf), "%d (%s UTC) AUTO-OFF", n, mon);
         lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
     } else if (lim > 0) {
-        snprintf(buf, sizeof(buf), "%d / %d this mo", n, lim);
+        snprintf(buf, sizeof(buf), "%d/%d (%s UTC)", n, lim, mon);
         lv_obj_set_style_text_color(_adbox_usage_val, n >= lim ? WARN_COLOR : SYS_COLOR, 0);
     } else {
-        snprintf(buf, sizeof(buf), "%d this mo", n);
+        snprintf(buf, sizeof(buf), "%d (%s UTC)", n, mon);
         lv_obj_set_style_text_color(_adbox_usage_val, SYS_COLOR, 0);
     }
     lv_label_set_text(_adbox_usage_val, buf);
@@ -453,14 +461,16 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
     lv_obj_set_pos(title, 4, 0);
 
-    // Scrollable body above a fixed action row — avoids buttons overlapping fields.
+    // Scrollable body above a fixed action strip. Content height is computed
+    // so it ends strictly above the action strip (no overlap with Clear/Reset).
+    const int content_h = PANEL_H - 32 /*pad*/ - TITLE_H - ACTION_H - 8 /*gap*/;
     _content = lv_obj_create(_panel);
-    lv_obj_set_size(_content, PANEL_W - 32, PANEL_H - 36 - ACTION_H);
-    lv_obj_set_pos(_content, 0, 32);
+    lv_obj_set_size(_content, PANEL_W - 32, content_h);
+    lv_obj_set_pos(_content, 0, TITLE_H);
     lv_obj_set_style_bg_opa(_content, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_content, 0, 0);
     lv_obj_set_style_pad_all(_content, 4, 0);
-    lv_obj_set_style_pad_bottom(_content, 12, 0);
+    lv_obj_set_style_pad_bottom(_content, 16, 0);
     lv_obj_add_flag(_content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(_content, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(_content, LV_SCROLLBAR_MODE_AUTO);
@@ -571,7 +581,10 @@ void settings_init(lv_obj_t *parent) {
     _sw_adbox_en = make_enable_switch(_content, right + 80, 306);
 
     lv_obj_t *quota_note = lv_label_create(_content);
-    lv_label_set_text(quota_note, "Marketplace remaining units: provider\ndashboard only. Set adbox_lim in\nconfig.json for a local soft cap.");
+    lv_label_set_text(quota_note,
+        "ADB quota: marketplace billing cycle\n"
+        "(not calendar month). USAGE is local\n"
+        "UTC-month calls; adbox_lim soft-caps.");
     lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(quota_note, right, 340);
@@ -581,18 +594,22 @@ void settings_init(lv_obj_t *parent) {
     status_refresh(nullptr);
     lv_timer_create(status_refresh, 500, nullptr);
 
-    // Fixed action row at bottom of panel (not inside scroll content).
+    // Fixed action strip — opaque so scrolled content never shows through.
+    // Clear + Reset stacked full-width; Save on the right of the top row.
     lv_obj_t *actions = lv_obj_create(_panel);
-    lv_obj_set_size(actions, PANEL_W - 32, ACTION_H - 8);
+    lv_obj_set_size(actions, PANEL_W - 32, ACTION_H);
     lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_opa(actions, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(actions, BG_COLOR, 0);
+    lv_obj_set_style_bg_opa(actions, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(actions, 0, 0);
     lv_obj_set_style_pad_all(actions, 0, 0);
+    lv_obj_set_style_pad_top(actions, 8, 0);
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
 
+    const int actions_inner_w = PANEL_W - 32;
     lv_obj_t *cache_btn = lv_button_create(actions);
-    lv_obj_set_size(cache_btn, 220, 34);
-    lv_obj_set_pos(cache_btn, 0, 8);
+    lv_obj_set_size(cache_btn, actions_inner_w - 136, 34);
+    lv_obj_set_pos(cache_btn, 0, 4);
     lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
     lv_obj_set_style_border_width(cache_btn, 1, 0);
@@ -604,9 +621,21 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_center(cache_lbl);
     lv_obj_add_event_cb(cache_btn, clear_all_caches_cb, LV_EVENT_CLICKED, nullptr);
 
+    lv_obj_t *save_btn = lv_button_create(actions);
+    lv_obj_set_size(save_btn, 120, 34);
+    lv_obj_set_pos(save_btn, actions_inner_w - 120, 4);
+    lv_obj_set_style_bg_color(save_btn, ACCENT_COLOR, 0);
+    lv_obj_set_style_radius(save_btn, 8, 0);
+    lv_obj_t *save_label = lv_label_create(save_btn);
+    lv_label_set_text(save_label, "Save");
+    lv_obj_set_style_text_color(save_label, lv_color_black(), 0);
+    lv_obj_set_style_text_font(save_label, &lv_font_montserrat_16, 0);
+    lv_obj_center(save_label);
+    lv_obj_add_event_cb(save_btn, save_and_close, LV_EVENT_CLICKED, nullptr);
+
     lv_obj_t *factory_btn = lv_button_create(actions);
-    lv_obj_set_size(factory_btn, 260, 34);
-    lv_obj_set_pos(factory_btn, 236, 8);
+    lv_obj_set_size(factory_btn, actions_inner_w, 34);
+    lv_obj_set_pos(factory_btn, 0, 46);
     lv_obj_set_style_bg_color(factory_btn, lv_color_hex(0x2a1a1a), 0);
     lv_obj_set_style_border_color(factory_btn, lv_color_hex(0x664444), 0);
     lv_obj_set_style_border_width(factory_btn, 1, 0);
@@ -617,18 +646,6 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_font(_factory_lbl, &lv_font_montserrat_14, 0);
     lv_obj_center(_factory_lbl);
     lv_obj_add_event_cb(factory_btn, factory_reset_cb, LV_EVENT_CLICKED, nullptr);
-
-    lv_obj_t *save_btn = lv_button_create(actions);
-    lv_obj_set_size(save_btn, 120, 40);
-    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
-    lv_obj_set_style_bg_color(save_btn, ACCENT_COLOR, 0);
-    lv_obj_set_style_radius(save_btn, 8, 0);
-    lv_obj_t *save_label = lv_label_create(save_btn);
-    lv_label_set_text(save_label, "Save");
-    lv_obj_set_style_text_color(save_label, lv_color_black(), 0);
-    lv_obj_set_style_text_font(save_label, &lv_font_montserrat_16, 0);
-    lv_obj_center(save_label);
-    lv_obj_add_event_cb(save_btn, save_and_close, LV_EVENT_CLICKED, nullptr);
 
     _keyboard = lv_keyboard_create(_overlay);
     lv_obj_set_size(_keyboard, lv_obj_get_width(parent), 200);
