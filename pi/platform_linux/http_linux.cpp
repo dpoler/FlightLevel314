@@ -30,7 +30,7 @@ bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
     // Planespotters (and some other APIs) reject generic library UAs with
     // HTTP 403 -- identify the app and include a contact URL.
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "adsb/0.1 (+https://github.com/dpoler/adsb)");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "flightlevel314/0.1 (+https://github.com/dpoler/FlightLevel314)");
 
     struct curl_slist *hdrs = nullptr;
     if (extra_headers) {

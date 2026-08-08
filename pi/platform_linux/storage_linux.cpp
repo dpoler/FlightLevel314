@@ -1,10 +1,6 @@
-// Linux config storage -- JSON file at ~/.config/adsb/config.json (or
-// $XDG_CONFIG_HOME/adsb/config.json), mirroring the same field set and
-// short key names as the ESP32 side's NVS-backed src/data/storage.cpp, so
-// the two are easy to compare as UserConfig (src/data/storage.h) grows.
-// Real implementation (task #4 of the Pi port -- see project_pi_port
-// memory) -- replaces the in-memory-only stub that was in
-// pi/app_stubs.cpp.
+// Linux config storage -- JSON file at ~/.config/flightlevel314/config.json
+// (or $XDG_CONFIG_HOME/flightlevel314/config.json). Field names match the
+// historical ESP32 NVS keys from dpoler/adsb for easy config migration.
 
 #include "../../src/data/storage.h"
 #include "../../src/platform/platform.h"
@@ -19,9 +15,9 @@ UserConfig g_config = {};
 
 static std::string config_dir() {
     const char *xdg = getenv("XDG_CONFIG_HOME");
-    if (xdg && xdg[0]) return std::string(xdg) + "/adsb";
+    if (xdg && xdg[0]) return std::string(xdg) + "/flightlevel314";
     const char *home = getenv("HOME");
-    return std::string(home ? home : ".") + "/.config/adsb";
+    return std::string(home ? home : ".") + "/.config/flightlevel314";
 }
 
 static std::string config_file_path() {
