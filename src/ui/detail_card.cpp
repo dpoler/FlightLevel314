@@ -24,6 +24,7 @@ static lv_obj_t *_reg_label = nullptr;
 static lv_obj_t *_operator_label = nullptr;
 static lv_obj_t *_type_label = nullptr;
 static lv_obj_t *_aircraft_detail_label = nullptr;
+static lv_obj_t *_route_label = nullptr;
 static lv_obj_t *_photo_credit_label = nullptr;
 #if !defined(ARDUINO)
 static lv_obj_t *_photo_img = nullptr;
@@ -69,7 +70,7 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #define CARD_H         340
 #define CARD_PAD       16
 #define SUMMARY_W      360
-#define SUMMARY_H      168
+#define SUMMARY_H      190
 #define PHOTO_SLOT_W   400
 #define PHOTO_SLOT_H   220
 // Telemetry labels/values are short ("ALTITUDE", "FL350") — no need to
@@ -220,6 +221,13 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         snprintf(detail + pos, sizeof(detail) - pos, "%dx %s", data->engine_count, data->engine_type);
     }
     if (detail[0]) lv_label_set_text(_aircraft_detail_label, detail);
+
+    if (data->origin_icao[0] || data->dest_icao[0]) {
+        const char *o = data->origin_icao[0] ? data->origin_icao : "----";
+        const char *d = data->dest_icao[0] ? data->dest_icao : "----";
+        lv_label_set_text_fmt(_route_label, "%s → %s", o, d);
+        lv_obj_clear_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
+    }
 
 #if !defined(ARDUINO)
     if (data->photo_rgb565 && data->photo_w > 0 && data->photo_h > 0 && _photo_img) {
@@ -477,6 +485,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_op = 54;
     const int y_type = 76;
     const int y_detail = 98;
+    const int y_route = 120;
 #else
     lv_obj_t *id_parent = _card;
     const int id_x = 0;
@@ -485,6 +494,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_op = 56;
     const int y_type = 78;
     const int y_detail = 98;
+    const int y_route = 118;
 #endif
 
     // === HEADER / IDENTITY ===
@@ -528,6 +538,15 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_pos(_aircraft_detail_label, id_x, y_detail);
     lv_obj_set_width(_aircraft_detail_label, IDENTITY_MAX_W);
     lv_label_set_long_mode(_aircraft_detail_label, LV_LABEL_LONG_CLIP);
+
+    _route_label = lv_label_create(id_parent);
+    lv_label_set_text(_route_label, "");
+    lv_obj_set_style_text_font(_route_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(_route_label, CARD_ACCENT, 0);
+    lv_obj_set_pos(_route_label, id_x, y_route);
+    lv_obj_set_width(_route_label, IDENTITY_MAX_W);
+    lv_label_set_long_mode(_route_label, LV_LABEL_LONG_CLIP);
+    lv_obj_add_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
 
     _photo_credit_label = lv_label_create(_card);
     lv_label_set_text(_photo_credit_label, "");
@@ -660,6 +679,8 @@ void detail_card_show(const Aircraft *ac) {
 
     // Clear enrichment fields
     lv_label_set_text(_aircraft_detail_label, "");
+    lv_label_set_text(_route_label, "");
+    lv_obj_add_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(_photo_credit_label, "");
     lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 #if !defined(ARDUINO)
@@ -687,10 +708,10 @@ void detail_card_show(const Aircraft *ac) {
     // Start live update timer
     lv_timer_resume(_update_timer);
 
-    // Enrichment (adsbdb + planespotters). On Pi this also downloads and
-    // decodes the photo thumbnail into the detail card; on ESP32 only the
-    // text fields / photographer credit update (image path is broken).
-    enrichment_fetch(ac->icao_hex, ac->registration, on_enrichment_ready);
+    // Enrichment (adsbdb + planespotters; on Pi also photo decode + optional
+    // AeroDataBox origin/destination). ESP32 only gets text fields /
+    // photographer credit (image path is broken).
+    enrichment_fetch(ac->icao_hex, ac->registration, ac->callsign, on_enrichment_ready);
 }
 
 void detail_card_hide() {

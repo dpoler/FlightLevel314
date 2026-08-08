@@ -4,6 +4,11 @@ struct UserConfig {
     char wifi_ssid[33];
     char wifi_pass[65];
     char airportdb_token[160]; // free token from airportdb.io — observed ~97 chars, sized with margin
+    bool airportdb_enabled;  // use airportdb.io when adding airports (key still required)
+    // RapidAPI key for AeroDataBox flight status (origin/destination). Hand-edited
+    // into config on Pi; serial TOKEN-style entry not wired for this key yet.
+    char aerodatabox_key[80];
+    bool aerodatabox_enabled; // detail-card O/D enrichment when key is present+valid
     int radius_nm;           // API query radius = max(radius_presets), set on save
     int radius_presets[4];  // user-configurable zoom levels, sorted ascending
     bool use_metric;

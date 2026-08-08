@@ -213,9 +213,10 @@ Per-view settings (trails, tags, filters, secondary-locations visibility) live i
 | [api.adsb.lol](https://api.adsb.lol) | Live aircraft positions | None |
 | [airportdb.io](https://airportdb.io) | Runway geometry + elevation for saved locations | Free token |
 | [api.adsbdb.com](https://www.adsbdb.com) | Registration, operator, aircraft type enrichment | None |
-| [planespotters.net](https://www.planespotters.net) | Photo credit text (no image rendering — see Known Issues) | None |
+| [planespotters.net](https://www.planespotters.net) | Photo credit text (no image rendering on ESP32 — see Known Issues; Pi downloads thumbnails) | None |
+| [AeroDataBox](https://aerodatabox.com) (RapidAPI) | Optional live flight origin/destination on the detail card (Pi) | RapidAPI key |
 
-Origin/destination (flight route) is deliberately **not** shown anywhere in this app — both adsb.lol and adsbdb.com source that data from the same crowd-sourced, callsign-keyed VRS standing-data tables with no versioning, and it's frequently stale/wrong for reassigned flight numbers. Rather than display unreliable route guesses, this app just doesn't show one.
+Static callsign→route tables (adsbdb routes, VRS standing data, etc.) are deliberately **not** used — they're frequently stale for reassigned flight numbers. Optional origin/destination on Pi comes from AeroDataBox's live flight-status API instead (off by default; enable in Settings after adding `adbox_key` to config).
 
 ## Architecture
 
