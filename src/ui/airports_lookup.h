@@ -12,7 +12,7 @@
 // Stub so call sites compile without regenerating the DB.
 struct StaticAirport {
     char icao[5];
-    char name[32];
+    char name[64];
     float lat, lon;
     unsigned char large;
 };

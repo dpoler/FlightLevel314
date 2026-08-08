@@ -235,7 +235,7 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         lv_label_set_text_fmt(_route_label, "%s  " LV_SYMBOL_RIGHT "\n%s", o, d);
         lv_obj_clear_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
 
-        char oname[32] = {}, dname[32] = {};
+        char oname[64] = {}, dname[64] = {};
         airports_format_name(data->origin_icao, oname, sizeof(oname));
         airports_format_name(data->dest_icao, dname, sizeof(dname));
         if (oname[0] || dname[0]) {

@@ -352,7 +352,7 @@ static void build_list_view() {
         if (loc->icao[0]) {
             const StaticAirport *ap = airports_lookup_icao(loc->icao);
             if (ap && ap->name[0]) {
-                char line[72];
+                char line[80];
                 snprintf(line, sizeof(line), "%s  %s", loc->icao, ap->name);
                 lv_label_set_text(lbl, line);
             } else {
@@ -461,7 +461,7 @@ static void refresh_add_matches() {
         _add_match_ptrs[i] = (i < n) ? hits[i] : nullptr;
         if (!_add_match_btns[i]) continue;
         if (i < n) {
-            char line[72];
+            char line[80];
             snprintf(line, sizeof(line), "%s  %s", hits[i]->icao, hits[i]->name);
             // Button label is the child label created in build_add_view.
             lv_obj_t *lbl = lv_obj_get_child(_add_match_btns[i], 0);
