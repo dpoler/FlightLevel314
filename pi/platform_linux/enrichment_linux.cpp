@@ -151,7 +151,7 @@ void adbox_note_call(long http_status) {
     if (g_config.adbox_usage_yyyymm != ym) {
         g_config.adbox_usage_yyyymm = ym;
         g_config.adbox_usage_count = 0;
-        // New billing month — clear sticky rate-limit so the user can try again.
+        // New UTC calendar month — clear sticky rate-limit so the user can try again.
         if (g_config.adbox_rate_limited) {
             g_config.adbox_rate_limited = false;
         }
