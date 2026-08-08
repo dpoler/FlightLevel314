@@ -17,10 +17,12 @@ confirmed working against physical hardware (Pi 3B+, Waveshare 10.1"
 panel) — touch, swipe, and the full network fetch/render loop all
 verified. Not yet ported: metar. Airline names load from
 dpoler/AirlinesCSV at app start; detail-card enrichment (adsbdb +
-planespotters photos) is live on Pi. No on-device way
-to set the airportdb.io token yet (ESP32's USB-serial `TOKEN=` mechanism
-wasn't ported) — hand-edit `~/.config/adsb/config.json`'s `apt_tok` key
-directly with the app stopped, for now.
+planespotters photos, optional AeroDataBox origin/destination) is live
+on Pi. API keys are never typed on-device — hand-edit
+`~/.config/adsb/config.json` (`apt_tok` for airportdb.io,
+`adbox_key` for AeroDataBox/RapidAPI), then use Settings → API KEYS to
+see whether each key is present/valid and to enable or disable the
+service (`apt_en` / `adbox_en`).
 
 ## Hardware target
 

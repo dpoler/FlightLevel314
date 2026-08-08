@@ -4,8 +4,9 @@
 // (ESP32 heap/PSRAM/temperature/FreeRTOS task count/flash %) -- almost
 // none of which applies to a Pi whose networking, firmware updates, and
 // system stats work completely differently. Kept: range presets, metric
-// units (still meaningful config), and a read-only status strip using
-// what's actually already real on Pi -- fetcher_get_stats() and
+// units (still meaningful config), optional API key status/enable toggles
+// (keys themselves are hand-edited in config.json), and a read-only status
+// strip using what's actually already real on Pi -- fetcher_get_stats() and
 // error_log.cpp, both ported for real (see project_pi_port memory).
 //
 // Dropped entirely for now: WiFi/Ethernet UI (Pi's networking is
@@ -14,6 +15,7 @@
 // concepts with no Pi equivalent worth faking).
 
 #include "../src/ui/settings.h"
+#include "../src/data/enrichment.h"
 #include "../src/data/error_log.h"
 #include "../src/data/fetcher.h"
 #include "../src/data/locations.h"
@@ -25,6 +27,7 @@
 #include "weather.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>
 #include <cstring>
 
 static lv_obj_t *_overlay = nullptr;
@@ -44,16 +47,33 @@ static lv_obj_t *_err_list_lbl = nullptr;
 static lv_obj_t *_factory_lbl = nullptr;
 static uint32_t _factory_confirm_until_ms = 0;
 
+// API KEYS section -- keys are never typed here; only presence / live
+// validity / enable. Validity is checked async when Settings opens.
+static lv_obj_t *_apt_key_val = nullptr;
+static lv_obj_t *_apt_valid_val = nullptr;
+static lv_obj_t *_sw_apt_en = nullptr;
+static lv_obj_t *_adbox_key_val = nullptr;
+static lv_obj_t *_adbox_valid_val = nullptr;
+static lv_obj_t *_sw_adbox_en = nullptr;
+
+enum class KeyValid : uint8_t { Unknown, Checking, Valid, Invalid, Missing };
+static KeyValid _apt_valid = KeyValid::Unknown;
+static KeyValid _adbox_valid = KeyValid::Unknown;
+static bool _apt_verify_pending = false;
+static bool _adbox_verify_pending = false;
+
 static UserConfig _cfg;
 static settings_changed_cb_t _on_change = nullptr;
 
 #define PANEL_W 370
-#define PANEL_H 540
+#define PANEL_H 620
 #define FIELD_W 280
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
 #define ACCENT_COLOR lv_color_hex(0x00cc66)
 #define SYS_COLOR lv_color_hex(0x44cc88)
+#define WARN_COLOR lv_color_hex(0xffaa44)
+#define ERR_COLOR lv_color_hex(0xff6666)
 
 static void ta_focus_cb(lv_event_t *e) {
     lv_keyboard_set_textarea(_keyboard, lv_event_get_target_obj(e));
@@ -86,7 +106,126 @@ static lv_obj_t *create_inline_row(lv_obj_t *parent, const char *header, int x, 
     return v;
 }
 
+static void set_valid_label(lv_obj_t *lbl, KeyValid v) {
+    if (!lbl) return;
+    switch (v) {
+    case KeyValid::Missing:
+        lv_obj_set_style_text_color(lbl, WARN_COLOR, 0);
+        lv_label_set_text(lbl, "—");
+        break;
+    case KeyValid::Checking:
+        lv_obj_set_style_text_color(lbl, LABEL_COLOR, 0);
+        lv_label_set_text(lbl, "checking...");
+        break;
+    case KeyValid::Valid:
+        lv_obj_set_style_text_color(lbl, SYS_COLOR, 0);
+        lv_label_set_text(lbl, "yes");
+        break;
+    case KeyValid::Invalid:
+        lv_obj_set_style_text_color(lbl, ERR_COLOR, 0);
+        lv_label_set_text(lbl, "no");
+        break;
+    default:
+        lv_obj_set_style_text_color(lbl, LABEL_COLOR, 0);
+        lv_label_set_text(lbl, "--");
+        break;
+    }
+}
+
+static void refresh_key_presence_ui() {
+    if (_apt_key_val) {
+        if (_cfg.airportdb_token[0]) {
+            lv_obj_set_style_text_color(_apt_key_val, SYS_COLOR, 0);
+            lv_label_set_text(_apt_key_val, "present");
+        } else {
+            lv_obj_set_style_text_color(_apt_key_val, WARN_COLOR, 0);
+            lv_label_set_text(_apt_key_val, "missing");
+        }
+    }
+    if (_adbox_key_val) {
+        if (_cfg.aerodatabox_key[0]) {
+            lv_obj_set_style_text_color(_adbox_key_val, SYS_COLOR, 0);
+            lv_label_set_text(_adbox_key_val, "present");
+        } else {
+            lv_obj_set_style_text_color(_adbox_key_val, WARN_COLOR, 0);
+            lv_label_set_text(_adbox_key_val, "missing");
+        }
+    }
+
+    // Enable only makes sense with a valid key; grey out otherwise.
+    if (_sw_apt_en) {
+        if (_apt_valid == KeyValid::Valid) lv_obj_clear_state(_sw_apt_en, LV_STATE_DISABLED);
+        else lv_obj_add_state(_sw_apt_en, LV_STATE_DISABLED);
+    }
+    if (_sw_adbox_en) {
+        if (_adbox_valid == KeyValid::Valid) lv_obj_clear_state(_sw_adbox_en, LV_STATE_DISABLED);
+        else lv_obj_add_state(_sw_adbox_en, LV_STATE_DISABLED);
+    }
+}
+
+static void start_key_validation() {
+    _apt_verify_pending = false;
+    _adbox_verify_pending = false;
+
+    if (!_cfg.airportdb_token[0]) {
+        _apt_valid = KeyValid::Missing;
+        set_valid_label(_apt_valid_val, _apt_valid);
+    } else {
+        _apt_valid = KeyValid::Checking;
+        set_valid_label(_apt_valid_val, _apt_valid);
+        // Verify against the token currently in g_config (same as used for
+        // add-airport). Keep g_config.token in sync with the draft _cfg.
+        strlcpy(g_config.airportdb_token, _cfg.airportdb_token, sizeof(g_config.airportdb_token));
+        locations_request_verify_token();
+        _apt_verify_pending = true;
+    }
+
+    if (!_cfg.aerodatabox_key[0]) {
+        _adbox_valid = KeyValid::Missing;
+        set_valid_label(_adbox_valid_val, _adbox_valid);
+    } else {
+        _adbox_valid = KeyValid::Checking;
+        set_valid_label(_adbox_valid_val, _adbox_valid);
+        strlcpy(g_config.aerodatabox_key, _cfg.aerodatabox_key, sizeof(g_config.aerodatabox_key));
+        aerodatabox_request_verify();
+        _adbox_verify_pending = true;
+    }
+    refresh_key_presence_ui();
+}
+
+static void poll_key_validation() {
+    if (_apt_verify_pending) {
+        bool ok = false;
+        if (locations_verify_token_result(&ok, nullptr, 0)) {
+            _apt_verify_pending = false;
+            _apt_valid = ok ? KeyValid::Valid : KeyValid::Invalid;
+            set_valid_label(_apt_valid_val, _apt_valid);
+            if (!ok && _sw_apt_en) {
+                lv_obj_clear_state(_sw_apt_en, LV_STATE_CHECKED);
+                _cfg.airportdb_enabled = false;
+            }
+            refresh_key_presence_ui();
+        }
+    }
+    if (_adbox_verify_pending) {
+        bool ok = false;
+        if (aerodatabox_verify_result(&ok, nullptr, 0)) {
+            _adbox_verify_pending = false;
+            _adbox_valid = ok ? KeyValid::Valid : KeyValid::Invalid;
+            set_valid_label(_adbox_valid_val, _adbox_valid);
+            if (!ok && _sw_adbox_en) {
+                lv_obj_clear_state(_sw_adbox_en, LV_STATE_CHECKED);
+                _cfg.aerodatabox_enabled = false;
+            }
+            refresh_key_presence_ui();
+        }
+    }
+}
+
 static void status_refresh(lv_timer_t *t) {
+    (void)t;
+    if (_visible) poll_key_validation();
+
     const FetcherStats *fs = fetcher_get_stats();
     lv_label_set_text_fmt(_fetch_val, "%lu ok / %lu err", (unsigned long)fs->fetch_ok, (unsigned long)fs->fetch_fail);
     if (fs->last_fetch_ms > 0) lv_label_set_text_fmt(_latency_val, "%lums", (unsigned long)fs->last_fetch_ms);
@@ -128,9 +267,17 @@ static void apply_cfg_to_fields() {
     }
     if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
     else lv_obj_clear_state(_sw_metric, LV_STATE_CHECKED);
+
+    if (_cfg.airportdb_enabled) lv_obj_add_state(_sw_apt_en, LV_STATE_CHECKED);
+    else lv_obj_clear_state(_sw_apt_en, LV_STATE_CHECKED);
+    if (_cfg.aerodatabox_enabled) lv_obj_add_state(_sw_adbox_en, LV_STATE_CHECKED);
+    else lv_obj_clear_state(_sw_adbox_en, LV_STATE_CHECKED);
+
+    refresh_key_presence_ui();
 }
 
 static void save_and_close(lv_event_t *e) {
+    (void)e;
     for (int i = 0; i < 4; i++) {
         int v = atoi(lv_textarea_get_text(_ta_radius[i]));
         if (v < 1) v = 1;
@@ -147,21 +294,31 @@ static void save_and_close(lv_event_t *e) {
     _cfg.radius_nm = _cfg.radius_presets[3];
     _cfg.use_metric = lv_obj_has_state(_sw_metric, LV_STATE_CHECKED);
 
+    bool apt_en = lv_obj_has_state(_sw_apt_en, LV_STATE_CHECKED) && _apt_valid == KeyValid::Valid;
+    bool adbox_en = lv_obj_has_state(_sw_adbox_en, LV_STATE_CHECKED) && _adbox_valid == KeyValid::Valid;
+    bool clear_enrich = (adbox_en != g_config.aerodatabox_enabled);
+    _cfg.airportdb_enabled = apt_en;
+    _cfg.aerodatabox_enabled = adbox_en;
+
     storage_save_config(_cfg);
+    if (clear_enrich) enrichment_clear_cache();
     if (_on_change) _on_change(&_cfg);
     settings_hide();
 }
 
 static void clear_all_caches_cb(lv_event_t *e) {
+    (void)e;
     int n = basemap_cache_clear();
     int nw = weather_cache_clear();
     locations_nearby_cache_clear();
-    platform_log("Settings: cleared all caches (%d basemap + %d weather file(s) + nearby runways)\n",
+    enrichment_clear_cache();
+    platform_log("Settings: cleared all caches (%d basemap + %d weather file(s) + nearby runways + enrichment)\n",
                  n, nw);
     map_view_on_show(); // re-request basemap/weather for current projection if Map is live
 }
 
 static void factory_reset_cb(lv_event_t *e) {
+    (void)e;
     uint32_t now = platform_millis();
     if (!_factory_confirm_until_ms || now > _factory_confirm_until_ms) {
         // First tap: arm a short confirm window (does not wipe the Pi OS --
@@ -178,6 +335,7 @@ static void factory_reset_cb(lv_event_t *e) {
     locations_factory_reset();
     basemap_cache_clear();
     weather_cache_clear();
+    enrichment_clear_cache();
 
     _cfg = storage_load_config(); // compiled defaults (no config.json)
     g_config = _cfg;
@@ -189,6 +347,14 @@ static void factory_reset_cb(lv_event_t *e) {
     map_view_on_show();
     platform_log("Settings: ADS-B factory defaults restored (config + locations + caches)\n");
     settings_hide();
+}
+
+static lv_obj_t *make_enable_switch(lv_obj_t *parent, int x, int y) {
+    lv_obj_t *sw = lv_switch_create(parent);
+    lv_obj_set_pos(sw, x, y);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(0x333366), 0);
+    lv_obj_set_style_bg_color(sw, ACCENT_COLOR, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    return sw;
 }
 
 void settings_init(lv_obj_t *parent) {
@@ -216,7 +382,10 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_border_color(_panel, lv_color_hex(0x333366), 0);
     lv_obj_set_style_border_width(_panel, 1, 0);
     lv_obj_set_style_pad_all(_panel, 20, 0);
-    lv_obj_clear_flag(_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_bottom(_panel, 160, 0); // room above bottom action buttons
+    lv_obj_add_flag(_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(_panel, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(_panel, LV_SCROLLBAR_MODE_AUTO);
 
     lv_obj_t *title = lv_label_create(_panel);
     lv_label_set_text(title, LV_SYMBOL_SETTINGS "  Settings");
@@ -245,13 +414,33 @@ void settings_init(lv_obj_t *parent) {
     }
 
     create_label(_panel, "Metric Units", 0, 128);
-    _sw_metric = lv_switch_create(_panel);
-    lv_obj_set_pos(_sw_metric, 110, 126);
-    lv_obj_set_style_bg_color(_sw_metric, lv_color_hex(0x333366), 0);
-    lv_obj_set_style_bg_color(_sw_metric, ACCENT_COLOR, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    _sw_metric = make_enable_switch(_panel, 110, 126);
     if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
 
-    int sy = 172;
+    // --- API KEYS (hand-edit config.json; UI is status + enable only) ---
+    int ky = 168;
+    create_label(_panel, "API KEYS", 0, ky);
+    lv_obj_t *hint = lv_label_create(_panel);
+    lv_label_set_text(hint, "Edit apt_tok / adbox_key in config.json");
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(hint, 0, ky + 18);
+    lv_obj_set_width(hint, FIELD_W + 30);
+    lv_obj_clear_flag(hint, LV_OBJ_FLAG_CLICKABLE);
+
+    create_label(_panel, "AIRPORTDB.IO", 0, ky + 42);
+    _apt_key_val = create_inline_row(_panel, "KEY", 0, ky + 60, 70);
+    _apt_valid_val = create_inline_row(_panel, "VALID", 0, ky + 78, 70);
+    create_label(_panel, "ENABLE", 0, ky + 96);
+    _sw_apt_en = make_enable_switch(_panel, 70, 94 + ky);
+
+    create_label(_panel, "AERODATABOX", 0, ky + 130);
+    _adbox_key_val = create_inline_row(_panel, "KEY", 0, ky + 148, 70);
+    _adbox_valid_val = create_inline_row(_panel, "VALID", 0, ky + 166, 70);
+    create_label(_panel, "ENABLE", 0, ky + 184);
+    _sw_adbox_en = make_enable_switch(_panel, 70, 182 + ky);
+
+    int sy = ky + 220;
     create_label(_panel, "STATUS", 0, sy);
     _fetch_val = create_inline_row(_panel, "FETCHES", 0, sy + 20, 90);
     _latency_val = create_inline_row(_panel, "LATENCY", 0, sy + 38, 90);
@@ -276,25 +465,26 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_radius(clr_btn, 4, 0);
     lv_obj_set_style_pad_all(clr_btn, 0, 0);
     lv_obj_clear_flag(clr_btn, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(clr_btn, [](lv_event_t *e) { error_log_clear(); }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(clr_btn, [](lv_event_t *e) { (void)e; error_log_clear(); }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t *clr_lbl = lv_label_create(clr_btn);
     lv_label_set_text(clr_lbl, "CLR");
     lv_obj_set_style_text_font(clr_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(clr_lbl, lv_color_hex(0xff6666), 0);
+    lv_obj_set_style_text_color(clr_lbl, ERR_COLOR, 0);
     lv_obj_center(clr_lbl);
 
     _err_list_lbl = lv_label_create(_panel);
     lv_label_set_text(_err_list_lbl, "(none)");
     lv_obj_set_style_text_font(_err_list_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_err_list_lbl, lv_color_hex(0xff6666), 0);
+    lv_obj_set_style_text_color(_err_list_lbl, ERR_COLOR, 0);
     lv_obj_set_pos(_err_list_lbl, 0, ey + 18);
     lv_obj_set_width(_err_list_lbl, FIELD_W + 30);
     lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     status_refresh(nullptr);
-    lv_timer_create(status_refresh, 2000, nullptr);
+    lv_timer_create(status_refresh, 500, nullptr); // faster while validating keys
 
-    // Basemap mosaics + nearby-runway lists. Instant — not part of Save.
+    // Bottom actions stay pinned via align-to-panel-bottom; pad_bottom keeps
+    // scrollable content from sitting under them.
     lv_obj_t *cache_btn = lv_button_create(_panel);
     lv_obj_set_size(cache_btn, FIELD_W + 30, 34);
     lv_obj_align(cache_btn, LV_ALIGN_BOTTOM_MID, 0, -106);
@@ -309,8 +499,6 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_center(cache_lbl);
     lv_obj_add_event_cb(cache_btn, clear_all_caches_cb, LV_EVENT_CLICKED, nullptr);
 
-    // ADS-B app only (config + locations + caches) — never touches the Pi OS.
-    // Two-tap confirm within 4s to avoid an accidental wipe.
     lv_obj_t *factory_btn = lv_button_create(_panel);
     lv_obj_set_size(factory_btn, FIELD_W + 30, 34);
     lv_obj_align(factory_btn, LV_ALIGN_BOTTOM_MID, 0, -58);
@@ -320,7 +508,7 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_radius(factory_btn, 6, 0);
     _factory_lbl = lv_label_create(factory_btn);
     lv_label_set_text(_factory_lbl, "Reset to factory defaults");
-    lv_obj_set_style_text_color(_factory_lbl, lv_color_hex(0xff6666), 0);
+    lv_obj_set_style_text_color(_factory_lbl, ERR_COLOR, 0);
     lv_obj_set_style_text_font(_factory_lbl, &lv_font_montserrat_14, 0);
     lv_obj_center(_factory_lbl);
     lv_obj_add_event_cb(factory_btn, factory_reset_cb, LV_EVENT_CLICKED, nullptr);
@@ -353,12 +541,15 @@ void settings_show() {
     if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
     _cfg = storage_load_config();
     apply_cfg_to_fields();
+    start_key_validation();
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
 void settings_hide() {
     if (!_visible) return;
     _visible = false;
+    _apt_verify_pending = false;
+    _adbox_verify_pending = false;
     _factory_confirm_until_ms = 0;
     if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
     lv_obj_add_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);

@@ -33,6 +33,9 @@ static UserConfig defaults() {
     cfg.wifi_ssid[0] = '\0';
     cfg.wifi_pass[0] = '\0';
     cfg.airportdb_token[0] = '\0';
+    cfg.airportdb_enabled = true; // preserve pre-toggle behavior for existing tokens
+    cfg.aerodatabox_key[0] = '\0';
+    cfg.aerodatabox_enabled = false;
     cfg.radius_nm = 50;
     cfg.radius_presets[0] = 5;
     cfg.radius_presets[1] = 10;
@@ -101,6 +104,9 @@ UserConfig storage_load_config() {
     strlcpy(cfg.wifi_ssid, doc["ssid"] | cfg.wifi_ssid, sizeof(cfg.wifi_ssid));
     strlcpy(cfg.wifi_pass, doc["pass"] | cfg.wifi_pass, sizeof(cfg.wifi_pass));
     strlcpy(cfg.airportdb_token, doc["apt_tok"] | cfg.airportdb_token, sizeof(cfg.airportdb_token));
+    cfg.airportdb_enabled = doc["apt_en"] | cfg.airportdb_enabled;
+    strlcpy(cfg.aerodatabox_key, doc["adbox_key"] | cfg.aerodatabox_key, sizeof(cfg.aerodatabox_key));
+    cfg.aerodatabox_enabled = doc["adbox_en"] | cfg.aerodatabox_enabled;
     cfg.radius_nm = doc["radius"] | cfg.radius_nm;
     cfg.radius_presets[0] = doc["rad0"] | cfg.radius_presets[0];
     cfg.radius_presets[1] = doc["rad1"] | cfg.radius_presets[1];
@@ -169,6 +175,9 @@ void storage_save_config(const UserConfig &cfg) {
     doc["ssid"] = cfg.wifi_ssid;
     doc["pass"] = cfg.wifi_pass;
     doc["apt_tok"] = cfg.airportdb_token;
+    doc["apt_en"] = cfg.airportdb_enabled;
+    doc["adbox_key"] = cfg.aerodatabox_key;
+    doc["adbox_en"] = cfg.aerodatabox_enabled;
     doc["radius"] = cfg.radius_nm;
     doc["rad0"] = cfg.radius_presets[0];
     doc["rad1"] = cfg.radius_presets[1];
