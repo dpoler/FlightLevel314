@@ -474,6 +474,7 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_add_flag(_content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(_content, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(_content, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_clip_corner(_content, true, 0);
 
     _cfg = storage_load_config();
 
@@ -581,10 +582,13 @@ void settings_init(lv_obj_t *parent) {
     _sw_adbox_en = make_enable_switch(_content, right + 80, 306);
 
     lv_obj_t *quota_note = lv_label_create(_content);
+    // ADB marketplace units reset on the subscription billing cycle
+    // (RapidAPI/API.Market), not a calendar month — see aerodatabox.com/faq.
+    // Our USAGE counter is a local UTC calendar-month tally only.
     lv_label_set_text(quota_note,
-        "ADB quota: marketplace billing cycle\n"
-        "(not calendar month). USAGE is local\n"
-        "UTC-month calls; adbox_lim soft-caps.");
+        "ADB quota resets on billing cycle\n"
+        "(marketplace). USAGE = local UTC\n"
+        "calendar month; adbox_lim soft-cap.");
     lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(quota_note, right, 340);
@@ -594,8 +598,9 @@ void settings_init(lv_obj_t *parent) {
     status_refresh(nullptr);
     lv_timer_create(status_refresh, 500, nullptr);
 
-    // Fixed action strip — opaque so scrolled content never shows through.
-    // Clear + Reset stacked full-width; Save on the right of the top row.
+    // Fixed action strip under the left column only for Clear/Reset — they
+    // must not sit on top of the right-column API KEYS / USAGE text. Save
+    // stays on the right. Opaque band + clipped content prevent bleed-through.
     lv_obj_t *actions = lv_obj_create(_panel);
     lv_obj_set_size(actions, PANEL_W - 32, ACTION_H);
     lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -605,10 +610,14 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_pad_all(actions, 0, 0);
     lv_obj_set_style_pad_top(actions, 8, 0);
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_move_foreground(actions);
 
+    // Left-column width for Clear/Reset; leave a gap before Save on the right.
+    const int left_btn_w = COL_W;
     const int actions_inner_w = PANEL_W - 32;
+
     lv_obj_t *cache_btn = lv_button_create(actions);
-    lv_obj_set_size(cache_btn, actions_inner_w - 136, 34);
+    lv_obj_set_size(cache_btn, left_btn_w, 34);
     lv_obj_set_pos(cache_btn, 0, 4);
     lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
@@ -634,7 +643,7 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_add_event_cb(save_btn, save_and_close, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *factory_btn = lv_button_create(actions);
-    lv_obj_set_size(factory_btn, actions_inner_w, 34);
+    lv_obj_set_size(factory_btn, left_btn_w, 34);
     lv_obj_set_pos(factory_btn, 0, 46);
     lv_obj_set_style_bg_color(factory_btn, lv_color_hex(0x2a1a1a), 0);
     lv_obj_set_style_border_color(factory_btn, lv_color_hex(0x664444), 0);
