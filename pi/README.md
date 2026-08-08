@@ -20,9 +20,10 @@ dpoler/AirlinesCSV at app start; detail-card enrichment (adsbdb +
 planespotters photos, optional AeroDataBox origin/destination) is live
 on Pi. API keys are never typed on-device — hand-edit
 `~/.config/adsb/config.json` (`apt_tok` for airportdb.io,
-`adbox_key` for AeroDataBox/RapidAPI), then use Settings → API KEYS to
+`adbox_key` for AeroDataBox), pick the AeroDataBox gateway in Settings
+(RapidAPI / API.Market / Direct), then use Settings → API KEYS to
 see whether each key is present/valid and to enable or disable the
-service (`apt_en` / `adbox_en`).
+service (`apt_en` / `adbox_en`, plus `adbox_prov` 0/1/2).
 
 ## Hardware target
 
