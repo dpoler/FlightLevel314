@@ -1,31 +1,31 @@
-# ADS-B Display Project — Full Knowledge Dump
+# ADS-B Display / FlightLevel314 — Project Knowledge
 
-> **Agent note:** Canonical cross-session knowledge for the *whole* ADS-B project
-> (ESP32 `jc1060` + Raspberry Pi port), not only `pi-port`. Imported 2026-08-07
-> from a Claude knowledge dump. Point-in-time observations — verify against
-> current code before treating specific file:line / "done" claims as live.
-> Day-to-day agent rules live in `AGENTS.md`; this file holds history, backlog,
-> and deeper rationale.
+> **Agent note:** This file began as the knowledge dump for `dpoler/adsb`
+> (ESP32 jc1060 + Pi port). On **2026-08-08** the Pi work was forked into
+> **FlightLevel314** and jc1060 development was paused. Keep ESP32 history
+> here for optional cherry-picks; new work targets Pi/Linux only unless
+> explicitly asked otherwise. Day-to-day agent rules live in `AGENTS.md`.
 
 
-Generated 2026-08-07 from accumulated cross-session memory. This is a point-in-time
-snapshot — memory entries are point-in-time observations, not live state. Verify
-against current code before treating any specific claim (file:line, function name,
-"done" status) as still true.
+Generated 2026-08-07 from accumulated cross-session memory; FlightLevel314
+fork notes added 2026-08-08. Point-in-time snapshot — verify against current
+code before treating any specific claim as still true.
 
-Current git branch at time of writing: `pi-port` (clean working tree). Main branch: `master`.
+Current product: **FlightLevel314** (Pi). Historical ESP32 branch: `dpoler/adsb`.
 
 ---
 
 ## 1. What this project is
 
-A touchscreen ADS-B aircraft display device. Originally a single ESP32-P4 board
-target; now also being ported to a Raspberry Pi. Shows live aircraft traffic
-(pulled from adsb.lol) on Map/Radar/List(Arrivals)/Stats views, with a
-location-picker system (Home + saved airports/waypoints), filters, trails, alerts
-for military/emergency squawks, and more.
+**FlightLevel314** — a touchscreen ADS-B aircraft display for Raspberry Pi
+(Waveshare 10.1" DSI, 1280×800). Live traffic from adsb.lol on Map / Radar /
+Arrivals / Stats, with saved locations, filters, trails, alerts,
+basemap/weather, and optional AeroDataBox O/D + AirportDB enrichment.
 
----
+Originally also an ESP32-P4 (jc1060) target in `dpoler/adsb`. That board is
+**paused** in this fork; features can be brought back to the ESP32 tree later
+by comparing against this project.
+
 
 ## 2. Board targets (ESP32 side)
 
@@ -381,12 +381,11 @@ mostly chronological.
   (~0.35 → ~2.1 MB). Fine on Pi; painful if the same table stays shared with
   ESP32. **Do not start until explicitly asked** — sized 2026-08-08.
 
-- **Fork the Pi port into its own project/repo**: Pi-specific surface area
-  (basemap/weather, SDL/DRM, AeroDataBox O/D, AirportDB, settings, photo
-  path, CMake) has diverged enough that sharing `src/ui` + `src/data` with
-  the jc1060 ESP32 tree is getting costly. Plan a clean fork (or extract)
-  so Pi can evolve without `#if !defined(ARDUINO)` / dual-target friction.
-  **Do not start until explicitly asked** — parked 2026-08-08.
+- ~~**Fork the Pi port into its own project/repo**~~: **Done 2026-08-08** as
+  **FlightLevel314** (this tree). jc1060 / PlatformIO removed from the build;
+  history retained for cherry-picks. Remaining: create empty GitHub repo
+  `dpoler/FlightLevel314` and push this branch (cloud token cannot create
+  repos). Optional later: strip leftover `#if defined(ARDUINO)` from `src/`.
 
 - **Pi online app updates (check / notify / pull / restart)**: periodically
   check whether a newer `adsb_pi` (or package) is available, surface a

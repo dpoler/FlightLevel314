@@ -435,7 +435,7 @@ std::string cache_dir() {
         const char *home = getenv("HOME");
         base = home && home[0] ? std::string(home) + "/.config" : "/tmp";
     }
-    return base + "/adsb/basemap";
+    return base + "/flightlevel314/basemap";
 }
 
 void ensure_dir(const std::string &path) {

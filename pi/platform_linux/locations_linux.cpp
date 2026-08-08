@@ -9,7 +9,7 @@
 // fresh rather than force a shared abstraction onto genuinely
 // platform-specific plumbing (see project_pi_port memory).
 //
-// Storage: a single JSON file (~/.config/adsb/locations.json), one entry per
+// Storage: a single JSON file (~/.config/flightlevel314/locations.json), one entry per
 // saved location, each with its own "nearby" array embedded directly.
 // Unlike the ESP32 side (which lazily loads only the *active* location's
 // nearby-airport cache to save DRAM), every location's nearby list is kept
@@ -72,9 +72,9 @@ bool _nearby_scan_active = false; // best-effort: skip a second concurrent scan 
 
 std::string config_dir() {
     const char *xdg = getenv("XDG_CONFIG_HOME");
-    if (xdg && xdg[0]) return std::string(xdg) + "/adsb";
+    if (xdg && xdg[0]) return std::string(xdg) + "/flightlevel314";
     const char *home = getenv("HOME");
-    return std::string(home ? home : ".") + "/.config/adsb";
+    return std::string(home ? home : ".") + "/.config/flightlevel314";
 }
 
 std::string locations_file_path() {
