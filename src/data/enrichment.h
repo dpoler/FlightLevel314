@@ -15,6 +15,7 @@ struct AircraftEnrichment {
     // Empty when unavailable / service off / ESP32.
     char origin_icao[8];
     char dest_icao[8];
+    bool route_checked; // true once AeroDataBox was attempted (or skipped as off)
     bool loaded;
     bool loading;
 

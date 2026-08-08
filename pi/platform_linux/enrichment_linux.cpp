@@ -23,6 +23,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <ctime>
 
 // stb_image implementation lives in basemap.cpp -- only the declarations here.
 #include "../third_party/stb_image.h"
@@ -75,14 +76,41 @@ bool http_get_json(const char *url, JsonDocument &doc) {
     return deserializeJson(doc, buf.data(), len) == DeserializationError::Ok;
 }
 
-// RapidAPI headers for AeroDataBox. key_hdr must remain alive for the call.
-void adbox_headers(const char *key, char *key_hdr, size_t key_hdr_sz,
-                   const char *out[4]) {
-    snprintf(key_hdr, key_hdr_sz, "x-rapidapi-key: %s", key);
-    out[0] = key_hdr;
-    out[1] = "x-rapidapi-host: aerodatabox.p.rapidapi.com";
-    out[2] = "Accept: application/json";
-    out[3] = nullptr;
+// RapidAPI / API.Market / Direct gateway helpers for AeroDataBox.
+// OpenAPI FlightSearchByEnum uses PascalCase (Icao24/CallSign/Reg/Number).
+enum AdboxProvider { ADBOX_RAPIDAPI = 0, ADBOX_APIMARKET = 1, ADBOX_DIRECT = 2 };
+
+const char *adbox_base_url(int provider) {
+    switch (provider) {
+    case ADBOX_APIMARKET: return "https://prod.api.market/api/v1/aedbx/aerodatabox";
+    case ADBOX_DIRECT:    return "https://api.aerodatabox.com";
+    default:              return "https://aerodatabox.p.rapidapi.com";
+    }
+}
+
+// Fills hdr_bufs[0]/ and out[] (nullptr-terminated). key/provider from config.
+void adbox_headers(int provider, const char *key,
+                   char hdr_bufs[2][160], const char *out[4]) {
+    out[0] = out[1] = out[2] = out[3] = nullptr;
+    int n = 0;
+    switch (provider) {
+    case ADBOX_APIMARKET:
+        snprintf(hdr_bufs[0], 160, "x-api-market-key: %s", key);
+        out[n++] = hdr_bufs[0];
+        break;
+    case ADBOX_DIRECT:
+        snprintf(hdr_bufs[0], 160, "X-Api-Key: %s", key);
+        out[n++] = hdr_bufs[0];
+        break;
+    default: // RapidAPI
+        snprintf(hdr_bufs[0], 160, "x-rapidapi-key: %s", key);
+        snprintf(hdr_bufs[1], 160, "x-rapidapi-host: aerodatabox.p.rapidapi.com");
+        out[n++] = hdr_bufs[0];
+        out[n++] = hdr_bufs[1];
+        break;
+    }
+    out[n++] = "Accept: application/json";
+    out[n] = nullptr;
 }
 
 std::string trim_ws(const char *s) {
@@ -93,13 +121,37 @@ std::string trim_ws(const char *s) {
     return out;
 }
 
+std::string alnum_upper(const char *s) {
+    std::string clean;
+    for (const char *p = s; p && *p; ++p) {
+        if (isalnum((unsigned char)*p)) clean.push_back((char)toupper((unsigned char)*p));
+    }
+    return clean;
+}
+
+void today_utc_ymd(char *out, size_t out_sz) {
+    time_t now = time(nullptr);
+    struct tm tm_utc {};
+    gmtime_r(&now, &tm_utc);
+    snprintf(out, out_sz, "%04d-%02d-%02d",
+             tm_utc.tm_year + 1900, tm_utc.tm_mon + 1, tm_utc.tm_mday);
+}
+
 bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
                        char *dest, size_t dest_sz) {
     // Response is a JSON array of FlightContract, or occasionally a single object.
     JsonArrayConst arr = doc.as<JsonArrayConst>();
     JsonObjectConst flight;
-    if (!arr.isNull() && arr.size() > 0) {
-        flight = arr[0].as<JsonObjectConst>();
+    if (!arr.isNull()) {
+        if (arr.size() == 0) return false;
+        // Prefer a flight that has both airports when several are returned.
+        for (JsonObjectConst f : arr) {
+            const char *o = f["departure"]["airport"]["icao"] | "";
+            const char *d = f["arrival"]["airport"]["icao"] | "";
+            if (o[0] && d[0]) { flight = f; break; }
+            if (flight.isNull() && (o[0] || d[0])) flight = f;
+        }
+        if (flight.isNull()) flight = arr[0].as<JsonObjectConst>();
     } else {
         flight = doc.as<JsonObjectConst>();
     }
@@ -117,78 +169,97 @@ bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
     return true;
 }
 
-// Live nearest flight by icao24, then callsign. dateLocalRole=Both.
-bool fetch_adbox_route(const char *key, const char *icao_hex, const char *callsign,
+// Live nearest flight, then same search for today's local date. searchBy uses
+// OpenAPI PascalCase (Icao24 / CallSign / Reg).
+bool fetch_adbox_route(int provider, const char *key,
+                       const char *icao_hex, const char *callsign, const char *registration,
                        char *origin, size_t origin_sz, char *dest, size_t dest_sz) {
     origin[0] = '\0';
     dest[0] = '\0';
     if (!key || !key[0]) return false;
 
-    char key_hdr[128];
+    char hdr_bufs[2][160];
     const char *hdrs[4];
-    adbox_headers(key, key_hdr, sizeof(key_hdr), hdrs);
+    adbox_headers(provider, key, hdr_bufs, hdrs);
+    const char *base = adbox_base_url(provider);
+
+    char today[16];
+    today_utc_ymd(today, sizeof(today));
 
     auto try_url = [&](const char *url) -> bool {
-        std::vector<char> buf(64 * 1024);
+        std::vector<char> buf(96 * 1024);
         size_t len = 0;
         long status = 0;
         if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &status, hdrs)) {
+            platform_log("[Enrich] AeroDataBox transport fail: %s\n", url);
             return false;
         }
-        // 401/403 = bad key; 204/404 = authenticated but no flight today.
         if (status == 401 || status == 403) {
             platform_log("[Enrich] AeroDataBox auth failed (http=%ld)\n", status);
             return false;
         }
-        if (status < 200 || status >= 300 || len == 0) return false;
+        if (status == 204 || status == 404) {
+            platform_log("[Enrich] AeroDataBox no flight (http=%ld) %s\n", status, url);
+            return false;
+        }
+        if (status < 200 || status >= 300) {
+            platform_log("[Enrich] AeroDataBox http=%ld len=%zu %s\n", status, len, url);
+            return false;
+        }
+        if (len == 0) return false;
         JsonDocument doc;
-        if (deserializeJson(doc, buf.data(), len) != DeserializationError::Ok) return false;
+        if (deserializeJson(doc, buf.data(), len) != DeserializationError::Ok) {
+            platform_log("[Enrich] AeroDataBox JSON parse fail (%zu bytes)\n", len);
+            return false;
+        }
         return parse_adbox_route(doc, origin, origin_sz, dest, dest_sz);
     };
 
-    char url[256];
-    if (icao_hex && icao_hex[0]) {
+    auto try_search = [&](const char *search_by, const char *param) -> bool {
+        if (!param || !param[0]) return false;
+        char url[320];
+        // Nearest (no date) -- preferred for live traffic.
         snprintf(url, sizeof(url),
-                 "https://aerodatabox.p.rapidapi.com/flights/icao24/%s"
-                 "?withAircraftImage=false&withLocation=false&dateLocalRole=Both",
-                 icao_hex);
+                 "%s/flights/%s/%s?withAircraftImage=false&withLocation=false",
+                 base, search_by, param);
         if (try_url(url)) return true;
-    }
+        // Same-day dated search (UTC date; dateLocalRole=Both).
+        snprintf(url, sizeof(url),
+                 "%s/flights/%s/%s/%s?withAircraftImage=false&withLocation=false&dateLocalRole=Both",
+                 base, search_by, param, today);
+        return try_url(url);
+    };
 
-    std::string cs = trim_ws(callsign);
-    if (!cs.empty()) {
-        // Callsigns are alphanumeric; strip anything unsafe for the path.
-        std::string clean;
-        for (char c : cs) {
-            if (isalnum((unsigned char)c)) clean.push_back((char)toupper((unsigned char)c));
-        }
-        if (!clean.empty()) {
-            snprintf(url, sizeof(url),
-                     "https://aerodatabox.p.rapidapi.com/flights/callsign/%s"
-                     "?withAircraftImage=false&withLocation=false&dateLocalRole=Both",
-                     clean.c_str());
-            if (try_url(url)) return true;
-        }
-    }
+    std::string hex = alnum_upper(icao_hex);
+    if (!hex.empty() && try_search("Icao24", hex.c_str())) return true;
+
+    std::string cs = alnum_upper(trim_ws(callsign).c_str());
+    if (!cs.empty() && try_search("CallSign", cs.c_str())) return true;
+
+    // Registration: keep letters/digits only (drop dashes/spaces).
+    std::string reg = alnum_upper(registration);
+    if (!reg.empty() && try_search("Reg", reg.c_str())) return true;
+
     return false;
 }
 
-// Validate RapidAPI key with a cheap airport lookup (not a flight search).
-bool validate_adbox_key(const char *key, char *err, size_t err_size) {
+// Validate key with a cheap airport lookup (not a flight search).
+bool validate_adbox_key(int provider, const char *key, char *err, size_t err_size) {
     auto fail = [&](const char *msg) {
         if (err && err_size) strlcpy(err, msg, err_size);
         return false;
     };
     if (!key || !key[0]) return fail("no key set");
 
-    char key_hdr[128];
+    char hdr_bufs[2][160];
     const char *hdrs[4];
-    adbox_headers(key, key_hdr, sizeof(key_hdr), hdrs);
+    adbox_headers(provider, key, hdr_bufs, hdrs);
 
     char buf[4096];
     size_t len = 0;
     long status = 0;
-    const char *url = "https://aerodatabox.p.rapidapi.com/airports/icao/KJFK";
+    char url[256];
+    snprintf(url, sizeof(url), "%s/airports/icao/KJFK", adbox_base_url(provider));
     if (!platform_http_get_ex(url, buf, sizeof(buf), &len, &status, hdrs)) {
         return fail("network error");
     }
@@ -401,24 +472,32 @@ void run_enrichment(std::string icao, std::string registration, std::string call
 
     // --- Stage 4: AeroDataBox live origin/destination (optional) ---
     char adbox_key[sizeof(g_config.aerodatabox_key)] = {};
+    int adbox_prov = 0;
     bool adbox_on = false;
     {
-        // Snapshot under no lock -- g_config is only written from UI/settings.
         adbox_on = g_config.aerodatabox_enabled && g_config.aerodatabox_key[0];
+        adbox_prov = g_config.aerodatabox_provider;
         if (adbox_on) strlcpy(adbox_key, g_config.aerodatabox_key, sizeof(adbox_key));
     }
     if (adbox_on) {
         char origin[8] = {}, dest[8] = {};
-        if (fetch_adbox_route(adbox_key, icao.c_str(), callsign.c_str(),
+        if (fetch_adbox_route(adbox_prov, adbox_key, icao.c_str(), callsign.c_str(),
+                              registration.c_str(),
                               origin, sizeof(origin), dest, sizeof(dest))) {
             std::lock_guard<std::mutex> lock(_mutex);
             strlcpy(entry->origin_icao, origin, sizeof(entry->origin_icao));
             strlcpy(entry->dest_icao, dest, sizeof(entry->dest_icao));
-            platform_log("[Enrich] route %s → %s for %s\n", origin, dest, icao.c_str());
+            entry->route_checked = true;
+            platform_log("[Enrich] route %s -> %s for %s\n", origin, dest, icao.c_str());
         } else {
+            std::lock_guard<std::mutex> lock(_mutex);
+            entry->route_checked = true;
             platform_log("[Enrich] AeroDataBox no route for %s\n", icao.c_str());
         }
         notify_callback(entry);
+    } else {
+        std::lock_guard<std::mutex> lock(_mutex);
+        entry->route_checked = true; // skipped — don't re-hit until cache cleared
     }
 
     {
@@ -451,14 +530,20 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
                       void (*callback)(AircraftEnrichment *data)) {
     if (!icao_hex || !icao_hex[0]) return;
 
+    const bool adbox_on = g_config.aerodatabox_enabled && g_config.aerodatabox_key[0];
+
     {
         std::lock_guard<std::mutex> lock(_mutex);
         for (int i = 0; i < _cache_count; i++) {
-            if (strcmp(_cache_keys[i], icao_hex) == 0 && _cache[i].loaded) {
-                _pending_callback = callback;
-                notify_callback(&_cache[i]);
-                return;
+            if (strcmp(_cache_keys[i], icao_hex) != 0 || !_cache[i].loaded) continue;
+            // Cache hit — but if AeroDataBox is on and we never checked route
+            // (e.g. service was enabled after a prior enrich), refresh.
+            if (adbox_on && !_cache[i].route_checked) {
+                break; // fall through to full re-fetch
             }
+            _pending_callback = callback;
+            notify_callback(&_cache[i]);
+            return;
         }
         if (_busy) {
             platform_log("enrich: skipped (fetch already in progress)\n");
@@ -492,7 +577,8 @@ void aerodatabox_request_verify() {
     }
     std::thread([]() {
         char err[48] = {};
-        bool ok = validate_adbox_key(g_config.aerodatabox_key, err, sizeof(err));
+        bool ok = validate_adbox_key(g_config.aerodatabox_provider, g_config.aerodatabox_key,
+                                     err, sizeof(err));
         std::lock_guard<std::mutex> lock(_verify_mutex);
         _verify_result_ok = ok;
         strlcpy(_verify_result_err, err, sizeof(_verify_result_err));

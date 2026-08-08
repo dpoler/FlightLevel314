@@ -15,6 +15,7 @@ UserConfig storage_load_config() {
     cfg.airportdb_token[0] = '\0';
     cfg.airportdb_enabled = true; // preserve pre-toggle behavior for existing tokens
     cfg.aerodatabox_key[0] = '\0';
+    cfg.aerodatabox_provider = 0; // RapidAPI
     cfg.aerodatabox_enabled = false;
     cfg.radius_nm = 50;
     cfg.radius_presets[0] = 5;
@@ -65,6 +66,8 @@ UserConfig storage_load_config() {
     cfg.airportdb_enabled = _prefs.getBool("apt_en", cfg.airportdb_enabled);
     if (_prefs.isKey("adbox_key"))
         strlcpy(cfg.aerodatabox_key, _prefs.getString("adbox_key", cfg.aerodatabox_key).c_str(), sizeof(cfg.aerodatabox_key));
+    cfg.aerodatabox_provider = _prefs.getInt("adbox_prov", cfg.aerodatabox_provider);
+    if (cfg.aerodatabox_provider < 0 || cfg.aerodatabox_provider > 2) cfg.aerodatabox_provider = 0;
     cfg.aerodatabox_enabled = _prefs.getBool("adbox_en", cfg.aerodatabox_enabled);
     cfg.radius_nm = _prefs.getInt("radius", cfg.radius_nm);
     cfg.radius_presets[0] = _prefs.getInt("rad0", cfg.radius_presets[0]);
@@ -137,6 +140,7 @@ void storage_save_config(const UserConfig &cfg) {
     _prefs.putString("apt_tok", cfg.airportdb_token);
     _prefs.putBool("apt_en", cfg.airportdb_enabled);
     _prefs.putString("adbox_key", cfg.aerodatabox_key);
+    _prefs.putInt("adbox_prov", cfg.aerodatabox_provider);
     _prefs.putBool("adbox_en", cfg.aerodatabox_enabled);
     _prefs.putInt("radius", cfg.radius_nm);
     _prefs.putInt("rad0", cfg.radius_presets[0]);

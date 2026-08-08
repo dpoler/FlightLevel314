@@ -225,7 +225,7 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
     if (data->origin_icao[0] || data->dest_icao[0]) {
         const char *o = data->origin_icao[0] ? data->origin_icao : "----";
         const char *d = data->dest_icao[0] ? data->dest_icao : "----";
-        lv_label_set_text_fmt(_route_label, "%s → %s", o, d);
+        lv_label_set_text_fmt(_route_label, "%s -> %s", o, d);
         lv_obj_clear_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
     }
 

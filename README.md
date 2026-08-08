@@ -216,7 +216,7 @@ Per-view settings (trails, tags, filters, secondary-locations visibility) live i
 | [planespotters.net](https://www.planespotters.net) | Photo credit text (no image rendering on ESP32 — see Known Issues; Pi downloads thumbnails) | None |
 | [AeroDataBox](https://aerodatabox.com) (RapidAPI) | Optional live flight origin/destination on the detail card (Pi) | RapidAPI key |
 
-Static callsign→route tables (adsbdb routes, VRS standing data, etc.) are deliberately **not** used — they're frequently stale for reassigned flight numbers. Optional origin/destination on Pi comes from AeroDataBox's live flight-status API instead (off by default; enable in Settings after adding `adbox_key` to config).
+Static callsign→route tables (adsbdb routes, VRS standing data, etc.) are deliberately **not** used — they're frequently stale for reassigned flight numbers. Optional origin/destination on Pi comes from AeroDataBox's live flight-status API instead (off by default; set `adbox_key` + `adbox_prov` for RapidAPI / API.Market / Direct, then enable in Settings).
 
 ## Architecture
 
