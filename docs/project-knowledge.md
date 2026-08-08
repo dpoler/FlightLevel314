@@ -347,6 +347,12 @@ mostly chronological.
 
 ### 7.1 Genuinely open / not started
 
+- **Detail card photo credit appears before the photo**: photographer credit
+  text can pop into the summary/detail area before the aircraft photo has
+  finished loading (or when the image path fails / is still decoding). Credit
+  should stay hidden until pixels are actually shown, or sit only under the
+  photo slot. **Do not start until explicitly asked** — reported 2026-08-08.
+
 - **Location switch: successful fetch but empty Map for a couple of refreshes**:
   switching active location from Heathrow (EGLL) to Denver, `adsb.lol`
   appeared to fetch successfully but no aircraft rendered for a couple of
