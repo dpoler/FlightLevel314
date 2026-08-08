@@ -64,13 +64,13 @@ target_link_libraries(lvgl PUBLIC Threads::Threads)
 # Static large/medium airport glyph DB (gitignored). Without it, VIEW →
 # Other Airports has nothing to draw beyond saved locations. Generate at
 # configure time if missing so Pi builds match ESP32's usual local codegen.
-# Also regenerate when an older header lacks the name[] field (added for
-# ICAO↔name lookup on the detail card / location picker).
+# Also regenerate when an older header still has the short name[32] field
+# (bumped to name[64] so picker/detail-card can show full airport names).
 set(AIRPORTS_DB_H "${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/airports_db.h")
 if(EXISTS "${AIRPORTS_DB_H}")
     file(READ "${AIRPORTS_DB_H}" _adb_hdr LIMIT 800)
-    if(NOT _adb_hdr MATCHES "char name\\[32\\]")
-        message(STATUS "airports_db.h is outdated (no name field) — regenerating")
+    if(NOT _adb_hdr MATCHES "char name\\[64\\]")
+        message(STATUS "airports_db.h is outdated (need name[64]) — regenerating")
         file(REMOVE "${AIRPORTS_DB_H}")
     endif()
 endif()

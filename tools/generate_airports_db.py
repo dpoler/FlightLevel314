@@ -23,9 +23,11 @@ from pathlib import Path
 
 AIRPORTS_CSV_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 INCLUDED_TYPES = {"large_airport", "medium_airport"}
-# Fits detail-card / picker labels; OurAirports names are often longer.
-# Byte length (ASCII after folding) including room for "...".
-NAME_MAX = 31  # + NUL in char name[32]
+# OurAirports names run long ("John F. Kennedy International Airport" = 37).
+# 63 (+NUL → name[64]) covers ~99.7% of large/medium entries fully; the few
+# outliers still get a word-boundary truncate with "...". Wide enough for the
+# location-picker label at montserrat_16 on a ~540px panel.
+NAME_MAX = 63  # + NUL in char name[64]
 
 
 def download_csv(url: str) -> str:
@@ -90,7 +92,7 @@ def write_header(airports, output_path: str):
         f.write("#pragma once\n\n")
         f.write("struct StaticAirport {\n")
         f.write("    char icao[5];\n")
-        f.write("    char name[32]; // truncated OurAirports name\n")
+        f.write("    char name[64]; // ASCII-folded OurAirports name (may end in ...)\n")
         f.write("    float lat, lon;\n")
         f.write("    unsigned char large; // 1 = large_airport, 0 = medium_airport\n")
         f.write("};\n\n")
@@ -103,7 +105,8 @@ def write_header(airports, output_path: str):
             )
         f.write("};\n")
 
-    size_estimate = len(airports) * 48
+    # icao[5] + name[64] + floats + large + padding ≈ 80 bytes/entry
+    size_estimate = len(airports) * 80
     print(f"Wrote {len(airports)} airports to {output_path} (~{size_estimate/1024:.1f} KB)")
 
 
