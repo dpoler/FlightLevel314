@@ -71,8 +71,9 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #if LCD_H_RES >= 1280
 #define CARD_H         340
 #define CARD_PAD       16
-#define SUMMARY_W      360
-#define SUMMARY_H      210
+// Wide enough for two-line O/D (ICAO + arrow / dest, then airport names).
+#define SUMMARY_W      400
+#define SUMMARY_H      250
 #define PHOTO_SLOT_W   400
 #define PHOTO_SLOT_H   220
 // Telemetry labels/values are short ("ALTITUDE", "FL350") — no need to
@@ -87,13 +88,14 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #define GRID_ROW_H     42
 #define GRID_COLS      3
 #else
-#define CARD_H         310
+#define CARD_H         340
 #define CARD_PAD       16
 #define PHOTO_SLOT_W   0
 #define PHOTO_SLOT_H   0
 #define STATS_X        0
 #define IDENTITY_MAX_W (LCD_H_RES - 32)
-#define GRID_Y0        148
+// Room for two-line route (origin→ / dest) + two-line airport names.
+#define GRID_Y0        200
 #define GRID_ROW_H     42
 #define GRID_COL_W     160
 #define GRID_COLS      6
@@ -227,18 +229,18 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
     if (data->origin_icao[0] || data->dest_icao[0]) {
         const char *o = data->origin_icao[0] ? data->origin_icao : "----";
         const char *d = data->dest_icao[0] ? data->dest_icao : "----";
+        // Two lines so ICAOs never clip: origin + arrow, then destination.
         // LV_SYMBOL_RIGHT is in the bundled FontAwesome set; Unicode → is not
         // in Montserrat and rendered as empty tofu.
-        lv_label_set_text_fmt(_route_label, "%s  " LV_SYMBOL_RIGHT "  %s", o, d);
+        lv_label_set_text_fmt(_route_label, "%s  " LV_SYMBOL_RIGHT "\n%s", o, d);
         lv_obj_clear_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
 
         char oname[32] = {}, dname[32] = {};
         airports_format_name(data->origin_icao, oname, sizeof(oname));
         airports_format_name(data->dest_icao, dname, sizeof(dname));
         if (oname[0] || dname[0]) {
-            lv_label_set_text_fmt(_route_names_label, "%s%s%s",
+            lv_label_set_text_fmt(_route_names_label, "%s\n%s",
                                   oname[0] ? oname : "—",
-                                  " / ",
                                   dname[0] ? dname : "—");
             lv_obj_clear_flag(_route_names_label, LV_OBJ_FLAG_HIDDEN);
         }
@@ -500,8 +502,8 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_op = 54;
     const int y_type = 76;
     const int y_detail = 98;
-    const int y_route = 120;
-    const int y_route_names = 142;
+    const int y_route = 120;       // two lines: origin→ / dest
+    const int y_route_names = 164; // two lines of airport names under ICAOs
 #else
     lv_obj_t *id_parent = _card;
     const int id_x = 0;
@@ -511,7 +513,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_type = 78;
     const int y_detail = 98;
     const int y_route = 118;
-    const int y_route_names = 138;
+    const int y_route_names = 162;
 #endif
 
     // === HEADER / IDENTITY ===
@@ -562,7 +564,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_text_color(_route_label, CARD_ACCENT, 0);
     lv_obj_set_pos(_route_label, id_x, y_route);
     lv_obj_set_width(_route_label, IDENTITY_MAX_W);
-    lv_label_set_long_mode(_route_label, LV_LABEL_LONG_CLIP);
+    lv_label_set_long_mode(_route_label, LV_LABEL_LONG_WRAP);
     lv_obj_add_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
 
     _route_names_label = lv_label_create(id_parent);
@@ -571,7 +573,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_style_text_color(_route_names_label, CARD_DIM, 0);
     lv_obj_set_pos(_route_names_label, id_x, y_route_names);
     lv_obj_set_width(_route_names_label, IDENTITY_MAX_W);
-    lv_label_set_long_mode(_route_names_label, LV_LABEL_LONG_CLIP);
+    lv_label_set_long_mode(_route_names_label, LV_LABEL_LONG_WRAP);
     lv_obj_add_flag(_route_names_label, LV_OBJ_FLAG_HIDDEN);
 
     _photo_credit_label = lv_label_create(_card);
