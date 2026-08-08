@@ -8,6 +8,7 @@
 #include "airports_lookup.h"
 #include "../pins_config.h"
 #include <cstdio> // snprintf -- not reliably transitive under libstdc++ (Pi build)
+#include <cstring>
 
 static lv_obj_t *_card = nullptr;
 #if LCD_H_RES >= 1280
@@ -25,7 +26,13 @@ static lv_obj_t *_reg_label = nullptr;
 static lv_obj_t *_operator_label = nullptr;
 static lv_obj_t *_type_label = nullptr;
 static lv_obj_t *_aircraft_detail_label = nullptr;
-static lv_obj_t *_route_label = nullptr;
+// FROM / TO route block (boarding-pass style two columns)
+static lv_obj_t *_route_from_hdr = nullptr;
+static lv_obj_t *_route_to_hdr = nullptr;
+static lv_obj_t *_route_from_icao = nullptr;
+static lv_obj_t *_route_to_icao = nullptr;
+static lv_obj_t *_route_from_name = nullptr;
+static lv_obj_t *_route_to_name = nullptr;
 static lv_obj_t *_photo_credit_label = nullptr;
 #if !defined(ARDUINO)
 static lv_obj_t *_photo_img = nullptr;
@@ -70,7 +77,7 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #if LCD_H_RES >= 1280
 #define CARD_H         340
 #define CARD_PAD       16
-// Wide enough for two-line O/D (ICAO + arrow / dest, then airport names).
+// Wide enough for FROM/TO columns under the identity block.
 #define SUMMARY_W      400
 #define SUMMARY_H      250
 #define PHOTO_SLOT_W   400
@@ -93,7 +100,7 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #define PHOTO_SLOT_H   0
 #define STATS_X        0
 #define IDENTITY_MAX_W (LCD_H_RES - 32)
-// Room for two-line route (origin→ / dest) + two-line airport names.
+// Room for FROM/TO route block under identity.
 #define GRID_Y0        200
 #define GRID_ROW_H     42
 #define GRID_COL_W     160
@@ -193,6 +200,53 @@ static void set_type_and_category(const char *desc_or_type, const char *type_cod
     lv_label_set_text(_type_label, buf);
 }
 
+static void route_set_hidden(bool hidden) {
+    auto apply = [&](lv_obj_t *o) {
+        if (!o) return;
+        if (hidden) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+    };
+    apply(_route_from_hdr);
+    apply(_route_to_hdr);
+    apply(_route_from_icao);
+    apply(_route_to_icao);
+    apply(_route_from_name);
+    apply(_route_to_name);
+}
+
+// Drop common trailing words so FROM/TO name columns stay readable at
+// half-width ("John F. Kennedy International Airport" → "John F. Kennedy").
+static void shorten_airport_name(const char *full, char *out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    if (!full || !full[0]) return;
+    static const char *const SUFFIXES[] = {
+        " International Airport",
+        " International",
+        " Regional Airport",
+        " Municipal Airport",
+        " Airport",
+        " Airfield",
+        " Air Base",
+        " AFB",
+        nullptr
+    };
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s", full);
+    for (int i = 0; SUFFIXES[i]; i++) {
+        size_t bl = strlen(buf);
+        size_t sl = strlen(SUFFIXES[i]);
+        if (bl > sl && strcmp(buf + bl - sl, SUFFIXES[i]) == 0) {
+            buf[bl - sl] = '\0';
+            break;
+        }
+    }
+    // Trim trailing spaces after stripping.
+    size_t n = strlen(buf);
+    while (n > 0 && buf[n - 1] == ' ') buf[--n] = '\0';
+    snprintf(out, out_sz, "%s", buf[0] ? buf : full);
+}
+
 static void on_enrichment_ready(AircraftEnrichment *data) {
     if (!_visible) return;
 
@@ -229,18 +283,17 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         const char *o = data->origin_icao[0] ? data->origin_icao : "----";
         const char *d = data->dest_icao[0] ? data->dest_icao : "----";
         char oname[64] = {}, dname[64] = {};
+        char oshort[48] = {}, dshort[48] = {};
         airports_format_name(data->origin_icao, oname, sizeof(oname));
         airports_format_name(data->dest_icao, dname, sizeof(dname));
+        shorten_airport_name(oname, oshort, sizeof(oshort));
+        shorten_airport_name(dname, dshort, sizeof(dshort));
 
-        // Vertical route: "ICAO  Name" / down-arrow / "ICAO  Name".
-        // LV_SYMBOL_DOWN is FontAwesome; Unicode arrows are missing from Montserrat.
-        char line_o[80], line_d[80];
-        if (oname[0]) snprintf(line_o, sizeof(line_o), "%s  %s", o, oname);
-        else snprintf(line_o, sizeof(line_o), "%s", o);
-        if (dname[0]) snprintf(line_d, sizeof(line_d), "%s  %s", d, dname);
-        else snprintf(line_d, sizeof(line_d), "%s", d);
-        lv_label_set_text_fmt(_route_label, "%s\n  " LV_SYMBOL_DOWN "\n%s", line_o, line_d);
-        lv_obj_clear_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(_route_from_icao, o);
+        lv_label_set_text(_route_to_icao, d);
+        lv_label_set_text(_route_from_name, oshort[0] ? oshort : "—");
+        lv_label_set_text(_route_to_name, dshort[0] ? dshort : "—");
+        route_set_hidden(false);
     }
 
 #if !defined(ARDUINO)
@@ -499,7 +552,9 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_op = 54;
     const int y_type = 76;
     const int y_detail = 98;
-    const int y_route = 120; // ICAO+name / ↓ / ICAO+name (wraps if needed)
+    const int y_route_hdr = 122;
+    const int y_route_icao = 140;
+    const int y_route_name = 162;
 #else
     lv_obj_t *id_parent = _card;
     const int id_x = 0;
@@ -508,7 +563,9 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_op = 56;
     const int y_type = 78;
     const int y_detail = 98;
-    const int y_route = 118;
+    const int y_route_hdr = 120;
+    const int y_route_icao = 138;
+    const int y_route_name = 160;
 #endif
 
     // === HEADER / IDENTITY ===
@@ -553,14 +610,49 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     lv_obj_set_width(_aircraft_detail_label, IDENTITY_MAX_W);
     lv_label_set_long_mode(_aircraft_detail_label, LV_LABEL_LONG_CLIP);
 
-    _route_label = lv_label_create(id_parent);
-    lv_label_set_text(_route_label, "");
-    lv_obj_set_style_text_font(_route_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_route_label, CARD_ACCENT, 0);
-    lv_obj_set_pos(_route_label, id_x, y_route);
-    lv_obj_set_width(_route_label, IDENTITY_MAX_W);
-    lv_label_set_long_mode(_route_label, LV_LABEL_LONG_WRAP);
-    lv_obj_add_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
+    // FROM / TO — two columns, boarding-pass style (no arrow).
+    const int route_gap = 12;
+    const int route_col_w = (IDENTITY_MAX_W - route_gap) / 2;
+    const int route_to_x = id_x + route_col_w + route_gap;
+
+    auto make_route_hdr = [&](const char *text, int x) {
+        lv_obj_t *lbl = lv_label_create(id_parent);
+        lv_label_set_text(lbl, text);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, CARD_DIM, 0);
+        lv_obj_set_pos(lbl, x, y_route_hdr);
+        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        return lbl;
+    };
+    auto make_route_icao = [&](int x) {
+        lv_obj_t *lbl = lv_label_create(id_parent);
+        lv_label_set_text(lbl, "");
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(lbl, CARD_ACCENT, 0);
+        lv_obj_set_pos(lbl, x, y_route_icao);
+        lv_obj_set_width(lbl, route_col_w);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        return lbl;
+    };
+    auto make_route_name = [&](int x) {
+        lv_obj_t *lbl = lv_label_create(id_parent);
+        lv_label_set_text(lbl, "");
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, CARD_DIM, 0);
+        lv_obj_set_pos(lbl, x, y_route_name);
+        lv_obj_set_width(lbl, route_col_w);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        return lbl;
+    };
+
+    _route_from_hdr = make_route_hdr("FROM", id_x);
+    _route_to_hdr = make_route_hdr("TO", route_to_x);
+    _route_from_icao = make_route_icao(id_x);
+    _route_to_icao = make_route_icao(route_to_x);
+    _route_from_name = make_route_name(id_x);
+    _route_to_name = make_route_name(route_to_x);
 
     _photo_credit_label = lv_label_create(_card);
     lv_label_set_text(_photo_credit_label, "");
@@ -693,8 +785,11 @@ void detail_card_show(const Aircraft *ac) {
 
     // Clear enrichment fields
     lv_label_set_text(_aircraft_detail_label, "");
-    lv_label_set_text(_route_label, "");
-    lv_obj_add_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
+    if (_route_from_icao) lv_label_set_text(_route_from_icao, "");
+    if (_route_to_icao) lv_label_set_text(_route_to_icao, "");
+    if (_route_from_name) lv_label_set_text(_route_from_name, "");
+    if (_route_to_name) lv_label_set_text(_route_to_name, "");
+    route_set_hidden(true);
     lv_label_set_text(_photo_credit_label, "");
     lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 #if !defined(ARDUINO)
