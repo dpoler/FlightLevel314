@@ -26,7 +26,6 @@ static lv_obj_t *_operator_label = nullptr;
 static lv_obj_t *_type_label = nullptr;
 static lv_obj_t *_aircraft_detail_label = nullptr;
 static lv_obj_t *_route_label = nullptr;
-static lv_obj_t *_route_names_label = nullptr;
 static lv_obj_t *_photo_credit_label = nullptr;
 #if !defined(ARDUINO)
 static lv_obj_t *_photo_img = nullptr;
@@ -229,21 +228,19 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
     if (data->origin_icao[0] || data->dest_icao[0]) {
         const char *o = data->origin_icao[0] ? data->origin_icao : "----";
         const char *d = data->dest_icao[0] ? data->dest_icao : "----";
-        // Two lines so ICAOs never clip: origin + arrow, then destination.
-        // LV_SYMBOL_RIGHT is in the bundled FontAwesome set; Unicode → is not
-        // in Montserrat and rendered as empty tofu.
-        lv_label_set_text_fmt(_route_label, "%s  " LV_SYMBOL_RIGHT "\n%s", o, d);
-        lv_obj_clear_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
-
         char oname[64] = {}, dname[64] = {};
         airports_format_name(data->origin_icao, oname, sizeof(oname));
         airports_format_name(data->dest_icao, dname, sizeof(dname));
-        if (oname[0] || dname[0]) {
-            lv_label_set_text_fmt(_route_names_label, "%s\n%s",
-                                  oname[0] ? oname : "—",
-                                  dname[0] ? dname : "—");
-            lv_obj_clear_flag(_route_names_label, LV_OBJ_FLAG_HIDDEN);
-        }
+
+        // Vertical route: "ICAO  Name" / down-arrow / "ICAO  Name".
+        // LV_SYMBOL_DOWN is FontAwesome; Unicode arrows are missing from Montserrat.
+        char line_o[80], line_d[80];
+        if (oname[0]) snprintf(line_o, sizeof(line_o), "%s  %s", o, oname);
+        else snprintf(line_o, sizeof(line_o), "%s", o);
+        if (dname[0]) snprintf(line_d, sizeof(line_d), "%s  %s", d, dname);
+        else snprintf(line_d, sizeof(line_d), "%s", d);
+        lv_label_set_text_fmt(_route_label, "%s\n  " LV_SYMBOL_DOWN "\n%s", line_o, line_d);
+        lv_obj_clear_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
     }
 
 #if !defined(ARDUINO)
@@ -502,8 +499,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_op = 54;
     const int y_type = 76;
     const int y_detail = 98;
-    const int y_route = 120;       // two lines: origin→ / dest
-    const int y_route_names = 164; // two lines of airport names under ICAOs
+    const int y_route = 120; // ICAO+name / ↓ / ICAO+name (wraps if needed)
 #else
     lv_obj_t *id_parent = _card;
     const int id_x = 0;
@@ -513,7 +509,6 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_type = 78;
     const int y_detail = 98;
     const int y_route = 118;
-    const int y_route_names = 162;
 #endif
 
     // === HEADER / IDENTITY ===
@@ -560,21 +555,12 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
 
     _route_label = lv_label_create(id_parent);
     lv_label_set_text(_route_label, "");
-    lv_obj_set_style_text_font(_route_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(_route_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_route_label, CARD_ACCENT, 0);
     lv_obj_set_pos(_route_label, id_x, y_route);
     lv_obj_set_width(_route_label, IDENTITY_MAX_W);
     lv_label_set_long_mode(_route_label, LV_LABEL_LONG_WRAP);
     lv_obj_add_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
-
-    _route_names_label = lv_label_create(id_parent);
-    lv_label_set_text(_route_names_label, "");
-    lv_obj_set_style_text_font(_route_names_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_route_names_label, CARD_DIM, 0);
-    lv_obj_set_pos(_route_names_label, id_x, y_route_names);
-    lv_obj_set_width(_route_names_label, IDENTITY_MAX_W);
-    lv_label_set_long_mode(_route_names_label, LV_LABEL_LONG_WRAP);
-    lv_obj_add_flag(_route_names_label, LV_OBJ_FLAG_HIDDEN);
 
     _photo_credit_label = lv_label_create(_card);
     lv_label_set_text(_photo_credit_label, "");
@@ -709,8 +695,6 @@ void detail_card_show(const Aircraft *ac) {
     lv_label_set_text(_aircraft_detail_label, "");
     lv_label_set_text(_route_label, "");
     lv_obj_add_flag(_route_label, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(_route_names_label, "");
-    lv_obj_add_flag(_route_names_label, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(_photo_credit_label, "");
     lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 #if !defined(ARDUINO)
