@@ -347,6 +347,14 @@ mostly chronological.
 
 ### 7.1 Genuinely open / not started
 
+- **Location switch: successful fetch but empty Map for a couple of refreshes**:
+  switching active location from Heathrow (EGLL) to Denver, `adsb.lol`
+  appeared to fetch successfully but no aircraft rendered for a couple of
+  refresh cycles afterward. Possible stale list / range filter / projection
+  center race, or a brief empty payload accepted as OK before the new
+  location's traffic arrives. Repro and root-cause not done. **Do not start
+  until explicitly asked** — reported 2026-08-08.
+
 - **Basemap / sectional coverage outside the US (esp. UK)**: FAA VFR
   sectional style is US-charting only — expected empty/useless for UK and
   other non-US regions; either gate the style by geography or label it
