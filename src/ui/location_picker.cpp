@@ -16,7 +16,7 @@
 // Wide enough for "KJFK  John F. Kennedy International" + icon cluster.
 #define PANEL_W    540
 #define ROW_H      56   // was 44 -- felt cramped once the reorder handle was added (reported)
-#define ROW_ICON_RESERVE 110 // eye + grip + close on the right
+#define ROW_ICON_RESERVE 138 // edit + eye + grip + close on the right
 #define BTN_W      60   // matches status_bar.cpp's CHIP_W -- same width as every other button in the bar (nav tabs, range/TRAIL/TAG chips)
 #define BTN_H      24   // matches status_bar.cpp's CHIP_H (and the nav tabs' own height)
 #define ADD_MATCH_MAX 5
@@ -60,10 +60,12 @@ static lv_obj_t *_wp_lat_ta = nullptr;
 static lv_obj_t *_wp_lon_ta = nullptr;
 static lv_obj_t *_wp_elev_ta = nullptr;
 static lv_obj_t *_wp_status_lbl = nullptr;
+static int _edit_idx = -1; // >=0 while build_edit_view is showing that row
 
 static void build_list_view();
 static void build_add_view();
 static void build_add_waypoint_view();
+static void build_edit_view(int idx);
 
 static void update_picker_label() {
     const Location *loc = locations_get(locations_active_index());
@@ -98,6 +100,7 @@ static void close_overlay() {
         _wp_lon_ta = nullptr;
         _wp_elev_ta = nullptr;
         _wp_status_lbl = nullptr;
+        _edit_idx = -1;
     }
 }
 
@@ -169,6 +172,11 @@ static void remove_row_click_cb(lv_event_t *e) {
     build_list_view(); // rebuild panel in place
 }
 
+static void edit_row_click_cb(lv_event_t *e) {
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    build_edit_view(idx);
+}
+
 // "Nearby large airports" toggle -- eye icon in the row's icon cluster (see
 // locations.h for the caching design). Rebuilds the whole list on tap rather
 // than patching just the one icon/badge in place, matching the existing
@@ -183,7 +191,7 @@ static void add_nearby_toggle(lv_obj_t *row, int idx) {
     lv_obj_t *eye = lv_label_create(row);
     lv_label_set_text(eye, LV_SYMBOL_EYE_OPEN);
     lv_obj_set_style_text_color(eye, locations_nearby_enabled(idx) ? COLOR_ACCENT : COLOR_DIM, 0);
-    lv_obj_align(eye, LV_ALIGN_RIGHT_MID, -64, 0);
+    lv_obj_align(eye, LV_ALIGN_RIGHT_MID, -92, 0);
     lv_obj_add_flag(eye, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(eye, 10);
     lv_obj_add_event_cb(eye, nearby_toggle_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
@@ -307,6 +315,7 @@ static void build_list_view() {
     _wp_lon_ta = nullptr;
     _wp_elev_ta = nullptr;
     _wp_status_lbl = nullptr;
+    _edit_idx = -1;
 
     // Sized exactly to content (saved locations + the two "Add" rows) -- no
     // minimum floor. A prior pass added one to avoid a "tiny box" look with
@@ -388,6 +397,16 @@ static void build_list_view() {
         lv_obj_add_flag(rm, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_ext_click_area(rm, 10);
         lv_obj_add_event_cb(rm, remove_row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+
+        // Edit -- opens rename / coords form (waypoints editable; airports
+        // rename + view coords). Left of the eye so remove/grip stay put.
+        lv_obj_t *ed = lv_label_create(row);
+        lv_label_set_text(ed, LV_SYMBOL_EDIT);
+        lv_obj_set_style_text_color(ed, COLOR_DIM, 0);
+        lv_obj_align(ed, LV_ALIGN_RIGHT_MID, -120, 0);
+        lv_obj_add_flag(ed, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_ext_click_area(ed, 10);
+        lv_obj_add_event_cb(ed, edit_row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         add_nearby_toggle(row, i);
 
@@ -747,6 +766,136 @@ static void build_add_waypoint_view() {
     lv_obj_set_style_text_font(_wp_status_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_width(_wp_status_lbl, PANEL_W - 20);
     lv_obj_set_pos(_wp_status_lbl, 0, 244);
+}
+
+static void edit_save_click_cb(lv_event_t *e) {
+    (void)e;
+    if (_edit_idx < 0) return;
+    const char *name = lv_textarea_get_text(_wp_name_ta);
+    float lat = 0, lon = 0;
+    int elev = 0;
+    if (_wp_lat_ta) lat = (float)atof(lv_textarea_get_text(_wp_lat_ta));
+    if (_wp_lon_ta) lon = (float)atof(lv_textarea_get_text(_wp_lon_ta));
+    if (_wp_elev_ta) elev = atoi(lv_textarea_get_text(_wp_elev_ta));
+
+    char err[48];
+    if (locations_update(_edit_idx, name, lat, lon, elev, err, sizeof(err))) {
+        update_picker_label();
+        build_list_view();
+    } else {
+        lv_label_set_text(_wp_status_lbl, err);
+        lv_obj_set_style_text_color(_wp_status_lbl, COLOR_ERR, 0);
+    }
+}
+
+// Edit / rename: waypoints get full name+coords; airports get rename + a
+// read-only view of ICAO/lat/lon/elev (geometry stays airportdb-sourced).
+static void build_edit_view(int idx) {
+    const Location *loc = locations_get(idx);
+    if (!loc) return;
+
+    if (_panel) {
+        lv_obj_add_flag(_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_delete_async(_panel);
+    }
+    _edit_idx = idx;
+    const bool is_airport = loc->icao[0] != '\0';
+
+    _panel = lv_obj_create(_overlay);
+    lv_obj_set_size(_panel, PANEL_W, is_airport ? 310 : 290);
+    lv_obj_set_pos(_panel, 8, 8);
+    lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
+    lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_panel, 1, 0);
+    lv_obj_set_style_border_color(_panel, COLOR_DIM, 0);
+    lv_obj_set_style_border_opa(_panel, LV_OPA_40, 0);
+    lv_obj_set_style_radius(_panel, 8, 0);
+    lv_obj_set_style_pad_all(_panel, 10, 0);
+    lv_obj_clear_flag(_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(_panel);
+    lv_label_set_text(title, is_airport ? "Edit airport" : "Edit location");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(title, COLOR_TEXT, 0);
+    lv_obj_set_pos(title, 0, 0);
+
+    int y = 28;
+    if (is_airport) {
+        lv_obj_t *icao_lbl = lv_label_create(_panel);
+        lv_label_set_text_fmt(icao_lbl, "ICAO  %s", loc->icao);
+        lv_obj_set_style_text_font(icao_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(icao_lbl, COLOR_ACCENT, 0);
+        lv_obj_set_pos(icao_lbl, 0, y);
+        y += 28;
+    }
+
+    _wp_name_ta = wp_field(y, "Name", LOC_NAME_LEN - 1);
+    lv_textarea_set_text(_wp_name_ta, loc->name);
+    y += 42;
+
+    if (is_airport) {
+        // Read-only coords so typos are visible even when geometry isn't editable.
+        _wp_lat_ta = nullptr;
+        _wp_lon_ta = nullptr;
+        _wp_elev_ta = nullptr;
+        lv_obj_t *coords = lv_label_create(_panel);
+        lv_label_set_text_fmt(coords, "Lat %.4f   Lon %.4f   Elev %d ft",
+                              loc->lat, loc->lon, loc->elevation_ft);
+        lv_obj_set_style_text_font(coords, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(coords, COLOR_DIM, 0);
+        lv_obj_set_width(coords, PANEL_W - 20);
+        lv_obj_set_pos(coords, 0, y);
+        y += 36;
+    } else {
+        char buf[32];
+        _wp_lat_ta = wp_field(y, "Latitude", 0, LV_KEYBOARD_MODE_NUMBER);
+        snprintf(buf, sizeof(buf), "%.4f", loc->lat);
+        lv_textarea_set_text(_wp_lat_ta, buf);
+        y += 42;
+        _wp_lon_ta = wp_field(y, "Longitude", 0, LV_KEYBOARD_MODE_NUMBER);
+        snprintf(buf, sizeof(buf), "%.4f", loc->lon);
+        lv_textarea_set_text(_wp_lon_ta, buf);
+        y += 42;
+        _wp_elev_ta = wp_field(y, "Elevation ft", 0, LV_KEYBOARD_MODE_NUMBER);
+        snprintf(buf, sizeof(buf), "%d", loc->elevation_ft);
+        lv_textarea_set_text(_wp_elev_ta, buf);
+        y += 46;
+    }
+
+    lv_obj_t *save_btn = lv_obj_create(_panel);
+    lv_obj_set_size(save_btn, 90, BTN_H + 10);
+    lv_obj_set_pos(save_btn, 0, y);
+    lv_obj_set_style_bg_color(save_btn, COLOR_ACCENT, 0);
+    lv_obj_set_style_radius(save_btn, 6, 0);
+    lv_obj_clear_flag(save_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(save_btn, edit_save_click_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *save_lbl = lv_label_create(save_btn);
+    lv_label_set_text(save_lbl, "Save");
+    lv_obj_set_style_text_color(save_lbl, lv_color_hex(0x000000), 0);
+    lv_obj_center(save_lbl);
+
+    lv_obj_t *back_btn = lv_obj_create(_panel);
+    lv_obj_set_size(back_btn, 90, BTN_H + 10);
+    lv_obj_set_pos(back_btn, 100, y);
+    lv_obj_set_style_bg_color(back_btn, COLOR_ROW, 0);
+    lv_obj_set_style_radius(back_btn, 6, 0);
+    lv_obj_clear_flag(back_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(back_btn, [](lv_event_t *e) {
+        (void)e;
+        _edit_idx = -1;
+        build_list_view();
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *back_lbl = lv_label_create(back_btn);
+    lv_label_set_text(back_lbl, "Cancel");
+    lv_obj_set_style_text_color(back_lbl, COLOR_DIM, 0);
+    lv_obj_center(back_lbl);
+
+    _wp_status_lbl = lv_label_create(_panel);
+    lv_label_set_text(_wp_status_lbl, is_airport ? "Name only — coords from airport DB" : "");
+    lv_obj_set_style_text_font(_wp_status_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_wp_status_lbl, COLOR_DIM, 0);
+    lv_obj_set_width(_wp_status_lbl, PANEL_W - 20);
+    lv_obj_set_pos(_wp_status_lbl, 0, y + 44);
 }
 
 void location_picker_init(lv_obj_t *screen) {

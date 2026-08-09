@@ -467,6 +467,51 @@ bool locations_add_waypoint(const char *name, float lat, float lon, int elevatio
     return true;
 }
 
+bool locations_update(int idx, const char *name, float lat, float lon, int elevation_ft,
+                      char *err, size_t err_size) {
+    auto fail = [&](const char *msg) {
+        if (err && err_size) strlcpy(err, msg, err_size);
+        return false;
+    };
+
+    if (!name || !name[0]) return fail("no name given");
+
+    char clean_name[LOC_NAME_LEN] = {};
+    size_t j = 0;
+    for (const char *p = name; *p && j < sizeof(clean_name) - 1; p++) {
+        if (*p == '|') continue;
+        clean_name[j++] = *p;
+    }
+    clean_name[j] = '\0';
+    if (!clean_name[0]) return fail("name is empty");
+
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (idx < 0 || idx >= _count) return fail("bad index");
+    for (int i = 0; i < _count; i++) {
+        if (i == idx) continue;
+        if (strcmp(_locations[i].name, clean_name) == 0) return fail("name already used");
+    }
+
+    Location &loc = _locations[idx];
+    const bool was_active = (_active_index == idx);
+    const bool renamed = (strcmp(loc.name, clean_name) != 0);
+
+    strlcpy(loc.name, clean_name, sizeof(loc.name));
+    if (!loc.icao[0]) {
+        loc.lat = lat;
+        loc.lon = lon;
+        loc.elevation_ft = elevation_ft;
+    }
+
+    if (was_active && renamed) {
+        strlcpy(g_config.last_location_name, clean_name, sizeof(g_config.last_location_name));
+        storage_save_config(g_config);
+    }
+
+    save_all_locked();
+    return true;
+}
+
 // Async add: spawns a detached thread rather than using ESP32's
 // request/poll-from-an-existing-task dance (see file header comment) --
 // there's no shared-stack budget to protect on Linux.

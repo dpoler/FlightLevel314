@@ -56,7 +56,7 @@ static UserConfig defaults() {
     cfg.screensaver_drift = true;
     for (int i = 0; i < 4; i++) {
         cfg.view_filter_mask[i] = 0;
-        cfg.view_hide_ground[i] = false;
+        cfg.view_hide_ground[i] = true; // hide GND by default (fresh installs only)
     }
     for (int i = 0; i < 2; i++) {
         cfg.view_trails_enabled[i] = true;
