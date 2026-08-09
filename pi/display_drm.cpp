@@ -1,5 +1,8 @@
 #include "display.h"
+#include "../src/platform/platform.h"
 
+#include <cerrno>
+#include <cstring>
 #include <xf86drmMode.h>
 
 // Real-hardware backend. /dev/dri/card0 assumes the Waveshare DSI panel
@@ -17,6 +20,28 @@ struct DrmDevPeek {
     uint32_t crtc_idx;
 };
 
+static void blank_hw_cursor(lv_display_t *disp) {
+    auto *dev = static_cast<DrmDevPeek *>(lv_display_get_driver_data(disp));
+    if (!dev || dev->fd < 0 || dev->crtc_id == 0) return;
+    // handle=0 disables the cursor plane. Ignore EBUSY — next REFR_READY retries.
+    if (drmModeSetCursor(dev->fd, dev->crtc_id, 0, 0, 0) != 0 && errno != EBUSY) {
+        platform_log("DRM: hide HW cursor failed (crtc=%u): %s\n",
+                     dev->crtc_id, strerror(errno));
+    }
+}
+
+// LVGL's first atomic flush uses DRM_MODE_ATOMIC_ALLOW_MODESET, which can
+// resurrect the VC4 cursor plane after we blanked it in pi_display_init().
+// Re-blank for a few frames after that modeset, then detach.
+static void blank_hw_cursor_after_modeset(lv_event_t *e) {
+    static int remaining = 8;
+    lv_display_t *disp = static_cast<lv_display_t *>(lv_event_get_user_data(e));
+    blank_hw_cursor(disp);
+    if (--remaining <= 0) {
+        lv_display_remove_event_cb_with_user_data(disp, blank_hw_cursor_after_modeset, disp);
+    }
+}
+
 lv_display_t *pi_display_init() {
     lv_display_t *disp = lv_linux_drm_create();
     lv_linux_drm_set_file(disp, "/dev/dri/card0", -1);
@@ -25,10 +50,8 @@ lv_display_t *pi_display_init() {
     // modeset — looks like a stuck pointer in the upper-left. LVGL never
     // enables a software cursor; this is the DRM plane. Blank it using
     // LVGL's DRM-master fd (a second open wouldn't have permission).
-    auto *dev = static_cast<DrmDevPeek *>(lv_display_get_driver_data(disp));
-    if (dev && dev->fd >= 0 && dev->crtc_id != 0) {
-        drmModeSetCursor(dev->fd, dev->crtc_id, 0, 0, 0);
-    }
+    blank_hw_cursor(disp);
+    lv_display_add_event_cb(disp, blank_hw_cursor_after_modeset, LV_EVENT_REFR_READY, disp);
 
     return disp;
 }

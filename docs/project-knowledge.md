@@ -367,7 +367,11 @@ detail card. See backlog §7 for full scope.
   visible, update counter stuck, touch dead. Fixed via idempotent configure
   patch `pi/patches/apply_lvgl_drm_patch.py` (NULL `req` on failure, 500ms
   poll timeout, NONBLOCK→blocking retry). Also blank the VC4 hardware
-  cursor plane in `display_drm.cpp` (stuck pointer at upper-left).
+  cursor plane in `display_drm.cpp` (stuck pointer at upper-left). Re-blank
+  also runs for a few `REFR_READY` frames after LVGL's first
+  `ALLOW_MODESET` flush, which can resurrect the cursor plane. Input init
+  must not `lv_free` the path from `lv_libinput_find_dev` (static cache)
+  and must not fall back to `/dev/input/event0`.
   Reported 2026-08-09 after FlightLevel314 redeploy; README changes were
   unrelated. **Rebuild DRM binary after pull** (`cmake` reconfigure runs
   the patch).
