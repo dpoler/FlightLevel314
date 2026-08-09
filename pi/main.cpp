@@ -8,6 +8,7 @@
 #include "../src/data/locations.h"
 #include "../src/data/airlines.h"
 #include "../src/data/enrichment.h"
+#include "../src/data/ota.h"
 #include "../src/ui/views.h"
 #include "../src/ui/detail_card.h"
 #include "../src/ui/range.h"
@@ -173,6 +174,7 @@ int main() {
             aircraft_list.unlock();
         }
         status_bar_update(fetcher_wifi_connected(), count, stats_get()->current_count, fetcher_last_update());
+        ota_poll();
         // While Map is downloading tiles, refresh the upper-right "Map N%" often.
         int bm_pct = 0;
         lv_timer_set_period(t, basemap_updating(&bm_pct) ? 200 : 1000);

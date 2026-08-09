@@ -8,6 +8,7 @@
 #include "../data/storage.h"
 #if !defined(ARDUINO)
 #include "basemap.h"
+#include "../data/ota.h"
 #endif
 
 static lv_obj_t *wifi_icon;
@@ -206,13 +207,19 @@ void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircra
         lv_label_set_text_fmt(ac_count_label, "%d AC", aircraft_count);
     }
 
-    // Last update age — or basemap build progress while Map tiles are fetching.
-    // Replaces the "%lus" counter for the duration of a network basemap build
-    // so there's one upper-right status, not a second chrome overlay.
+    // Last update age — or basemap / OTA progress in the same corner slot.
 #if !defined(ARDUINO)
     int bm_pct = 0;
     if (basemap_updating(&bm_pct)) {
         lv_label_set_text_fmt(update_label, "Map %d%%", bm_pct);
+        return;
+    }
+    if (ota_status == OTA_DOWNLOADING) {
+        lv_label_set_text_fmt(update_label, "OTA %d%%", ota_progress);
+        return;
+    }
+    if (ota_status == OTA_AVAILABLE && ota_latest_tag[0]) {
+        lv_label_set_text_fmt(update_label, "Upd %s", ota_latest_tag);
         return;
     }
 #endif
@@ -223,7 +230,6 @@ void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircra
         lv_label_set_text_fmt(update_label, "%lus", ago);
     }
 }
-
 void status_bar_set_gear_callback(lv_event_cb_t cb) {
     lv_obj_add_event_cb(gear_icon, cb, LV_EVENT_CLICKED, nullptr);
 }
