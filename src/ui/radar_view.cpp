@@ -501,9 +501,9 @@ static void draw_blips(lv_layer_t *layer) {
 
                 if (tag_type_shown()) {
                     char line2[48] = {};
-                    if (ac.owner_op[0]) strlcpy(line2, ac.owner_op, sizeof(line2));
+                    // Short ICAO type (A21N, B789) — not owner/operator.
+                    if (ac.type_code[0]) strlcpy(line2, ac.type_code, sizeof(line2));
                     else if (ac.desc[0]) strlcpy(line2, ac.desc, sizeof(line2));
-                    else strlcpy(line2, ac.type_code, sizeof(line2));
                     lv_draw_label_dsc_t l2;
                     lv_draw_label_dsc_init(&l2);
                     l2.color = color;
