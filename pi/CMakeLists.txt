@@ -24,6 +24,10 @@ endif()
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_BUILD_DEMOS OFF CACHE BOOL "" FORCE)
 
+# LVGL looks for lv_conf.h at configure time. Point it at pi/lv_conf.h
+# (there is no repo-root lv_conf.h — that was the old ESP32 PSRAM config).
+set(LV_BUILD_CONF_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "" FORCE)
+
 # Must match the LVGL version shared UI was last built against (v9.5.0).
 # Shared code (e.g. src/ui/aircraft_icons.h) uses APIs that differ across
 # LVGL 9.x point releases — bump deliberately when upgrading.
@@ -59,9 +63,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(ArduinoJson)
 
-# lv_conf.h lives here (pi/), not at the repo root -- the ESP32 side's root
-# lv_conf.h uses a custom PSRAM allocator that doesn't apply on Linux. See
-# pi/lv_conf.h's own comment.
+# lv_conf.h lives here (pi/). See pi/lv_conf.h.
 target_include_directories(lvgl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
 
@@ -112,7 +114,8 @@ add_custom_target(airports_db_ensure
     VERBATIM
 )
 
-# Shared UI/data sources (historical ARDUINO forks remain in some files).
+# Shared UI/data sources (Pi/Linux). Some files still carry historical
+# `#if !defined(ARDUINO)` guards that are always true in this build.
 set(SHARED_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/views.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/stats.cpp

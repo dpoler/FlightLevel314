@@ -60,15 +60,15 @@ PAT/SSH setup unless he asks; push from Mac instead.
 
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
-- Airport Mode Phase 3 — INFO layout revamp (METAR + ATIS); approach TBD
 - Follow Mode
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
-- Pi-only cleanup: strip leftover jc1060 / ESP32 surface area from this repo
 
 Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
 
-Recently closed (2026-08-09): GND default hidden; edit/rename saved locations;
-LIST GND refresh + Pi columns; Settings Cancel/Save; brightness; VIEW two-col.
+Recently closed (2026-08-09): Airport Mode Phase 3 (INFO METAR/ATIS);
+Pi-only cleanup (ESP32/jc1060 sources removed); GND default hidden;
+edit/rename saved locations; LIST GND refresh; Settings Cancel/Save;
+brightness; VIEW two-col.
 
 ### Dan / workflow
 - Name: Dan. Prefers working directly in code; builds himself unless asked.
@@ -430,12 +430,13 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
 
 ### 7.1 Open
 
-- **Pi-only cleanup — remove / archive leftover jc1060 / ESP32 surface area
-  in this repo**: FlightLevel314 is Pi-only now. Strip or quarantine
-  PlatformIO / `ARDUINO` paths, ESP32-only stubs that confuse the tree, and
-  dual-target comments that imply jc1060 is still a first-class target here.
-  Cherry-picks back to `dpoler/adsb` remain fine later; do not reintroduce
-  PlatformIO as a build target.
+- ~~**Pi-only cleanup — remove / archive leftover jc1060 / ESP32 surface area
+  in this repo**~~ **done 2026-08-09** — deleted unlinked ESP32 sources
+  (`src/hal/`, `src/main.cpp`, PlatformIO-era data .cpp, serial_config,
+  screensaver, tile_cache, configure_device scripts, root `lv_conf.h`);
+  flattened Pi-only headers (`aircraft.h`, `locations.h`, `platform.h`, …).
+  Historical ESP32 narrative remains in this doc for archaeology /
+  cherry-picks to `dpoler/adsb`.
 
 - ~~**Detail card photo credit appears before the photo**~~ **done 2026-08-09**
   — Pi shows credit only with visible pixels.
@@ -483,11 +484,9 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   vanish. Needs an answer (re-center the query too? accept follow ends at query
   edge?), a clear exit path, and probably a status-bar indicator.
 
-- **Airport Mode, Phase 3 (INFO METAR/ATIS)**: in progress on
-  `cursor/airport-mode-info-metar-atis-e1e8` — Pi INFO four-quadrant layout
-  (CURRENT TRAFFIC / LOCATION | METAR / ATIS); METAR via aviationweather.gov
-  (ICAO-first, 50nm nearest fallback, ~15 min); D-ATIS via datis.clowd.io
-  (US majors; arr/dep when split). Europe deferred (no solid free API).
+- ~~**Airport Mode, Phase 3 (INFO METAR/ATIS)**~~ **done 2026-08-09** —
+  Pi INFO four-quadrant / 1/3–2/3 layout; METAR via aviationweather.gov;
+  D-ATIS via datis.clowd.io (US majors). Europe deferred (no solid free API).
 
 - **Quality of life / display settings**: color themes, font size — not
   started. ~~Brightness backend is real/complete but has no working UI~~
@@ -508,12 +507,9 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   real time-of-day, only `millis()`-based elapsed time). Not decided — deferred
   for a later conversation.
 
-- **Redesign `configure_device.sh`/`.ps1`'s UX**: functionality confirmed
-  working end-to-end; presentation is "really ugly" per the user. No specific
-  redesign direction given yet — ask for specifics (menu layout? colored
-  output? progress indication?) before implementing.
-
-- **No way to set the airportdb.io token on a Pi device**: see §6.
+- ~~**Redesign `configure_device.sh`/`.ps1`'s UX**~~ **removed 2026-08-09** —
+  scripts deleted with Pi-only cleanup (USB-serial board tool). Use Settings
+  / editing `~/.config/flightlevel314/config.json` on Pi instead.
 
 - **Tidy up the Pi's boot sequence**: see §6.
 

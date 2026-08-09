@@ -1,18 +1,10 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 
-// Platform-abstraction seam shared between the jc1060 (ESP32-P4, via
-// src/platform/esp32/) and Pi (Linux, via pi/platform_linux/) targets.
-// data/*.cpp is migrated to call these instead of raw Arduino/FreeRTOS
-// APIs so the same source file compiles for both. See
-// src/platform/esp32/platform_esp32.cpp for the ESP32 side (thin wrapper
-// over what jc1060 already does) and pi/platform_linux/platform_linux.cpp
-// for the Linux side.
-//
-// platform_config_load/save and platform_http_get aren't wired into any
-// data/*.cpp file yet (that's task #4/#5 of the Pi port -- see
-// project_pi_port memory).
+// Platform seam for FlightLevel314 (Pi/Linux). Implemented in
+// pi/platform_linux/platform_linux.cpp.
 
 // --- Mutex ---
 typedef void *platform_mutex_t;
@@ -40,10 +32,8 @@ bool platform_http_get_ex(const char *url, char *out, size_t out_size, size_t *o
                           long *http_status, const char *const *extra_headers);
 
 // --- Config storage ---
-// Raw byte blob load/save, keyed by name -- ESP32 side maps this onto an
-// NVS blob, Linux side onto a JSON file. UserConfig (data/storage.h) is
-// serialized/deserialized by storage.cpp itself either way; this seam only
-// deals in bytes.
+// Raw byte blob load/save, keyed by name — Linux maps this onto a JSON file
+// under ~/.config/flightlevel314/.
 bool platform_config_load(const char *key, void *buf, size_t buf_size, size_t *out_len);
 bool platform_config_save(const char *key, const void *buf, size_t len);
 
@@ -51,28 +41,14 @@ bool platform_config_save(const char *key, const void *buf, size_t len);
 void platform_log(const char *fmt, ...);
 
 // --- Compatibility shims ---
-// Files that used to `#include <Arduino.h>` directly for just millis()/
-// pdMS_TO_TICKS()/strlcpy() now include this header instead. On ESP32 that
-// means pulling in the real Arduino.h here so those globals stay available
-// exactly as before (zero behavior change); on Linux, the shims below
-// stand in for them instead of rewriting every call site during the port.
-#if defined(ARDUINO)
-#include <Arduino.h>
-#else
-#include <cstring>
-
+// Shared UI/data still call millis()/pdMS_TO_TICKS()/strlcpy() from the
+// Arduino-era code; these stand in on Linux.
 inline uint32_t millis() { return platform_millis(); }
 
-// AircraftList::lock() (data/aircraft.h) takes plain milliseconds on
-// Linux, same as the ESP32 side's TickType_t at this project's 1kHz tick
-// rate -- this makes existing `list->lock(pdMS_TO_TICKS(N))` call sites
-// compile unchanged on both.
 #define pdMS_TO_TICKS(ms) (ms)
 
 #if !defined(__APPLE__)
-// glibc has no strlcpy -- macOS libc and the ESP32/Arduino toolchain both
-// already provide one natively, so this only kicks in for real Linux
-// (Pi hardware/VM) builds.
+// glibc has no strlcpy — macOS libc does.
 inline size_t strlcpy(char *dst, const char *src, size_t size) {
     size_t len = strlen(src);
     if (size) {
@@ -82,5 +58,4 @@ inline size_t strlcpy(char *dst, const char *src, size_t size) {
     }
     return len;
 }
-#endif
 #endif

@@ -42,6 +42,7 @@ Re-run the airports generator after pulls that change its schema, or just
 ### Standing preferences
 - **User handles builds** unless asked. Prefer writing code over drive-by
   rebuilds.
-- Do not reintroduce PlatformIO / jc1060 as a first-class target unless
-  explicitly asked — cherry-picks back to `dpoler/adsb` are fine later.
+- This tree is **Pi/Linux only**. Do not reintroduce PlatformIO / jc1060 /
+  ESP32 as a first-class target unless explicitly asked — cherry-picks back
+  to `dpoler/adsb` are fine later.
 - Config lives under `~/.config/flightlevel314/` (not `~/.config/adsb/`).
