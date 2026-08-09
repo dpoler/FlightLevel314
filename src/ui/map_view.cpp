@@ -1016,8 +1016,9 @@ static void draw_aircraft(lv_layer_t *layer) {
                 line_y += 14;
             }
             if (tag_type_shown()) {
-                const char *type_text = ac.owner_op[0] ? ac.owner_op :
-                                        (ac.desc[0] ? ac.desc : ac.type_code);
+                // Short ICAO type (A21N, B789) — not owner/operator.
+                const char *type_text = ac.type_code[0] ? ac.type_code :
+                                        (ac.desc[0] ? ac.desc : "");
                 lbl_dsc.text = type_text;
                 lbl_dsc.text_local = 1;
                 lv_area_t a = {(lv_coord_t)(sx + 12), (lv_coord_t)line_y,
