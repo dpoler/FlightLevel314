@@ -16,25 +16,12 @@
 // connection succeeds).
 #define TLS_HANDSHAKE_TIMEOUT_S 8
 
-// aviationweather.gov's own usage guidance asks for <=1 request/min per
-// client and recommends caching. METARs themselves only update ~hourly (more
-// often around a significant change), so this leaves huge margin -- also
-// re-fetches immediately on an active-location change (see metar_poll()) so
-// switching locations doesn't leave a stale reading up for up to this long.
-#define METAR_REFRESH_MS (10UL * 60UL * 1000UL)
-
-// Search radius around the active location. Tested empirically against a
-// real foothills-adjacent point near Denver: a 10nm box came back with zero
-// stations, a 20nm box found three (13-16nm away). Wide enough to reliably
-// find something in most areas, tight enough that "no station in range"
-// stays a real, reachable outcome rather than never happening. bbox is a
-// rectangle, not a circle, so its corners reach ~1.4x this -- every
-// candidate is re-checked against the true radius below rather than trusting
-// the box edges.
-#define METAR_RANGE_NM 20.0f
+// Routine METARs are roughly hourly; poll at ~4× that rate. Also re-fetches
+// immediately on an active-location change (see metar_poll()).
+#define METAR_REFRESH_MS (15UL * 60UL * 1000UL)
 
 volatile MetarStatus metar_status = METAR_IDLE;
-char metar_raw[128] = "";
+char metar_raw[METAR_RAW_LEN] = "";
 char metar_station[8] = "";
 
 // PSRAM allocator for ArduinoJson -- same pattern as fetcher.cpp/
