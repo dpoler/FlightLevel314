@@ -35,6 +35,9 @@ Generate **gitignored** headers under `src/ui/`:
 - `python3 tools/generate_static_map.py --lat LAT --lon LON` →
   `src/ui/static_map_data.h`
 
+Re-run the airports generator after pulls that change its schema (stale
+headers fail the build with an explicit regen message).
+
 ### Standing preferences
 - **User handles builds** unless asked. Prefer writing code over drive-by
   rebuilds.
