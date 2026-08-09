@@ -4,11 +4,9 @@
 // large/medium). Safe to call when the DB header is missing — lookups
 // return nullptr / 0 matches.
 
-#if __has_include("airports_db.h")
-#include "airports_db.h"
-#elif __has_include("ui/airports_db.h")
-#include "ui/airports_db.h"
-#else
+#include "airports_db_include.h"
+
+#if !HAS_AIRPORTS_DB
 // Stub so call sites compile without regenerating the DB.
 struct StaticAirport {
     char icao[5];
