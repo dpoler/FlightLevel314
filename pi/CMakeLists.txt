@@ -154,6 +154,8 @@ add_executable(flightlevel314
     platform_linux/airlines_linux.cpp
     platform_linux/enrichment_linux.cpp
     platform_linux/ota_linux.cpp
+    platform_linux/metar_linux.cpp
+    platform_linux/atis_linux.cpp
     ${SHARED_SOURCES}
 )
 target_include_directories(flightlevel314 PRIVATE

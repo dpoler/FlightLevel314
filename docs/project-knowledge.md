@@ -483,13 +483,11 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   vanish. Needs an answer (re-center the query too? accept follow ends at query
   edge?), a clear exit path, and probably a status-bar indicator.
 
-- **Airport Mode, Phase 3 (airport info panel — METAR/ATIS/frequencies)**:
-  the only remaining piece of an originally 3-phase idea (Phases 1/2 turned out
-  to already be covered by the general location system). Would need live METAR
-  (aviationweather.gov/checkwx.com), COM/ATIS/CTAF/ground frequencies
-  (OurAirports `airport-frequencies.csv`, ~300KB), active-runway-from-wind,
-  D-ATIS text via `datis.clowd.io` for major US/European fields. Needs its own
-  panel on the existing saved-airport UI.
+- **Airport Mode, Phase 3 (INFO METAR/ATIS)**: in progress on
+  `cursor/airport-mode-info-metar-atis-e1e8` — Pi INFO four-quadrant layout
+  (CURRENT TRAFFIC / LOCATION | METAR / ATIS); METAR via aviationweather.gov
+  (ICAO-first, 50nm nearest fallback, ~15 min); D-ATIS via datis.clowd.io
+  (US majors; arr/dep when split). Europe deferred (no solid free API).
 
 - **Quality of life / display settings**: color themes, font size — not
   started. ~~Brightness backend is real/complete but has no working UI~~

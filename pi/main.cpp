@@ -9,6 +9,8 @@
 #include "../src/data/airlines.h"
 #include "../src/data/enrichment.h"
 #include "../src/data/ota.h"
+#include "../src/data/metar.h"
+#include "../src/data/atis.h"
 #include "../src/ui/views.h"
 #include "../src/ui/detail_card.h"
 #include "../src/ui/range.h"
@@ -93,6 +95,16 @@ int main() {
 
     std::thread fetch_thread(fetch_loop);
     fetch_thread.detach();
+
+    // METAR + D-ATIS: rate-limited inside *_poll(); this just gives them a
+    // background cadence so the UI thread never blocks on HTTPS.
+    std::thread([] {
+        while (true) {
+            metar_poll();
+            atis_poll();
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }).detach();
 
     lv_init();
     lv_tick_set_cb(pi_tick_cb);
