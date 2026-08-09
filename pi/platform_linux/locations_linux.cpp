@@ -13,7 +13,7 @@
 // saved location, each with its own "nearby" array embedded directly.
 // Unlike the ESP32 side (which lazily loads only the *active* location's
 // nearby-airport cache to save DRAM), every location's nearby list is kept
-// resident here -- MAX_LOCATIONS(15) x NEARBY_MAX(20) Locations is trivial
+// resident here -- MAX_LOCATIONS x NEARBY_MAX Locations is trivial
 // on a Pi 3B's 1GB RAM, and it deletes a whole lazy-load/invalidation dance
 // (_nearby_loaded_for tracking) for no real benefit on this hardware.
 //

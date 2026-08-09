@@ -683,7 +683,7 @@ bool locations_verify_token_result(bool *ok, char *err, size_t err_size) {
 // other read of _locations[] in this file.
 
 // FNV-1a 32-bit -- simple, deterministic, good enough collision resistance
-// for at most MAX_LOCATIONS (15) items. Used to build a short, stable NVS
+// for at most MAX_LOCATIONS items. Used to build a short, stable NVS
 // key from a location's name (see nearby_nvs_key()) -- names can be up to
 // LOC_NAME_LEN-1 (16) chars, well over Preferences' 15-char key limit, so
 // the name itself can't be used as the key directly the way ICAO (<=7
