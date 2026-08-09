@@ -29,6 +29,7 @@ static lv_obj_t *_atis_dep_hdr = nullptr;
 static lv_obj_t *_atis_dep_lbl = nullptr;
 static lv_obj_t *_atis_status_lbl = nullptr;
 static lv_obj_t *_atis_scroll = nullptr;
+static lv_obj_t *_atis_hdr = nullptr;
 
 struct BarRow {
     lv_obj_t *name_lbl;
@@ -59,7 +60,7 @@ static lv_obj_t *_airline_labels[5] = {};
 static lv_obj_t *_type_labels[5] = {};
 
 #if LCD_H_RES >= 1280
-#define BAR_MAX_W 200
+#define BAR_MAX_W 140
 #define ROW_H 16
 #define ROW_H_WIDE 16
 #define SECTION_GAP 8
@@ -71,6 +72,15 @@ static lv_obj_t *_type_labels[5] = {};
 #define SECTION_GAP 14
 #define COL_HEADER_GAP 40
 #endif
+
+// Right-column weather fonts (Pi). METARs are typically one observation
+// line (~60–120 chars) plus short remarks — a few wrap lines at 20pt on
+// the 2/3-width pane. ATIS is longer, so it owns the rest of the column.
+#define WX_BODY_FONT   &lv_font_montserrat_20
+#define WX_HEADER_FONT &lv_font_montserrat_28
+#define WX_SUBHDR_FONT &lv_font_montserrat_20
+// Fixed METAR band so ATIS can sit high; ~3 lines of 20pt + header.
+#define METAR_BAND_H   120
 
 static lv_obj_t *create_bar(lv_obj_t *parent, int x, int y, lv_color_t color) {
     lv_obj_t *bar = lv_obj_create(parent);
@@ -169,9 +179,9 @@ static void layout_atis_split_labels() {
     if (!_atis_arr_lbl || !_atis_dep_hdr || !_atis_dep_lbl || !_atis_scroll) return;
     lv_obj_update_layout(_atis_arr_lbl);
     int arr_h = lv_obj_get_height(_atis_arr_lbl);
-    int dep_y = 20 + arr_h + 12;
+    int dep_y = 28 + arr_h + 16;
     lv_obj_set_pos(_atis_dep_hdr, 0, dep_y);
-    lv_obj_set_pos(_atis_dep_lbl, 0, dep_y + 20);
+    lv_obj_set_pos(_atis_dep_lbl, 0, dep_y + 28);
 }
 
 static void refresh_stats(lv_timer_t *t) {
@@ -223,16 +233,7 @@ static void refresh_stats(lv_timer_t *t) {
                 case ATIS_UNAVAILABLE:
                     set_atis_visibility(false, true);
                     if (_atis_status_lbl) {
-                        if (atis_airport[0]) {
-                            char buf[96];
-                            snprintf(buf, sizeof(buf),
-                                     "D-ATIS not available for %s\n(US major airports only)",
-                                     atis_airport);
-                            lv_label_set_text(_atis_status_lbl, buf);
-                        } else {
-                            lv_label_set_text(_atis_status_lbl,
-                                              "D-ATIS not available\n(US major airports only)");
-                        }
+                        lv_label_set_text(_atis_status_lbl, "NOT AVAILABLE");
                         lv_obj_set_style_text_color(_atis_status_lbl, DIM_COLOR, 0);
                     }
                     break;
@@ -243,7 +244,7 @@ static void refresh_stats(lv_timer_t *t) {
                 case ATIS_FETCHING:
                     set_atis_visibility(false, true);
                     if (_atis_status_lbl) {
-                        lv_label_set_text(_atis_status_lbl, "Fetching D-ATIS...");
+                        lv_label_set_text(_atis_status_lbl, "Fetching...");
                         lv_obj_set_style_text_color(_atis_status_lbl, ACCENT_COLOR, 0);
                     }
                     break;
@@ -416,18 +417,30 @@ static void build_location_column(lv_obj_t *parent, int cx, int top_y) {
         lv_label_set_text(_airline_labels[i], "");
         lv_obj_set_style_text_font(_airline_labels[i], &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(_airline_labels[i], TEXT_COLOR, 0);
+#if LCD_H_RES >= 1280
+        // Narrow left third: 2-across instead of 3.
+        lv_obj_set_pos(_airline_labels[i], cx + (i % 2) * 160, al_y + ROW_H + (i / 2) * ROW_H);
+#else
         lv_obj_set_pos(_airline_labels[i], cx + (i % 3) * 100, al_y + ROW_H + (i / 3) * ROW_H);
+#endif
         lv_obj_clear_flag(_airline_labels[i], LV_OBJ_FLAG_CLICKABLE);
     }
 
     int ty_y = al_y + ROW_H * 3 + SECTION_GAP;
+#if LCD_H_RES >= 1280
+    ty_y = al_y + ROW_H * 4 + SECTION_GAP; // 2-across → 3 rows of airlines
+#endif
     create_section_header(parent, "TYPES SEEN", cx, ty_y);
     for (int i = 0; i < 5; i++) {
         _type_labels[i] = lv_label_create(parent);
         lv_label_set_text(_type_labels[i], "");
         lv_obj_set_style_text_font(_type_labels[i], &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(_type_labels[i], TEXT_COLOR, 0);
+#if LCD_H_RES >= 1280
+        lv_obj_set_pos(_type_labels[i], cx + (i % 2) * 160, ty_y + ROW_H + (i / 2) * ROW_H);
+#else
         lv_obj_set_pos(_type_labels[i], cx + (i % 3) * 100, ty_y + ROW_H + (i / 3) * ROW_H);
+#endif
         lv_obj_clear_flag(_type_labels[i], LV_OBJ_FLAG_CLICKABLE);
     }
 }
@@ -445,37 +458,40 @@ static lv_obj_t *make_wrap_label(lv_obj_t *parent, int w) {
 
 #if LCD_H_RES >= 1280
 static void build_pi_quadrants() {
-    const int half_w = STATS_W / 2;
+    // Left third: traffic + location. Right two-thirds: METAR (short band)
+    // then ATIS for the remaining height — METARs are typically one
+    // observation (~60–120 chars) so ATIS can sit high and avoid scrolling.
+    const int left_w = STATS_W / 3;
     const int half_h = STATS_H / 2;
-    const int pad = 20;
-    const int col_w = half_w - pad * 2;
+    const int pad = 16;
+    const int rx = left_w + pad;
+    const int weather_w = STATS_W - rx - pad;
 
     build_traffic_column(_container, pad, 12);
     build_location_column(_container, pad, half_h + 8);
 
-    int rx = half_w + pad;
     lv_obj_t *metar_hdr = lv_label_create(_container);
     lv_label_set_text(metar_hdr, "METAR");
-    lv_obj_set_style_text_font(metar_hdr, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(metar_hdr, WX_HEADER_FONT, 0);
     lv_obj_set_style_text_color(metar_hdr, ACCENT_COLOR, 0);
-    lv_obj_set_pos(metar_hdr, rx, 12);
+    lv_obj_set_pos(metar_hdr, rx, 8);
     lv_obj_clear_flag(metar_hdr, LV_OBJ_FLAG_CLICKABLE);
 
-    _metar_lbl = make_wrap_label(_container, col_w);
+    _metar_lbl = make_wrap_label(_container, weather_w);
     lv_obj_set_pos(_metar_lbl, rx, 44);
-    lv_obj_set_style_text_font(_metar_lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(_metar_lbl, WX_BODY_FONT, 0);
 
-    lv_obj_t *atis_hdr = lv_label_create(_container);
-    lv_label_set_text(atis_hdr, "ATIS");
-    lv_obj_set_style_text_font(atis_hdr, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(atis_hdr, ACCENT_COLOR, 0);
-    lv_obj_set_pos(atis_hdr, rx, half_h + 8);
-    lv_obj_clear_flag(atis_hdr, LV_OBJ_FLAG_CLICKABLE);
+    _atis_hdr = lv_label_create(_container);
+    lv_label_set_text(_atis_hdr, "ATIS");
+    lv_obj_set_style_text_font(_atis_hdr, WX_HEADER_FONT, 0);
+    lv_obj_set_style_text_color(_atis_hdr, ACCENT_COLOR, 0);
+    lv_obj_set_pos(_atis_hdr, rx, METAR_BAND_H);
+    lv_obj_clear_flag(_atis_hdr, LV_OBJ_FLAG_CLICKABLE);
 
-    int scroll_y = half_h + 40;
+    int scroll_y = METAR_BAND_H + 40;
     int scroll_h = STATS_H - scroll_y - 12;
     _atis_scroll = lv_obj_create(_container);
-    lv_obj_set_size(_atis_scroll, col_w, scroll_h);
+    lv_obj_set_size(_atis_scroll, weather_w, scroll_h);
     lv_obj_set_pos(_atis_scroll, rx, scroll_y);
     lv_obj_set_style_bg_opa(_atis_scroll, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_atis_scroll, 0, 0);
@@ -483,32 +499,36 @@ static void build_pi_quadrants() {
     lv_obj_set_scroll_dir(_atis_scroll, LV_DIR_VER);
     lv_obj_add_flag(_atis_scroll, LV_OBJ_FLAG_SCROLLABLE);
 
-    _atis_status_lbl = make_wrap_label(_atis_scroll, col_w);
+    _atis_status_lbl = make_wrap_label(_atis_scroll, weather_w);
+    lv_obj_set_style_text_font(_atis_status_lbl, WX_BODY_FONT, 0);
     lv_obj_set_pos(_atis_status_lbl, 0, 0);
 
-    _atis_combined_lbl = make_wrap_label(_atis_scroll, col_w);
+    _atis_combined_lbl = make_wrap_label(_atis_scroll, weather_w);
+    lv_obj_set_style_text_font(_atis_combined_lbl, WX_BODY_FONT, 0);
     lv_obj_set_pos(_atis_combined_lbl, 0, 0);
     lv_obj_add_flag(_atis_combined_lbl, LV_OBJ_FLAG_HIDDEN);
 
     _atis_arr_hdr = lv_label_create(_atis_scroll);
     lv_label_set_text(_atis_arr_hdr, "ARRIVAL");
-    lv_obj_set_style_text_font(_atis_arr_hdr, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(_atis_arr_hdr, WX_SUBHDR_FONT, 0);
     lv_obj_set_style_text_color(_atis_arr_hdr, DIM_COLOR, 0);
     lv_obj_set_pos(_atis_arr_hdr, 0, 0);
     lv_obj_add_flag(_atis_arr_hdr, LV_OBJ_FLAG_HIDDEN);
 
-    _atis_arr_lbl = make_wrap_label(_atis_scroll, col_w);
-    lv_obj_set_pos(_atis_arr_lbl, 0, 20);
+    _atis_arr_lbl = make_wrap_label(_atis_scroll, weather_w);
+    lv_obj_set_style_text_font(_atis_arr_lbl, WX_BODY_FONT, 0);
+    lv_obj_set_pos(_atis_arr_lbl, 0, 28);
     lv_obj_add_flag(_atis_arr_lbl, LV_OBJ_FLAG_HIDDEN);
 
     _atis_dep_hdr = lv_label_create(_atis_scroll);
     lv_label_set_text(_atis_dep_hdr, "DEPARTURE");
-    lv_obj_set_style_text_font(_atis_dep_hdr, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(_atis_dep_hdr, WX_SUBHDR_FONT, 0);
     lv_obj_set_style_text_color(_atis_dep_hdr, DIM_COLOR, 0);
     lv_obj_set_pos(_atis_dep_hdr, 0, 0);
     lv_obj_add_flag(_atis_dep_hdr, LV_OBJ_FLAG_HIDDEN);
 
-    _atis_dep_lbl = make_wrap_label(_atis_scroll, col_w);
+    _atis_dep_lbl = make_wrap_label(_atis_scroll, weather_w);
+    lv_obj_set_style_text_font(_atis_dep_lbl, WX_BODY_FONT, 0);
     lv_obj_set_pos(_atis_dep_lbl, 0, 0);
     lv_obj_add_flag(_atis_dep_lbl, LV_OBJ_FLAG_HIDDEN);
 }
