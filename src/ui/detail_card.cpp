@@ -347,16 +347,29 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         lv_obj_clear_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
         strlcpy(_photo_shown_icao, _current_ac.icao_hex, sizeof(_photo_shown_icao));
 
+        // Credit only with visible pixels — stage-2 metadata arrives before
+        // the JPEG download/decode, and a failed decode should stay silent.
         if (data->photo_photographer[0]) {
             lv_label_set_text_fmt(_photo_credit_label, "Photo: %s", data->photo_photographer);
             lv_obj_clear_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
             lv_obj_align_to(_photo_credit_label, _photo_img, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 4);
             lv_obj_set_style_text_align(_photo_credit_label, LV_TEXT_ALIGN_RIGHT, 0);
+        } else {
+            lv_label_set_text(_photo_credit_label, "");
+            lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
         }
-    } else
-#endif
+    } else {
+        if (_photo_img) {
+            lv_obj_add_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
+            lv_image_set_src(_photo_img, nullptr);
+            _photo_shown_icao[0] = '\0';
+        }
+        lv_label_set_text(_photo_credit_label, "");
+        lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
+    }
+#else
     if (data->photo_photographer[0]) {
-        // ESP32 (or Pi with metadata but no pixels): credit under identity.
+        // ESP32: image path is broken (PSRAM); text credit under identity only.
         lv_label_set_text_fmt(_photo_credit_label, "Photo: %s", data->photo_photographer);
         lv_obj_clear_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 #if LCD_H_RES >= 1280
@@ -366,8 +379,8 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
 #endif
         lv_obj_set_style_text_align(_photo_credit_label, LV_TEXT_ALIGN_LEFT, 0);
     }
+#endif
 }
-
 static lv_obj_t *make_data_row(lv_obj_t *parent, const char *label_text,
                                 int x, int y, lv_obj_t **value_label) {
     lv_obj_t *lbl = lv_label_create(parent);
