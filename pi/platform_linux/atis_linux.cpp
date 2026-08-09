@@ -37,12 +37,58 @@ std::mutex _list_mutex;
 std::unordered_set<std::string> _datis_icaos;
 uint32_t _list_fetched_ms = 0;
 
+#define ATIS_CACHE_SLOTS 16
+struct AtisCacheEntry {
+    char icao[8];
+    AtisStatus status;
+    bool split;
+    char combined[ATIS_TEXT_LEN];
+    char arr[ATIS_TEXT_LEN];
+    char dep[ATIS_TEXT_LEN];
+    uint32_t fetched_ms;
+};
+AtisCacheEntry _atis_cache[ATIS_CACHE_SLOTS] = {};
+int _atis_cache_count = 0;
+
 void clear_texts() {
     atis_combined[0] = '\0';
     atis_arr[0] = '\0';
     atis_dep[0] = '\0';
     atis_split = false;
     atis_airport[0] = '\0';
+}
+
+AtisCacheEntry *atis_cache_find(const char *icao) {
+    for (int i = 0; i < _atis_cache_count; i++) {
+        if (strcmp(_atis_cache[i].icao, icao) == 0) return &_atis_cache[i];
+    }
+    return nullptr;
+}
+
+void atis_cache_store(const char *icao) {
+    AtisCacheEntry *e = atis_cache_find(icao);
+    if (!e) {
+        e = (_atis_cache_count < ATIS_CACHE_SLOTS)
+                ? &_atis_cache[_atis_cache_count++]
+                : &_atis_cache[0];
+    }
+    strlcpy(e->icao, icao, sizeof(e->icao));
+    e->status = atis_status;
+    e->split = atis_split;
+    strlcpy(e->combined, atis_combined, sizeof(e->combined));
+    strlcpy(e->arr, atis_arr, sizeof(e->arr));
+    strlcpy(e->dep, atis_dep, sizeof(e->dep));
+    e->fetched_ms = platform_millis();
+}
+
+bool atis_cache_apply(const AtisCacheEntry *e) {
+    strlcpy(atis_airport, e->icao, sizeof(atis_airport));
+    atis_status = e->status;
+    atis_split = e->split;
+    strlcpy(atis_combined, e->combined, sizeof(atis_combined));
+    strlcpy(atis_arr, e->arr, sizeof(atis_arr));
+    strlcpy(atis_dep, e->dep, sizeof(atis_dep));
+    return true;
 }
 
 bool refresh_datis_list() {
@@ -175,18 +221,30 @@ void do_fetch(const char *icao) {
 
     std::vector<char> buf(64 * 1024);
     size_t len = 0;
-    if (!platform_http_get(url, buf.data(), buf.size(), &len)) {
+    long http_status = 0;
+    // Use _ex: EGLL (and other non-US majors) return HTTP 404 with
+    // {"error":"No results found"} — platform_http_get() treats that as
+    // failure and we used to leave ATIS_ERROR (UI showed nothing).
+    if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &http_status, nullptr)) {
         atis_status = ATIS_ERROR;
         platform_log("ATIS: network failed for %s\n", icao);
         return;
     }
 
-    // Empty body / "[]" → not in the US majors set (or no current text).
-    if (len == 0 || (len <= 2 && buf[0] == '[')) {
+    auto mark_unavailable = [&]() {
         clear_texts();
         strlcpy(atis_airport, icao, sizeof(atis_airport));
         atis_status = ATIS_UNAVAILABLE;
-        platform_log("ATIS: unavailable for %s\n", icao);
+        platform_log("ATIS: unavailable for %s (http %ld)\n", icao, http_status);
+    };
+
+    if (http_status == 404 || len == 0) {
+        mark_unavailable();
+        return;
+    }
+    if (http_status < 200 || http_status >= 300) {
+        atis_status = ATIS_ERROR;
+        platform_log("ATIS: HTTP %ld for %s\n", http_status, icao);
         return;
     }
 
@@ -196,10 +254,13 @@ void do_fetch(const char *icao) {
         platform_log("ATIS: JSON parse error for %s\n", icao);
         return;
     }
+    // {"error":"..."} object, empty array, or no rows.
+    if (doc.is<JsonObject>() && doc["error"].is<const char *>()) {
+        mark_unavailable();
+        return;
+    }
     if (!doc.is<JsonArray>() || doc.as<JsonArray>().size() == 0) {
-        clear_texts();
-        strlcpy(atis_airport, icao, sizeof(atis_airport));
-        atis_status = ATIS_UNAVAILABLE;
+        mark_unavailable();
         return;
     }
 
@@ -211,6 +272,8 @@ void do_fetch(const char *icao) {
 
 void run_fetch(std::string icao) {
     do_fetch(icao.c_str());
+    if (atis_status == ATIS_OK || atis_status == ATIS_UNAVAILABLE)
+        atis_cache_store(icao.c_str());
     std::lock_guard<std::mutex> lock(_fetch_mutex);
     _busy = false;
 }
@@ -235,7 +298,6 @@ void atis_poll() {
 
     char icao[8] = {};
     if (!resolve_icao(icao, sizeof(icao))) {
-        // Waypoint with nothing within 50nm
         if (last_loc_idx != idx || last_icao[0]) {
             clear_texts();
             atis_status = ATIS_UNAVAILABLE;
@@ -247,8 +309,23 @@ void atis_poll() {
 
     uint32_t now = platform_millis();
     bool loc_changed = (idx != last_loc_idx) || (strcmp(icao, last_icao) != 0);
-    bool due = (now - last_fetch_ms >= ATIS_REFRESH_MS);
-    if (!loc_changed && !due) return;
+
+    if (loc_changed) {
+        last_loc_idx = idx;
+        strlcpy(last_icao, icao, sizeof(last_icao));
+        AtisCacheEntry *hit = atis_cache_find(icao);
+        if (hit && (now - hit->fetched_ms) < ATIS_REFRESH_MS) {
+            atis_cache_apply(hit);
+            last_fetch_ms = hit->fetched_ms;
+            platform_log("ATIS: cache hit %s\n", icao);
+            return;
+        }
+        clear_texts();
+        strlcpy(atis_airport, icao, sizeof(atis_airport));
+        atis_status = ATIS_FETCHING;
+    } else {
+        if (now - last_fetch_ms < ATIS_REFRESH_MS) return;
+    }
 
     {
         std::lock_guard<std::mutex> lock(_fetch_mutex);
@@ -256,10 +333,6 @@ void atis_poll() {
         _busy = true;
     }
 
-    if (loc_changed) clear_texts();
-    last_loc_idx = idx;
-    strlcpy(last_icao, icao, sizeof(last_icao));
     last_fetch_ms = now;
-
     std::thread([icao = std::string(icao)]() { run_fetch(icao); }).detach();
 }
