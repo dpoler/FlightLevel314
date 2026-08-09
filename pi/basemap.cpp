@@ -111,8 +111,6 @@ bool slot_matches(const BasemapSlot &s, float lat, float lon, float radius_nm,
            s.w == w && s.h == h && s.geo_cy == cy && s.bullseye_r == br;
 }
 
-bool basemap_sectional_covered(float lat, float lon); // defined with public API
-
 const char *style_cache_tag(int style) {
     switch (style) {
     case MAP_BASEMAP_STYLE_DARK_NOLABELS:  return "darknl";
