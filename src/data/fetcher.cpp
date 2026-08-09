@@ -728,6 +728,7 @@ static void location_poll_task(void *param) {
 
     while (true) {
         locations_add_poll();
+        locations_refresh_poll(); // fill runways for airports added while AirportDB was off
         locations_nearby_poll(); // nearby-large-airport runway cache -- one queued fetch per tick, same cadence as locations_add_poll()
         locations_verify_token_poll(); // TOKEN_VERIFY (serial_config.cpp) -- idle unless a check was actually requested
         enrichment_poll(); // detail-card aircraft/photo lookups -- see enrichment.cpp
