@@ -1,12 +1,15 @@
-// Fetches api.adsb.lol/v2/point/<lat>/<lon>/<radius> and merges results
-// into an AircraftList. Deliberately a fresh implementation, not a shared
-// extraction from src/data/fetcher.cpp's parse_aircraft_json() -- that
-// file's hardware-recovery logic (WiFi/C6 co-processor handling) is
-// extensively hard-won (see project_p4_heap_constraints /
-// project_platform_pin memories) and not worth risking a shared-code
-// refactor on for this port. Known duplication of the adsb.lol JSON schema
-// knowledge between this file and fetcher.cpp -- worth revisiting once the
-// Pi side is hardware-validated, see project_pi_port memory.
+// Fetches a remote ADS-B aggregator and merges results into an AircraftList.
+// Provider is selected by UserConfig::traffic_provider:
+//   0 — api.adsb.lol/v2/point/<lat>/<lon>/<radius>
+//   1 — opendata.adsb.fi/api/v3/lat/<lat>/lon/<lon>/dist/<radius> (cap 250 nm)
+// Both return an ADSBx-v2-shaped `ac` array. Deliberately a fresh
+// implementation, not a shared extraction from src/data/fetcher.cpp's
+// parse_aircraft_json() -- that file's hardware-recovery logic (WiFi/C6
+// co-processor handling) is extensively hard-won (see
+// project_p4_heap_constraints / project_platform_pin memories) and not worth
+// risking a shared-code refactor on for this port. Known duplication of the
+// JSON schema knowledge between this file and fetcher.cpp -- worth revisiting
+// once the Pi side is hardware-validated, see project_pi_port memory.
 //
 // Alert-queueing (military/emergency toasts) below mirrors fetcher.cpp's
 // do_alerts block, including its military-alert dedup ring buffer -- now
@@ -122,15 +125,29 @@ void apply_json_entry(Aircraft &a, JsonObject obj, bool is_new) {
 
 } // namespace
 
+const char *RemoteApiDataSource::name() const {
+    return g_config.traffic_provider == 1 ? "adsb.fi" : "adsb.lol";
+}
+
 bool RemoteApiDataSource::fetch(AircraftList *list) {
     float lat, lon;
     if (!locations_get_active_coords(&lat, &lon, nullptr)) return false;
 
-    char url[160];
-    snprintf(url, sizeof(url), "https://api.adsb.lol/v2/point/%.4f/%.4f/%d",
-             lat, lon, g_config.radius_nm > 0 ? g_config.radius_nm : 50);
+    int radius = g_config.radius_nm > 0 ? g_config.radius_nm : 50;
+    char url[192];
+    // adsb.fi public opendata: v3 lat/lon/dist returns the same `ac` envelope
+    // as adsb.lol's /v2/point. Dist is capped at 250 nm by their API.
+    if (g_config.traffic_provider == 1) {
+        if (radius > 250) radius = 250;
+        snprintf(url, sizeof(url),
+                 "https://opendata.adsb.fi/api/v3/lat/%.4f/lon/%.4f/dist/%d",
+                 lat, lon, radius);
+    } else {
+        snprintf(url, sizeof(url), "https://api.adsb.lol/v2/point/%.4f/%.4f/%d",
+                 lat, lon, radius);
+    }
 
-    static std::vector<char> buf(1024 * 1024); // adsb.lol responses can run large at dense/wide radii -- Pi has RAM to spare
+    static std::vector<char> buf(1024 * 1024); // aggregator responses can run large at dense/wide radii -- Pi has RAM to spare
     size_t len = 0;
     if (!platform_http_get(url, buf.data(), buf.size(), &len)) return false;
 

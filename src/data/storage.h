@@ -20,6 +20,9 @@ struct UserConfig {
     int adbox_usage_count;    // AeroDataBox HTTP calls this month
     int adbox_soft_limit;     // 0 = no local cap; else auto-disable at count
     bool adbox_rate_limited;  // sticky: hit HTTP 429 (or soft limit)
+    // Live traffic aggregator. Both expose ADSBx-v2-shaped JSON; URLs differ.
+    // 0=adsb.lol (default), 1=adsb.fi (opendata v3 lat/lon/dist).
+    int traffic_provider;
     int radius_nm;           // API query radius = max(radius_presets), set on save
     int radius_presets[4];  // user-configurable zoom levels, sorted ascending
     bool use_metric;

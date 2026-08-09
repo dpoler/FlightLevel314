@@ -3,7 +3,9 @@
 Live ADS-B traffic on a Raspberry Pi touchscreen — map, radar, traffic list,
 and session stats — built for a Waveshare 10.1″ DSI panel (1280×800).
 
-Traffic comes from [adsb.lol](https://adsb.lol). Saved locations, basemap /
+Traffic comes from [adsb.lol](https://adsb.lol) by default; Settings →
+**TRAFFIC SOURCE** can switch to [adsb.fi](https://adsb.fi) (`traffic_prov` in
+`config.json`: `0` = lol, `1` = fi). Saved locations, basemap /
 weather overlays, aircraft detail cards (adsbdb + Planespotters photos), and
 optional AirportDB / AeroDataBox enrichment round it out.
 
@@ -107,12 +109,14 @@ API keys are **not** typed on the touchscreen. Edit `config.json` by hand:
 ```json
 {
   "apt_tok": "your-airportdb-token",
-  "adbox_key": "your-aerodatabox-key"
+  "adbox_key": "your-aerodatabox-key",
+  "traffic_prov": 0
 }
 ```
 
 Then open **Settings** (gear) → enable AirportDB / AeroDataBox under API KEYS
-and pick the AeroDataBox gateway if needed.
+and pick the AeroDataBox gateway if needed. Use **TRAFFIC SOURCE** to choose
+adsb.lol or adsb.fi.
 
 ## Layout
 

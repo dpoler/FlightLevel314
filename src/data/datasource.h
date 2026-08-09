@@ -2,9 +2,10 @@
 #include "aircraft.h"
 
 // Data source abstraction -- lets the app fetch aircraft data from
-// different backends without callers needing to know which. Today only
-// RemoteApiDataSource (adsb.lol) is real, implemented Pi-only for now (see
-// pi/platform_linux/datasource_remote.cpp -- calls platform_http_get(),
+// different backends without callers needing to know which. Today
+// RemoteApiDataSource talks to a remote aggregator (adsb.lol or adsb.fi,
+// selected via UserConfig::traffic_provider), implemented Pi-only for now
+// (see pi/platform_linux/datasource_remote.cpp -- calls platform_http_get(),
 // not yet implemented on the ESP32 side). LocalSdrDataSource is a
 // deliberate stub, wired now so a future RTL-SDR + dump1090/readsb local
 // feed is a new class later, not a fetcher rewrite. See project_pi_port
@@ -30,7 +31,7 @@ public:
 class RemoteApiDataSource : public AircraftDataSource {
 public:
     bool fetch(AircraftList *list) override;
-    const char *name() const override { return "adsb.lol"; }
+    const char *name() const override;
 };
 
 // Stub only -- not implemented. See project_pi_port memory.

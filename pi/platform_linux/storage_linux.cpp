@@ -37,6 +37,7 @@ static UserConfig defaults() {
     cfg.adbox_usage_count = 0;
     cfg.adbox_soft_limit = 0;
     cfg.adbox_rate_limited = false;
+    cfg.traffic_provider = 0; // adsb.lol
     cfg.radius_nm = 50;
     cfg.radius_presets[0] = 5;
     cfg.radius_presets[1] = 10;
@@ -114,6 +115,8 @@ UserConfig storage_load_config() {
     cfg.adbox_usage_count = doc["adbox_n"] | cfg.adbox_usage_count;
     cfg.adbox_soft_limit = doc["adbox_lim"] | cfg.adbox_soft_limit;
     cfg.adbox_rate_limited = doc["adbox_rl"] | cfg.adbox_rate_limited;
+    cfg.traffic_provider = doc["traffic_prov"] | cfg.traffic_provider;
+    if (cfg.traffic_provider < 0 || cfg.traffic_provider > 1) cfg.traffic_provider = 0;
     cfg.radius_nm = doc["radius"] | cfg.radius_nm;
     cfg.radius_presets[0] = doc["rad0"] | cfg.radius_presets[0];
     cfg.radius_presets[1] = doc["rad1"] | cfg.radius_presets[1];
@@ -190,6 +193,7 @@ void storage_save_config(const UserConfig &cfg) {
     doc["adbox_n"] = cfg.adbox_usage_count;
     doc["adbox_lim"] = cfg.adbox_soft_limit;
     doc["adbox_rl"] = cfg.adbox_rate_limited;
+    doc["traffic_prov"] = cfg.traffic_provider;
     doc["radius"] = cfg.radius_nm;
     doc["rad0"] = cfg.radius_presets[0];
     doc["rad1"] = cfg.radius_presets[1];

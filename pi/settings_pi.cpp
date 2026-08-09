@@ -40,6 +40,7 @@ static uint32_t _boot_time_ms = 0;
 
 static lv_obj_t *_ta_radius[4] = {nullptr, nullptr, nullptr, nullptr};
 static lv_obj_t *_sw_metric = nullptr;
+static lv_obj_t *_dd_traffic_prov = nullptr;
 static lv_obj_t *_fetch_val = nullptr;
 static lv_obj_t *_latency_val = nullptr;
 static lv_obj_t *_uptime_val = nullptr;
@@ -84,6 +85,8 @@ static settings_changed_cb_t _on_change = nullptr;
 
 static const char *const ADBOX_PROVIDER_OPTS =
     "RapidAPI\nAPI.Market\nDirect (aerodatabox.com)";
+static const char *const TRAFFIC_PROVIDER_OPTS =
+    "adsb.lol\nadsb.fi";
 
 static void ta_focus_cb(lv_event_t *e) {
     lv_keyboard_set_textarea(_keyboard, lv_event_get_target_obj(e));
@@ -247,6 +250,19 @@ static void on_adbox_provider_changed(lv_event_t *e) {
     }
 }
 
+static void on_traffic_provider_changed(lv_event_t *e) {
+    (void)e;
+    if (!_dd_traffic_prov) return;
+    int sel = (int)lv_dropdown_get_selected(_dd_traffic_prov);
+    if (sel < 0 || sel > 1) sel = 0;
+    if (sel == _cfg.traffic_provider) return;
+    _cfg.traffic_provider = sel;
+    g_config.traffic_provider = sel;
+    // Kick a fetch so Map/Radar reflect the new aggregator without waiting
+    // for the next 20s poll (or for Save).
+    fetcher_request_immediate_fetch();
+}
+
 static void poll_key_validation() {
     if (_apt_verify_pending) {
         bool ok = false;
@@ -325,6 +341,10 @@ static void apply_cfg_to_fields() {
     if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
     else lv_obj_clear_state(_sw_metric, LV_STATE_CHECKED);
 
+    int tprov = _cfg.traffic_provider;
+    if (tprov < 0 || tprov > 1) tprov = 0;
+    if (_dd_traffic_prov) lv_dropdown_set_selected(_dd_traffic_prov, (uint16_t)tprov);
+
     if (_cfg.airportdb_enabled) lv_obj_add_state(_sw_apt_en, LV_STATE_CHECKED);
     else lv_obj_clear_state(_sw_apt_en, LV_STATE_CHECKED);
     if (_cfg.aerodatabox_enabled) lv_obj_add_state(_sw_adbox_en, LV_STATE_CHECKED);
@@ -354,6 +374,12 @@ static void save_and_close(lv_event_t *e) {
             }
     _cfg.radius_nm = _cfg.radius_presets[3];
     _cfg.use_metric = lv_obj_has_state(_sw_metric, LV_STATE_CHECKED);
+
+    if (_dd_traffic_prov) {
+        int sel = (int)lv_dropdown_get_selected(_dd_traffic_prov);
+        if (sel < 0 || sel > 1) sel = 0;
+        _cfg.traffic_provider = sel;
+    }
 
     if (_dd_adbox_prov) {
         int sel = (int)lv_dropdown_get_selected(_dd_adbox_prov);
@@ -504,7 +530,20 @@ void settings_init(lv_obj_t *parent) {
     _sw_metric = make_enable_switch(_content, left + 120, 70);
     if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
 
-    int sy = 118;
+    create_label(_content, "TRAFFIC SOURCE", left, 108);
+    _dd_traffic_prov = lv_dropdown_create(_content);
+    lv_dropdown_set_options(_dd_traffic_prov, TRAFFIC_PROVIDER_OPTS);
+    lv_obj_set_size(_dd_traffic_prov, COL_W - 8, 36);
+    lv_obj_set_pos(_dd_traffic_prov, left, 128);
+    lv_obj_set_style_bg_color(_dd_traffic_prov, lv_color_hex(0x1a1a3a), 0);
+    lv_obj_set_style_text_color(_dd_traffic_prov, lv_color_white(), 0);
+    lv_obj_set_style_text_font(_dd_traffic_prov, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_border_color(_dd_traffic_prov, lv_color_hex(0x333366), 0);
+    lv_obj_set_style_border_width(_dd_traffic_prov, 1, 0);
+    lv_dropdown_set_selected(_dd_traffic_prov, (uint16_t)(_cfg.traffic_provider == 1 ? 1 : 0));
+    lv_obj_add_event_cb(_dd_traffic_prov, on_traffic_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    int sy = 180;
     create_label(_content, "STATUS", left, sy);
     _fetch_val = create_inline_row(_content, "FETCHES", left, sy + 22, 90);
     _latency_val = create_inline_row(_content, "LATENCY", left, sy + 42, 90);
