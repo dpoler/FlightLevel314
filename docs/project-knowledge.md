@@ -359,13 +359,11 @@ mostly chronological.
 
 ### 7.1 Genuinely open / not started
 
-- **Write a proper FlightLevel314 README.md (with original-author credit)**:
-  the current README is a serviceable port of the Pi docs, but needs a real
-  project README — clearer product pitch, install/build, screenshots later,
-  and an explicit **Credits** section naming the original author (**Neil**,
-  see `LICENSE` copyright) and the upstream lineage (`dpoler/adsb` /
-  ESP32-era work this Pi fork grew from). **Do not start until explicitly
-  asked** — noted 2026-08-08 when `dpoler/FlightLevel314` was created.
+- ~~**Write a proper FlightLevel314 README.md (with original-author credit)**~~
+  **done** — product README with hardware/setup, screenshot gallery under
+  `docs/screenshots/`, and Credits (Neil + `dpoler/adsb` lineage). Gallery
+  panel photos still show older ARR/STATS nav labels; Settings shot is
+  current.
 
 - **Detail card photo credit appears before the photo**: photographer credit
   text can pop into the summary/detail area before the aircraft photo has

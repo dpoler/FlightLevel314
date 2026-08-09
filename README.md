@@ -1,71 +1,82 @@
 # FlightLevel314
 
-Raspberry Pi ADS-B aircraft display — Map, Radar, Arrivals, Stats — on a
-Waveshare 10.1" DSI touchscreen (1280×800). Live traffic from adsb.lol,
-saved locations, basemap/weather overlays, and optional AeroDataBox
-origin/destination + AirportDB.io runway enrichment.
+Live ADS-B traffic on a Raspberry Pi touchscreen — map, radar, traffic list,
+and session stats — built for a Waveshare 10.1″ DSI panel (1280×800).
 
-**Name:** Flight Level 314… because π. Yes.
+Traffic comes from [adsb.lol](https://adsb.lol). Saved locations, basemap /
+weather overlays, aircraft detail cards (adsbdb + Planespotters photos), and
+optional AirportDB / AeroDataBox enrichment round it out.
 
-## Lineage
+**Name:** Flight Level 314… because π.
 
-Forked from [dpoler/adsb](https://github.com/dpoler/adsb) (Pi port of the
-JC1060 / ESP32-P4 display). The ESP32 target is **paused** — this repo is
-Pi/Linux only. Features can be cherry-picked back to `dpoler/adsb` later if
-desired. Shared `src/` still has some `#if defined(ARDUINO)` leftovers from
-the dual-target era; harmless on Linux, cleanup is backlog.
+<p align="center">
+  <img src="docs/screenshots/map.jpg" alt="Map view with live traffic" width="720">
+</p>
 
-## Status
+## Screenshots
 
-Map / Radar / Arrivals / Stats render live traffic in a swipeable tileview
-with status bar, VIEW menu, alerts, saved locations (ICAO or lat/lon), and
-Settings. DRM/KMS + libinput kiosk mode verified on Pi hardware. Detail-card
-enrichment (adsbdb + planespotters photos, optional AeroDataBox O/D) is live.
+| Map | Radar |
+|-----|-------|
+| <img src="docs/screenshots/map.jpg" alt="Map" width="400"> | <img src="docs/screenshots/radar.jpg" alt="Radar" width="400"> |
 
-API keys are never typed on-device — hand-edit
-`~/.config/flightlevel314/config.json` (`apt_tok`, `adbox_key`), pick the
-AeroDataBox gateway in Settings, then enable services under API KEYS.
+| Traffic list | Session info |
+|--------------|--------------|
+| <img src="docs/screenshots/list.jpg" alt="List" width="400"> | <img src="docs/screenshots/info.jpg" alt="Info" width="400"> |
 
-Migrating from the old `adsb` Pi port:
+| Aircraft detail | Settings |
+|-----------------|----------|
+| <img src="docs/screenshots/detail.jpg" alt="Detail card" width="400"> | <img src="docs/screenshots/settings.jpg" alt="Settings" width="400"> |
 
-```bash
-mkdir -p ~/.config/flightlevel314
-cp -a ~/.config/adsb/. ~/.config/flightlevel314/
-# optional caches:
-cp -a ~/.config/adsb/basemap ~/.config/flightlevel314/ 2>/dev/null || true
-cp -a ~/.config/adsb/weather ~/.config/flightlevel314/ 2>/dev/null || true
-```
+> Panel photos above were taken on the Waveshare display with live traffic.
+> Nav labels in some shots still say ARR / STATS; the current build uses
+> **LIST** / **INFO**. Settings reflects the current UI.
 
 ## Hardware
 
-Waveshare 10.1" DSI capacitive touch (1280×800) on a Raspberry Pi, Raspberry
-Pi OS Lite (no desktop) — the app owns DRM/KMS as a systemd kiosk service.
+| Item | Notes |
+|------|--------|
+| **Display** | [Waveshare 10.1″ DSI capacitive touch](https://www.waveshare.com/10.1-dsi-lcd.htm) (1280×800) |
+| **Board** | Raspberry Pi 5 / 4B (Waveshare also lists 3B+ / 3A+ / CM variants — verify before buying a plain 3B) |
+| **OS** | Raspberry Pi OS Lite (no desktop). The app owns DRM/KMS as a systemd kiosk service. |
 
-> Waveshare lists Pi 5/4B/**3B+**/3A+/CM3/3+/4 — verify before assuming a
-> plain 3B works.
+A desktop Linux or macOS machine can run the same binary with the **SDL**
+backend for development (windowed 1280×800).
 
-## Build (macOS / Linux SDL simulator)
+## Features
+
+- **MAP** — geographic basemap, range rings, callsigns / trails, category filters
+- **RADAR** — classic sweep display with the same filters and tags
+- **LIST** — sortable traffic board within the selected range
+- **INFO** — session counts, records, airlines / types seen
+- Saved locations (ICAO or lat/lon), range presets, VIEW menu (trails / tags)
+- Detail card: identity, telemetry, optional photo + O/D enrichment
+- Optional **AirportDB.io** runways and **AeroDataBox** origin/destination
+
+## Build (SDL simulator)
 
 ```bash
+sudo apt install build-essential cmake libcurl4-openssl-dev libsdl2-dev
 cmake -S . -B build -DPI_DISPLAY_BACKEND=SDL
 cmake --build build -j$(nproc)
 ./build/pi/flightlevel314
 ```
 
-## Build (Pi DRM)
+Config and caches live under `~/.config/flightlevel314/`.
+
+## Build (Pi DRM kiosk)
 
 ```bash
 sudo apt install build-essential cmake libcurl4-openssl-dev \
     libdrm-dev libinput-dev pkg-config
-# SDL not required for DRM-only builds
 cmake -S . -B build -DPI_DISPLAY_BACKEND=DRM
 cmake --build build -j4
 ./build/pi/flightlevel314
 ```
 
-Add your user to `video`, `render`, and `input` if needed.
+Add your user to the `video`, `render`, and `input` groups if DRM or touch
+fail to open.
 
-## Kiosk install
+### Install as a service
 
 ```bash
 sudo useradd -r -G video,input,render flightlevel314
@@ -73,7 +84,8 @@ sudo mkdir -p /opt/flightlevel314
 sudo cp build/pi/flightlevel314 /opt/flightlevel314/
 
 sudo mkdir -p /opt/flightlevel314/.config/flightlevel314
-sudo cp ~/.config/flightlevel314/*.json /opt/flightlevel314/.config/flightlevel314/ 2>/dev/null || true
+sudo cp ~/.config/flightlevel314/*.json \
+    /opt/flightlevel314/.config/flightlevel314/ 2>/dev/null || true
 sudo chown -R flightlevel314:flightlevel314 /opt/flightlevel314/.config
 
 sudo cp pi/flightlevel314.service /etc/systemd/system/
@@ -83,23 +95,42 @@ sudo systemctl enable --now flightlevel314
 
 Logs: `journalctl -u flightlevel314 -f`.
 
+## Configuration
+
+| Path | Role |
+|------|------|
+| `~/.config/flightlevel314/config.json` | Preferences, API keys, display options |
+| `~/.config/flightlevel314/locations.json` | Saved map centers |
+
+API keys are **not** typed on the touchscreen. Edit `config.json` by hand:
+
+```json
+{
+  "apt_tok": "your-airportdb-token",
+  "adbox_key": "your-aerodatabox-key"
+}
+```
+
+Then open **Settings** (gear) → enable AirportDB / AeroDataBox under API KEYS
+and pick the AeroDataBox gateway if needed.
+
 ## Layout
 
 | Path | Role |
 |------|------|
-| `pi/` | Linux entrypoint, display/input, basemap/weather, platform_linux |
-| `src/ui`, `src/data` | Shared UI + data (historical ARDUINO forks remain) |
+| `pi/` | Linux entrypoint, display/input, basemap/weather |
+| `src/ui`, `src/data` | UI + data layer |
 | `tools/` | Airport DB / static map generators |
-| `docs/project-knowledge.md` | History + backlog |
+| `docs/project-knowledge.md` | History and backlog |
 
-## Publishing this fork to GitHub
+## Credits
 
-Cloud agents cannot create new repos under `dpoler`. Create an empty public
-repo named **FlightLevel314**, then:
+Original ADS-B display work by **Neil** (see [`LICENSE`](LICENSE)).
 
-```bash
-git remote add fl314 https://github.com/dpoler/FlightLevel314.git
-git push -u fl314 cursor/flightlevel314-7c95:master
-```
+This project is the Raspberry Pi line of that work, continued from
+[dpoler/adsb](https://github.com/dpoler/adsb) (which also hosted an ESP32 /
+JC1060 port that is paused). FlightLevel314 is Pi / Linux only.
 
-(Or push whatever branch you want as `master`.)
+## License
+
+MIT — see [`LICENSE`](LICENSE).
