@@ -63,7 +63,7 @@ See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Device provisioning for API keys / secrets (how they get onto the Pi)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
-- Tidy Pi boot splash (center / dim or quiet→app)
+- Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
 Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
 
@@ -417,8 +417,8 @@ detail card. See backlog §7 for full scope.
   picker.
 
 ### Remaining known gaps (not blocking, tracked in backlog)
-- Boot sequence isn't tidy — console text/login prompt likely visible before
-  the kiosk grabs the display (bright/off-center Pi logo; see §7.1).
+- Boot sequence — largely tidied on-device 2026-08-09 (see §7.1); ~5s
+  blinking cursor before kiosk accepted as good enough.
 - Getting API keys / tokens onto the device — no good story yet (see §7.1).
 
 ---
@@ -526,37 +526,15 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   scripts deleted with Pi-only cleanup (USB-serial board tool). Use Settings
   / editing `~/.config/flightlevel314/config.json` on Pi instead.
 
-- **Tidy up the Pi's boot sequence**: see §6. Current pain: off-center
-  bright white Pi logo on the Waveshare 1280×800 DSI before the kiosk
-  grabs DRM. On-device OS config, not app code.
-  **Lean (2026-08-09, Dan):** quiet fullscreen image is fine — e.g. small
-  RPi logo on black, centered for 1280×800. Open to a stock quieter theme.
-  Practical options when we do it:
-  - **Preferred simple path:** early fullscreen splash via
-    `rpi-splash-screen-support` / `configure-splash` (TGA; black margins from
-    top-left pixel; max 1920×1080) + `disable_splash=1` (no rainbow) +
-    `logo.nologo` / quiet cmdline so kernel raspberries don't sit top-left.
-  - **Stock quieter Plymouth (if Plymouth stays on):** install
-    `plymouth-themes` and try **`spinner`** (dark bg + small spinner — least
-    loud). Avoid stock **`pix`** ("Welcome to…" big white raspberry — what's
-    likely offending now). `fade-in` / `spinfinity` still logo-heavy.
-  - **Clone `pix`:** swap `splash.png` for a dim 1280×800 black+logo PNG
-    (don't edit stock `pix` in place — updates overwrite; clone theme).
-  - **Console flash after splash (Dan asked 2026-08-09):** yes, mostly
-    preventable. Typical gap = Plymouth quits → getty/login on tty1 →
-    kiosk finally opens DRM. Fixes (on-device):
-    1. `cmdline.txt`: `console=tty3` (or keep serial, not tty1),
-       `quiet splash`, `logo.nologo`, `vt.global_cursor_default=0`,
-       `loglevel=3` (or lower).
-    2. `systemctl disable getty@tty1` (or mask) so no login prompt on the
-       visible VT — SSH still works; serial/tty3 if you need a local shell.
-    3. Don't wait on network to paint: our unit currently
-       `After=network-online.target`, which can leave a long black/console
-       gap. Prefer start after DRM/local-fs; fetch traffic once network is up.
-    4. Optional: hold Plymouth until `flightlevel314` starts
-       (`plymouth-quit-wait` / order After Plymouth) so spinner stays until
-       first frame.
-    Perfect zero-flash is hard; (1)+(2)+(3) usually kills the obvious console.
+- **Tidy up the Pi's boot sequence**: see §6. On-device OS config, not app
+  code.
+  **Status (Dan, 2026-08-09):** (1) cmdline quiet/`console=tty3`/etc. and
+  (2) `getty@tty1` disabled — **done**. Residual ~5s blinking cursor before
+  the kiosk owns DRM — **accepted as good enough** (no further work unless
+  he asks). Optional later: `vt.global_cursor_default=0` to hide the blink;
+  start kiosk earlier (drop `After=network-online`); hold Plymouth until
+  first frame; switch Plymouth to **`spinner`** or a dim custom splash.
+  Notes kept below for if we revisit.
 
 - **Device provisioning — get API keys / tokens onto the Pi**: remember to
   sort out the story. Today: hand-edit
