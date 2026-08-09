@@ -3,13 +3,6 @@
 #include <cctype>
 #include <cstring>
 
-#ifndef AIRPORTS_DB_COUNT
-// airports_lookup.h fell back to the stub struct — no table linked in.
-#define HAS_AIRPORTS_DB 0
-#else
-#define HAS_AIRPORTS_DB 1
-#endif
-
 #if HAS_AIRPORTS_DB
 
 static void icao_upper(const char *in, char *out, int out_sz) {
