@@ -144,9 +144,13 @@ int current_yyyymm() {
     return (tm_utc.tm_year + 1900) * 100 + (tm_utc.tm_mon + 1);
 }
 
-// Roll the monthly counter if needed, then record one AeroDataBox HTTP call.
+// Roll the monthly counter if needed, then record one AeroDataBox HTTP call
+// that actually reached the server (http_status > 0). Transport failures are
+// not billed and must not inflate the soft-limit counter.
 // On 429 (or soft-limit breach) auto-disables the service and persists.
 void adbox_note_call(long http_status) {
+    if (http_status <= 0) return;
+
     int ym = current_yyyymm();
     if (g_config.adbox_usage_yyyymm != ym) {
         g_config.adbox_usage_yyyymm = ym;
@@ -220,6 +224,10 @@ bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
 
 // Live nearest flight, then same search for today's local date. searchBy uses
 // OpenAPI PascalCase (Icao24 / CallSign / Reg).
+// Returns true on a parsed route. Each server response counts as one usage
+// unit (marketplace billing); transport failures do not. Stops immediately on
+// auth failure or 429 so a burst of fallbacks cannot keep burning quota or
+// re-trigger sticky auto-disable.
 bool fetch_adbox_route(int provider, const char *key,
                        const char *icao_hex, const char *callsign, const char *registration,
                        char *origin, size_t origin_sz, char *dest, size_t dest_sz) {
@@ -235,49 +243,51 @@ bool fetch_adbox_route(int provider, const char *key,
     char today[16];
     today_utc_ymd(today, sizeof(today));
 
-    auto try_url = [&](const char *url) -> bool {
+    // 1 = parsed route, 0 = try next URL, -1 = fatal (stop all fallbacks)
+    auto try_url = [&](const char *url) -> int {
+        if (!adbox_allowed()) return -1;
         std::vector<char> buf(96 * 1024);
         size_t len = 0;
         long status = 0;
         if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &status, hdrs)) {
             platform_log("[Enrich] AeroDataBox transport fail: %s\n", url);
-            adbox_note_call(0);
-            return false;
+            return 0;
         }
         adbox_note_call(status);
         if (status == 401 || status == 403) {
             platform_log("[Enrich] AeroDataBox auth failed (http=%ld)\n", status);
-            return false;
+            return -1;
         }
         if (status == 429) {
             platform_log("[Enrich] AeroDataBox rate limited (http=429)\n");
-            return false;
+            return -1;
         }
         if (status == 204 || status == 404) {
             platform_log("[Enrich] AeroDataBox no flight (http=%ld) %s\n", status, url);
-            return false;
+            return 0;
         }
         if (status < 200 || status >= 300) {
             platform_log("[Enrich] AeroDataBox http=%ld len=%zu %s\n", status, len, url);
-            return false;
+            return 0;
         }
-        if (len == 0) return false;
+        if (len == 0) return 0;
         JsonDocument doc;
         if (deserializeJson(doc, buf.data(), len) != DeserializationError::Ok) {
             platform_log("[Enrich] AeroDataBox JSON parse fail (%zu bytes)\n", len);
-            return false;
+            return 0;
         }
-        return parse_adbox_route(doc, origin, origin_sz, dest, dest_sz);
+        return parse_adbox_route(doc, origin, origin_sz, dest, dest_sz) ? 1 : 0;
     };
 
-    auto try_search = [&](const char *search_by, const char *param) -> bool {
-        if (!param || !param[0]) return false;
+    auto try_search = [&](const char *search_by, const char *param) -> int {
+        if (!param || !param[0]) return 0;
         char url[320];
         // Nearest (no date) -- preferred for live traffic.
         snprintf(url, sizeof(url),
                  "%s/flights/%s/%s?withAircraftImage=false&withLocation=false",
                  base, search_by, param);
-        if (try_url(url)) return true;
+        int r = try_url(url);
+        if (r != 0) return r;
         // Same-day dated search (UTC date; dateLocalRole=Both).
         snprintf(url, sizeof(url),
                  "%s/flights/%s/%s/%s?withAircraftImage=false&withLocation=false&dateLocalRole=Both",
@@ -286,19 +296,35 @@ bool fetch_adbox_route(int provider, const char *key,
     };
 
     std::string hex = alnum_upper(icao_hex);
-    if (!hex.empty() && try_search("Icao24", hex.c_str())) return true;
+    if (!hex.empty()) {
+        int r = try_search("Icao24", hex.c_str());
+        if (r == 1) return true;
+        if (r < 0) return false;
+    }
 
     std::string cs = alnum_upper(trim_ws(callsign).c_str());
-    if (!cs.empty() && try_search("CallSign", cs.c_str())) return true;
+    if (!cs.empty()) {
+        int r = try_search("CallSign", cs.c_str());
+        if (r == 1) return true;
+        if (r < 0) return false;
+    }
 
     // Registration: keep letters/digits only (drop dashes/spaces).
     std::string reg = alnum_upper(registration);
-    if (!reg.empty() && try_search("Reg", reg.c_str())) return true;
+    if (!reg.empty()) {
+        int r = try_search("Reg", reg.c_str());
+        if (r == 1) return true;
+        if (r < 0) return false;
+    }
 
     return false;
 }
 
 // Validate key with a cheap airport lookup (not a flight search).
+// Deliberately does NOT call adbox_note_call: Settings re-verifies on every
+// open (and on provider change), and counting those made USAGE climb whenever
+// a detail card was open / Settings was tapped — and a verify 429 could
+// sticky-disable the whole service.
 bool validate_adbox_key(int provider, const char *key, char *err, size_t err_size) {
     auto fail = [&](const char *msg) {
         if (err && err_size) strlcpy(err, msg, err_size);
@@ -316,10 +342,8 @@ bool validate_adbox_key(int provider, const char *key, char *err, size_t err_siz
     char url[256];
     snprintf(url, sizeof(url), "%s/airports/icao/KJFK", adbox_base_url(provider));
     if (!platform_http_get_ex(url, buf, sizeof(buf), &len, &status, hdrs)) {
-        adbox_note_call(0);
         return fail("network error");
     }
-    adbox_note_call(status);
     if (status == 401 || status == 403) return fail("invalid key");
     if (status == 429) return fail("rate limited");
     if (status < 200 || status >= 300) {
@@ -334,6 +358,13 @@ std::mutex _verify_mutex;
 bool _verify_result_ready = false;
 bool _verify_result_ok = false;
 char _verify_result_err[48] = {};
+// Cache last Settings key-check so reopening Settings (with or without a
+// detail card open) does not re-hit AeroDataBox / inflate USAGE.
+int _verify_cache_prov = -999;
+char _verify_cache_key[sizeof(g_config.aerodatabox_key)] = {};
+bool _verify_cache_ok = false;
+char _verify_cache_err[48] = {};
+bool _verify_cache_valid = false;
 
 bool http_get_bytes(const char *url, std::vector<uint8_t> &out) {
     // thumbnail_large is typically ~30-80KB.
@@ -631,15 +662,30 @@ void enrichment_clear_cache() {
 void aerodatabox_request_verify() {
     {
         std::lock_guard<std::mutex> lock(_verify_mutex);
+        if (_verify_cache_valid
+            && _verify_cache_prov == g_config.aerodatabox_provider
+            && strcmp(_verify_cache_key, g_config.aerodatabox_key) == 0) {
+            _verify_result_ok = _verify_cache_ok;
+            strlcpy(_verify_result_err, _verify_cache_err, sizeof(_verify_result_err));
+            _verify_result_ready = true;
+            return;
+        }
         _verify_result_ready = false;
     }
     std::thread([]() {
         char err[48] = {};
-        bool ok = validate_adbox_key(g_config.aerodatabox_provider, g_config.aerodatabox_key,
-                                     err, sizeof(err));
+        int prov = g_config.aerodatabox_provider;
+        char key[sizeof(g_config.aerodatabox_key)] = {};
+        strlcpy(key, g_config.aerodatabox_key, sizeof(key));
+        bool ok = validate_adbox_key(prov, key, err, sizeof(err));
         std::lock_guard<std::mutex> lock(_verify_mutex);
         _verify_result_ok = ok;
         strlcpy(_verify_result_err, err, sizeof(_verify_result_err));
+        _verify_cache_prov = prov;
+        strlcpy(_verify_cache_key, key, sizeof(_verify_cache_key));
+        _verify_cache_ok = ok;
+        strlcpy(_verify_cache_err, err, sizeof(_verify_cache_err));
+        _verify_cache_valid = true;
         _verify_result_ready = true;
     }).detach();
 }
@@ -664,6 +710,12 @@ void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *
 
 void aerodatabox_clear_rate_limit() {
     g_config.adbox_rate_limited = false;
+    // Force a fresh key check next Settings open (previous verify may have
+    // been a 429 "rate limited" failure while the sticky flag was set).
+    {
+        std::lock_guard<std::mutex> lock(_verify_mutex);
+        _verify_cache_valid = false;
+    }
     storage_save_config(g_config);
 }
 

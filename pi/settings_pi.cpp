@@ -626,8 +626,9 @@ void settings_init(lv_obj_t *parent) {
     // Our USAGE counter is a local UTC calendar-month tally only.
     lv_label_set_text(quota_note,
         "ADB quota resets on billing cycle\n"
-        "(marketplace). USAGE = local UTC\n"
-        "calendar month; adbox_lim soft-cap.");
+        "(marketplace). USAGE = billed HTTP\n"
+        "lookups this UTC month (not key checks);\n"
+        "adbox_lim soft-cap; 429 auto-disables.");
     lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(quota_note, right, 340);
