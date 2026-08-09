@@ -12,8 +12,9 @@
 #define PANEL_W 300
 #define PANEL_H 460
 // Extra height when the Pi Map BASEMAP + WEATHER sections are shown.
-// Compacted from 780: tighter section/row gaps + style dropdown vs cycle button.
-#define PANEL_H_WITH_BASEMAP 540
+// Same section spacing as before the cycle-button era; style is a dropdown
+// (one commit per pick) instead of a cycle button.
+#define PANEL_H_WITH_BASEMAP 780
 
 #define COLOR_PANEL  lv_color_hex(0x14142a)
 #define COLOR_ACCENT lv_color_hex(0x00cc66)
@@ -144,7 +145,7 @@ static void open_overlay() {
     // ============================================================
     section_header(_panel, "TRAILS", 0);
 
-    toggle_row(_panel, "Show trails", 18, trails_shown(), [](lv_event_t *e) {
+    toggle_row(_panel, "Show trails", 26, trails_shown(), [](lv_event_t *e) {
         if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != trails_shown())
             trails_toggle();
     });
@@ -159,17 +160,17 @@ static void open_overlay() {
     lv_label_set_text(len_lbl, "Trail Amount");
     lv_obj_set_style_text_font(len_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(len_lbl, COLOR_DIM, 0);
-    lv_obj_set_pos(len_lbl, 0, 44);
+    lv_obj_set_pos(len_lbl, 0, 62);
 
     _len_label = lv_label_create(_panel);
     lv_label_set_text_fmt(_len_label, "%d/60", trails_amount());
     lv_obj_set_style_text_color(_len_label, lv_color_white(), 0);
     lv_obj_set_style_text_font(_len_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(_len_label, PANEL_W - 20 - 50, 44);
+    lv_obj_set_pos(_len_label, PANEL_W - 20 - 50, 62);
 
     lv_obj_t *slider = lv_slider_create(_panel);
     lv_obj_set_size(slider, PANEL_W - 20, 10);
-    lv_obj_set_pos(slider, 0, 64);
+    lv_obj_set_pos(slider, 0, 86);
     lv_slider_set_range(slider, 10, 60);
     lv_slider_set_value(slider, trails_amount(), LV_ANIM_OFF);
     lv_obj_set_style_bg_color(slider, lv_color_hex(0x333366), 0);
@@ -200,8 +201,8 @@ static void open_overlay() {
 
     // Clear now -- dispatches to whichever of Map/Radar is currently active.
     lv_obj_t *clear_btn = lv_obj_create(_panel);
-    lv_obj_set_size(clear_btn, PANEL_W - 20, 28);
-    lv_obj_set_pos(clear_btn, 0, 80);
+    lv_obj_set_size(clear_btn, PANEL_W - 20, 32);
+    lv_obj_set_pos(clear_btn, 0, 104);
     lv_obj_set_style_bg_color(clear_btn, COLOR_ROW, 0);
     lv_obj_set_style_border_color(clear_btn, COLOR_ACCENT, 0);
     lv_obj_set_style_border_width(clear_btn, 1, 0);
@@ -230,14 +231,14 @@ static void open_overlay() {
     // Type default off -- new capability on Map, stay minimal until turned
     // on (see storage.h).
     // ============================================================
-    section_header(_panel, "TAGS", 114);
-    toggle_row(_panel, "Flight ID", 132, tag_id_shown(), [](lv_event_t *e) {
+    section_header(_panel, "TAGS", 160);
+    toggle_row(_panel, "Flight ID", 188, tag_id_shown(), [](lv_event_t *e) {
         tag_id_toggle();
     });
-    toggle_row(_panel, "Alt / Speed", 156, tag_data_shown(), [](lv_event_t *e) {
+    toggle_row(_panel, "Alt / Speed", 222, tag_data_shown(), [](lv_event_t *e) {
         tag_data_toggle();
     });
-    toggle_row(_panel, "Type", 180, tag_type_shown(), [](lv_event_t *e) {
+    toggle_row(_panel, "Type", 256, tag_type_shown(), [](lv_event_t *e) {
         tag_type_toggle();
     });
 
@@ -245,8 +246,8 @@ static void open_overlay() {
     // Secondary locations -- other saved/static airports + the
     // HOME-elsewhere marker. Off gives the "just dots" look.
     // ============================================================
-    section_header(_panel, "LOCATIONS", 206);
-    toggle_row(_panel, "Other Airports", 224, secondary_locations_shown(), [](lv_event_t *e) {
+    section_header(_panel, "LOCATIONS", 290);
+    toggle_row(_panel, "Other Airports", 318, secondary_locations_shown(), [](lv_event_t *e) {
         // Match Show trails / Show basemap: only flip config when the switch
         // state actually disagrees (avoids desync if VALUE_CHANGED fires
         // without a real user toggle).
@@ -257,7 +258,7 @@ static void open_overlay() {
         else if (v == VIEW_RADAR) radar_view_update();
     });
 
-    int alerts_y = 252;
+    int alerts_y = 352;
 #if !defined(ARDUINO)
     if (show_basemap) {
         // ============================================================
@@ -266,8 +267,8 @@ static void open_overlay() {
         // Sectional). Opacity is per-style (10-100%); each style remembers
         // its own. Changing style calls map_view_on_show() once.
         // ============================================================
-        section_header(_panel, "BASEMAP", 250);
-        toggle_row(_panel, "Show basemap", 268, map_basemap_shown(), [](lv_event_t *e) {
+        section_header(_panel, "BASEMAP", 352);
+        toggle_row(_panel, "Show basemap", 380, map_basemap_shown(), [](lv_event_t *e) {
             if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != map_basemap_shown())
                 map_basemap_toggle();
             map_view_update();
@@ -276,7 +277,7 @@ static void open_overlay() {
         _bm_style_dd = lv_dropdown_create(_panel);
         lv_dropdown_set_options(_bm_style_dd, map_basemap_style_dropdown_opts());
         lv_obj_set_size(_bm_style_dd, PANEL_W - 20, 32);
-        lv_obj_set_pos(_bm_style_dd, 0, 292);
+        lv_obj_set_pos(_bm_style_dd, 0, 414);
         lv_obj_set_style_bg_color(_bm_style_dd, COLOR_ROW, 0);
         lv_obj_set_style_text_color(_bm_style_dd, COLOR_ACCENT, 0);
         lv_obj_set_style_text_font(_bm_style_dd, &lv_font_montserrat_14, 0);
@@ -299,17 +300,17 @@ static void open_overlay() {
         lv_label_set_text(opa_lbl, "Opacity");
         lv_obj_set_style_text_font(opa_lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(opa_lbl, COLOR_DIM, 0);
-        lv_obj_set_pos(opa_lbl, 0, 328);
+        lv_obj_set_pos(opa_lbl, 0, 456);
 
         _bm_opa_label = lv_label_create(_panel);
         lv_label_set_text_fmt(_bm_opa_label, "%d%%", map_basemap_opa());
         lv_obj_set_style_text_color(_bm_opa_label, lv_color_white(), 0);
         lv_obj_set_style_text_font(_bm_opa_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_pos(_bm_opa_label, PANEL_W - 20 - 50, 328);
+        lv_obj_set_pos(_bm_opa_label, PANEL_W - 20 - 50, 456);
 
         _bm_opa_slider = lv_slider_create(_panel);
         lv_obj_set_size(_bm_opa_slider, PANEL_W - 20, 10);
-        lv_obj_set_pos(_bm_opa_slider, 0, 346);
+        lv_obj_set_pos(_bm_opa_slider, 0, 480);
         lv_slider_set_range(_bm_opa_slider, 10, 100);
         lv_slider_set_value(_bm_opa_slider, map_basemap_opa(), LV_ANIM_OFF);
         lv_obj_set_style_bg_color(_bm_opa_slider, lv_color_hex(0x333366), 0);
@@ -331,8 +332,8 @@ static void open_overlay() {
         // ============================================================
         // Weather -- RainViewer precip radar (public API, no key).
         // ============================================================
-        section_header(_panel, "WEATHER", 366);
-        toggle_row(_panel, "Show weather", 384, map_weather_shown(), [](lv_event_t *e) {
+        section_header(_panel, "WEATHER", 512);
+        toggle_row(_panel, "Show weather", 540, map_weather_shown(), [](lv_event_t *e) {
             if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != map_weather_shown())
                 map_weather_toggle();
             map_view_on_show(); // kick fetch when enabling
@@ -343,17 +344,17 @@ static void open_overlay() {
         lv_label_set_text(wx_opa_lbl, "Opacity");
         lv_obj_set_style_text_font(wx_opa_lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(wx_opa_lbl, COLOR_DIM, 0);
-        lv_obj_set_pos(wx_opa_lbl, 0, 410);
+        lv_obj_set_pos(wx_opa_lbl, 0, 574);
 
         _wx_opa_label = lv_label_create(_panel);
         lv_label_set_text_fmt(_wx_opa_label, "%d%%", map_weather_opa());
         lv_obj_set_style_text_color(_wx_opa_label, lv_color_white(), 0);
         lv_obj_set_style_text_font(_wx_opa_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_pos(_wx_opa_label, PANEL_W - 20 - 50, 410);
+        lv_obj_set_pos(_wx_opa_label, PANEL_W - 20 - 50, 574);
 
         _wx_opa_slider = lv_slider_create(_panel);
         lv_obj_set_size(_wx_opa_slider, PANEL_W - 20, 10);
-        lv_obj_set_pos(_wx_opa_slider, 0, 428);
+        lv_obj_set_pos(_wx_opa_slider, 0, 598);
         lv_slider_set_range(_wx_opa_slider, 10, 100);
         lv_slider_set_value(_wx_opa_slider, map_weather_opa(), LV_ANIM_OFF);
         lv_obj_set_style_bg_color(_wx_opa_slider, lv_color_hex(0x333366), 0);
@@ -372,7 +373,7 @@ static void open_overlay() {
             storage_save_config(g_config);
         }, LV_EVENT_PRESS_LOST, nullptr);
 
-        alerts_y = 448;
+        alerts_y = 630;
     }
 #endif
 
@@ -385,11 +386,11 @@ static void open_overlay() {
     // now has one less thing.
     // ============================================================
     section_header(_panel, "ALERTS", alerts_y);
-    toggle_row(_panel, "Military", alerts_y + 18, g_config.alert_military, [](lv_event_t *e) {
+    toggle_row(_panel, "Military", alerts_y + 28, g_config.alert_military, [](lv_event_t *e) {
         g_config.alert_military = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
         storage_save_config(g_config);
     });
-    toggle_row(_panel, "Emergency", alerts_y + 42, g_config.alert_emergency, [](lv_event_t *e) {
+    toggle_row(_panel, "Emergency", alerts_y + 62, g_config.alert_emergency, [](lv_event_t *e) {
         g_config.alert_emergency = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
         storage_save_config(g_config);
     });

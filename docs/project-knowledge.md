@@ -446,7 +446,7 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
 
 - ~~**Basemap loads while still cycling styles; VIEW menu too long**~~
   **done 2026-08-09** — basemap style is a dropdown (one commit per pick);
-  VIEW panel compacted (`PANEL_H_WITH_BASEMAP` 540).
+  VIEW keeps prior section spacing (`PANEL_H_WITH_BASEMAP` 780).
 
 - **LIST shows ground aircraft when GND is filtered off** until you toggle
   the filter off and back on. Suspected stale apply on first paint / location
