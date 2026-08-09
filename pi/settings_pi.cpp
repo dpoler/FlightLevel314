@@ -74,7 +74,8 @@ static KeyValid _adbox_valid = KeyValid::Unknown;
 static bool _apt_verify_pending = false;
 static bool _adbox_verify_pending = false;
 
-static UserConfig _cfg;
+static UserConfig _cfg;           // draft while Settings is open
+static UserConfig _cfg_at_open;   // snapshot for Cancel restore
 static settings_changed_cb_t _on_change = nullptr;
 
 // Wide enough for three columns on 1280x800 (fits under status bar + margin).
@@ -378,6 +379,22 @@ static void apply_cfg_to_fields() {
     refresh_key_presence_ui();
 }
 
+static void cancel_and_close(lv_event_t *e) {
+    (void)e;
+    // Revert anything previewed live while the panel was open (brightness,
+    // traffic/ADB provider). Disk is untouched for draft fields; brightness
+    // may have been preview-only (no mid-edit writes).
+    const int live_traffic = g_config.traffic_provider;
+    g_config.display_brightness_pct = _cfg_at_open.display_brightness_pct;
+    g_config.traffic_provider = _cfg_at_open.traffic_provider;
+    g_config.aerodatabox_provider = _cfg_at_open.aerodatabox_provider;
+    backlight_set_percent(g_config.display_brightness_pct);
+    if (live_traffic != g_config.traffic_provider)
+        fetcher_request_immediate_fetch();
+    _cfg = _cfg_at_open;
+    settings_hide();
+}
+
 static void save_and_close(lv_event_t *e) {
     (void)e;
     for (int i = 0; i < 4; i++) {
@@ -545,9 +562,8 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_radius(_overlay, 0, 0);
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(_overlay, [](lv_event_t *e) {
-        if (lv_event_get_target_obj(e) == _overlay && platform_millis() - _shown_at_ms > 400) settings_hide();
-    }, LV_EVENT_CLICKED, nullptr);
+    // Dismiss only via Save or Cancel — tapping the dimmed backdrop does nothing.
+    // (Earlier: click-outside hid without saving and made Save ambiguous.)
 
     _panel = lv_obj_create(_overlay);
     lv_obj_set_size(_panel, PANEL_W, PANEL_H);
@@ -734,19 +750,9 @@ void settings_init(lv_obj_t *parent) {
         if (v > 100) v = 100;
         _cfg.display_brightness_pct = v;
         if (_bright_label) lv_label_set_text_fmt(_bright_label, "%d%%", v);
+        // Preview only — persist on Save; Cancel restores _cfg_at_open.
         backlight_set_percent(v);
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(_bright_slider, [](lv_event_t *e) {
-        (void)e;
-        storage_save_config(_cfg);
-        // Keep g_config in sync so quitting without Save still sticks.
-        g_config.display_brightness_pct = _cfg.display_brightness_pct;
-    }, LV_EVENT_RELEASED, nullptr);
-    lv_obj_add_event_cb(_bright_slider, [](lv_event_t *e) {
-        (void)e;
-        storage_save_config(_cfg);
-        g_config.display_brightness_pct = _cfg.display_brightness_pct;
-    }, LV_EVENT_PRESS_LOST, nullptr);
 
     const int ey = 168;
     create_label(_content, "ERRORS", col2, ey);
@@ -785,7 +791,7 @@ void settings_init(lv_obj_t *parent) {
     status_refresh(nullptr);
     lv_timer_create(status_refresh, 500, nullptr);
 
-    // Fixed action strip: Clear/Reset span col0+col1; Save on the right.
+    // Fixed action strip: Clear/Reset span col0+col1; Cancel + Save on the right.
     // Opaque band + clipped content prevent bleed-through.
     lv_obj_t *actions = lv_obj_create(_panel);
     lv_obj_set_size(actions, PANEL_W - 32, ACTION_H);
@@ -798,9 +804,11 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_move_foreground(actions);
 
-    // Span first two columns for Clear/Reset; leave a gap before Save.
+    // Span first two columns for Clear/Reset; leave a gap before Cancel/Save.
     const int left_btn_w = 2 * COL_W + COL_GAP;
     const int actions_inner_w = PANEL_W - 32;
+    const int exit_btn_w = 110;
+    const int exit_gap = 10;
 
     lv_obj_t *cache_btn = lv_button_create(actions);
     lv_obj_set_size(cache_btn, left_btn_w, 34);
@@ -816,9 +824,23 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_center(cache_lbl);
     lv_obj_add_event_cb(cache_btn, clear_all_caches_cb, LV_EVENT_CLICKED, nullptr);
 
+    lv_obj_t *cancel_btn = lv_button_create(actions);
+    lv_obj_set_size(cancel_btn, exit_btn_w, 34);
+    lv_obj_set_pos(cancel_btn, actions_inner_w - 2 * exit_btn_w - exit_gap, 4);
+    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0x1a1a2a), 0);
+    lv_obj_set_style_border_color(cancel_btn, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_border_width(cancel_btn, 1, 0);
+    lv_obj_set_style_radius(cancel_btn, 8, 0);
+    lv_obj_t *cancel_label = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_label, "Cancel");
+    lv_obj_set_style_text_color(cancel_label, LABEL_COLOR, 0);
+    lv_obj_set_style_text_font(cancel_label, &lv_font_montserrat_16, 0);
+    lv_obj_center(cancel_label);
+    lv_obj_add_event_cb(cancel_btn, cancel_and_close, LV_EVENT_CLICKED, nullptr);
+
     lv_obj_t *save_btn = lv_button_create(actions);
-    lv_obj_set_size(save_btn, 120, 34);
-    lv_obj_set_pos(save_btn, actions_inner_w - 120, 4);
+    lv_obj_set_size(save_btn, exit_btn_w, 34);
+    lv_obj_set_pos(save_btn, actions_inner_w - exit_btn_w, 4);
     lv_obj_set_style_bg_color(save_btn, ACCENT_COLOR, 0);
     lv_obj_set_style_radius(save_btn, 8, 0);
     lv_obj_t *save_label = lv_label_create(save_btn);
@@ -857,6 +879,7 @@ void settings_show() {
     _factory_confirm_until_ms = 0;
     if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
     _cfg = storage_load_config();
+    _cfg_at_open = _cfg;
     apply_cfg_to_fields();
     start_key_validation();
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
