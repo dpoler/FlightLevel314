@@ -60,7 +60,10 @@ PAT/SSH setup unless he asks; push from Mac instead.
 
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
+- Airport Mode Phase 3 — INFO layout revamp (METAR + ATIS); approach TBD
+- Follow Mode
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
+- Pi-only cleanup: strip leftover jc1060 / ESP32 surface area from this repo
 
 Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
 
@@ -426,6 +429,13 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
 **Do not start open work unless explicitly asked.**
 
 ### 7.1 Open
+
+- **Pi-only cleanup — remove / archive leftover jc1060 / ESP32 surface area
+  in this repo**: FlightLevel314 is Pi-only now. Strip or quarantine
+  PlatformIO / `ARDUINO` paths, ESP32-only stubs that confuse the tree, and
+  dual-target comments that imply jc1060 is still a first-class target here.
+  Cherry-picks back to `dpoler/adsb` remain fine later; do not reintroduce
+  PlatformIO as a build target.
 
 - ~~**Detail card photo credit appears before the photo**~~ **done 2026-08-09**
   — Pi shows credit only with visible pixels.
