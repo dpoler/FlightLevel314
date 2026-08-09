@@ -60,12 +60,12 @@ PAT/SSH setup unless he asks; push from Mac instead.
 
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
-- Detail-card photo credit appears before the photo loads
-- Basemap / sectional outside US; `tile AABB too large` at UK latitudes
-- Pi online app updates (check / notify / pull / restart)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 
 Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
+
+Recently closed (2026-08-09 highest-signal pass): photo credit timing; UK
+basemap tile AABB + sectional US label; Pi online app updates.
 
 ### Dan / workflow
 - Name: Dan. Prefers working directly in code; builds himself unless asked.
@@ -427,43 +427,20 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
 
 ### 7.1 Open
 
+- ~~**Detail card photo credit appears before the photo**~~ **done 2026-08-09**
+  — Pi shows credit only with visible pixels.
+
+- ~~**Basemap / sectional outside US; UK tile AABB**~~ **done 2026-08-09** —
+  drop zoom when AABB > 300 tiles; VIEW label "VFR Sectional (US)".
+
+- ~~**Pi online app updates**~~ **done 2026-08-09** — GitHub Releases check /
+  status-bar notice / Settings install + systemd restart (`ota_linux.cpp`).
+
+- **Optional: fresher README gallery LIST/INFO shots** — still open.
+
 - ~~**Write a proper FlightLevel314 README.md (with original-author credit)**~~
   **done 2026-08-09** — see §0 handoff. Gallery may still need fresher
   LIST/INFO shots with live traffic (optional polish).
-
-- **Detail card photo credit appears before the photo**: photographer credit
-  text can pop into the summary/detail area before the aircraft photo has
-  finished loading (or when the image path fails / is still decoding). Credit
-  should stay hidden until pixels are actually shown, or sit only under the
-  photo slot. **Do not start until explicitly asked** — reported 2026-08-08.
-
-- **Basemap / sectional coverage outside the US (esp. UK)**: FAA VFR
-  sectional style is US-charting only — expected empty/useless for UK and
-  other non-US regions; either gate the style by geography or label it
-  US-only in the VIEW menu. Separately, at EGLL (~51.47N) with dark_nolabels
-  @ 10 nm the basemap worker aborts: `tile AABB too large (25x18 at z=13)`
-  (`pi/basemap.cpp` guard `tiles_w * tiles_h > 300`) after cache TTL expiry,
-  so the map never rebuilds. Mercator AABB vs equirectangular canvas grows
-  with latitude; need a zoom/AABB fix and a pass verifying **all** basemap
-  styles at representative worldwide locations (low / mid / high lat, both
-  hemispheres). **Do not start until explicitly asked** — reported
-  2026-08-08.
-
-- ~~**Fork the Pi port into its own project/repo**~~: **Done 2026-08-08** as
-  **FlightLevel314** — https://github.com/dpoler/FlightLevel314 (`master`
-  seeded from `cursor/flightlevel314-7c95`). jc1060 / PlatformIO removed;
-  history retained for cherry-picks. Optional later: strip leftover
-  `#if defined(ARDUINO)` from `src/`.
-
-- **Pi online app updates (check / notify / pull / restart)**: periodically
-  check whether a newer `flightlevel314` binary (or package) is available,
-  surface a non-intrusive "update available" notice in the UI, download it,
-  and restart into the new build. Not designed — open questions include update
-  source (GitHub Releases vs self-hosted URL vs apt), signature/verification,
-  whether the kiosk systemd unit should own the swap, and how aggressive the
-  check cadence should be on a wall-mounted always-on display. Related to the
-  Settings Device / "Check for Update" UI (Device column itself is done).
-  **Do not start until explicitly asked** — parked 2026-08-08.
 
 - **Ground traffic (GND) should default to hidden, not shown**: flip
   `storage.cpp`'s `cfg.view_hide_ground[i]` default false→true. Check whether
@@ -745,9 +722,9 @@ separate, harder problem — see §4/§5).
   say flashing during this phase is expected/harmless. Explicitly not chasing
   a fully flash-free update — visibility judged more valuable once the *bulk*
   of the flashing (other views' redraw traffic) was already eliminated.
-- Open: Pi-native online app updates (§7.1); the `.ps1` Windows OTA function
-  was never syntax-checked (no pwsh in the dev environment). Settings Device
-  column / VERSION move off Stats is **done** (Dan, 2026-08-09).
+- Open: optional fresher README gallery shots. Settings Device / VERSION and
+  Pi online updates are **done** (Dan / 2026-08-09). The `.ps1` Windows OTA
+  function was never syntax-checked (no pwsh in the dev environment).
 
 ---
 

@@ -9,10 +9,16 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-x86_64:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Stamp version.h from tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          printf '%s\n' "#pragma once" "#define FIRMWARE_VERSION_STR \"${TAG}\"" > src/version.h
+          cat src/version.h
 
       - name: Install dependencies
         run: |
@@ -31,8 +37,63 @@ jobs:
           cp build/pi/flightlevel314 flightlevel314-linux-x86_64
           chmod +x flightlevel314-linux-x86_64
 
-      - name: Create release and attach binary
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flightlevel314-linux-x86_64
+          path: flightlevel314-linux-x86_64
+
+  # Pi kiosk is aarch64 DRM. Built under qemu user-mode via run-on-arch.
+  build-aarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp version.h from tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          printf '%s\n' "#pragma once" "#define FIRMWARE_VERSION_STR \"${TAG}\"" > src/version.h
+
+      - name: Build aarch64 DRM binary
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: aarch64
+          distro: ubuntu22.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update -q
+            apt-get install -y -q build-essential cmake pkg-config python3 \
+              libsdl2-dev libcurl4-openssl-dev libdrm-dev libinput-dev
+          run: |
+            cmake -S . -B build -DPI_DISPLAY_BACKEND=DRM
+            cmake --build build -j$(nproc)
+            cp build/pi/flightlevel314 flightlevel314-linux-aarch64
+            chmod +x flightlevel314-linux-aarch64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flightlevel314-linux-aarch64
+          path: flightlevel314-linux-aarch64
+
+  release:
+    needs: [build-x86_64, build-aarch64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        run: |
+          find dist -type f -exec mv -v {} . \;
+          ls -la flightlevel314-linux-*
+
+      - name: Create release and attach binaries
         uses: softprops/action-gh-release@v2
         with:
-          files: flightlevel314-linux-x86_64
+          files: |
+            flightlevel314-linux-x86_64
+            flightlevel314-linux-aarch64
           generate_release_notes: true
