@@ -5,6 +5,8 @@
 #include "../pins_config.h"
 #include "status_bar.h"
 #include "view_menu.h"
+#include "map_view.h"
+#include "radar_view.h"
 #include "airports_lookup.h"
 #include "../platform/platform.h"
 #include <cstring>
@@ -101,6 +103,14 @@ static void close_overlay() {
 
 static void select_location(int idx) {
     locations_set_active(idx);
+    float lat, lon;
+    if (locations_get_active_coords(&lat, &lon, nullptr)) {
+        // Recenter immediately -- don't wait for Map/Radar's periodic sync
+        // tick (and don't leave Map's projection on the previous airport
+        // while the fetch already returned traffic for the new one).
+        map_view_center_on(lat, lon);
+        radar_view_center_on(lat, lon);
+    }
     update_picker_label();
     close_overlay();
 }
