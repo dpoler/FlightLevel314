@@ -1,13 +1,34 @@
 #include "display.h"
 
-// Real-hardware backend -- NOT yet build/run-tested (that's Phase 6 of the
-// Pi port; see project_pi_port memory). /dev/dri/card0 assumes the
-// Waveshare DSI panel enumerates as the Pi's primary DRM card, which is
-// the common case but not guaranteed -- if the panel comes up on a
-// different card node, adjust the path here or make it configurable.
+#include <xf86drmMode.h>
+
+// Real-hardware backend. /dev/dri/card0 assumes the Waveshare DSI panel
+// enumerates as the Pi's primary DRM card (verified on bring-up).
+
+// Minimal prefix of LVGL's private drm_dev_t (lv_linux_drm.c) so we can
+// blank the hardware cursor via the same DRM-master fd LVGL already holds.
+// Layout must match: int fd; then conn/enc/crtc/plane/crtc_idx uint32s.
+struct DrmDevPeek {
+    int fd;
+    uint32_t conn_id;
+    uint32_t enc_id;
+    uint32_t crtc_id;
+    uint32_t plane_id;
+    uint32_t crtc_idx;
+};
 
 lv_display_t *pi_display_init() {
     lv_display_t *disp = lv_linux_drm_create();
     lv_linux_drm_set_file(disp, "/dev/dri/card0", -1);
+
+    // VC4/KMS often leaves a hardware cursor plane active at (0,0) after
+    // modeset — looks like a stuck pointer in the upper-left. LVGL never
+    // enables a software cursor; this is the DRM plane. Blank it using
+    // LVGL's DRM-master fd (a second open wouldn't have permission).
+    auto *dev = static_cast<DrmDevPeek *>(lv_display_get_driver_data(disp));
+    if (dev && dev->fd >= 0 && dev->crtc_id != 0) {
+        drmModeSetCursor(dev->fd, dev->crtc_id, 0, 0, 0);
+    }
+
     return disp;
 }

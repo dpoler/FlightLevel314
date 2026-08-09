@@ -1,0 +1,58 @@
+--- a/src/drivers/display/drm/lv_linux_drm.c
++++ b/src/drivers/display/drm/lv_linux_drm.c
+@@ -482,10 +482,22 @@ static int drm_dmabuf_set_plane(drm_dev_t * drm_dev, drm_buffer_t * buf)
+     drm_add_plane_property(drm_dev, "CRTC_H", drm_dev->height);
+ 
+     ret = drmModeAtomicCommit(drm_dev->fd, drm_dev->req, flags, drm_dev);
++    /* NONBLOCK commits can fail with EBUSY under load on Pi; retry once
++     * without NONBLOCK so the flip still completes instead of leaving a
++     * dangling req that hangs drm_flush_wait forever. */
++    if(ret && (flags & DRM_MODE_ATOMIC_NONBLOCK)) {
++        flags &= ~DRM_MODE_ATOMIC_NONBLOCK;
++        ret = drmModeAtomicCommit(drm_dev->fd, drm_dev->req, flags, drm_dev);
++    }
+     if(ret) {
+         LV_LOG_ERROR("drmModeAtomicCommit failed: %s (%d)", strerror(errno), errno);
+         drmModeAtomicFree(drm_dev->req);
++        /* Upstream frees req but leaves the dangling non-NULL pointer;
++         * drm_flush_wait then polls forever on a freed request. */
++        drm_dev->req = NULL;
+         return ret;
+     }
+ 
+     return 0;
+@@ -1049,17 +1061,32 @@ static void drm_flush_wait(lv_display_t * disp)
+     pfd.events = POLLIN;
+ 
+     while(drm_dev->req) {
+         int ret;
+         do {
+-            ret = poll(&pfd, 1, -1);
++            /* Finite timeout: a missed page-flip event must not freeze the
++             * UI thread (touch dead, status-bar timer stuck, only kill -9). */
++            ret = poll(&pfd, 1, 500);
+         } while(ret == -1 && errno == EINTR);
+ 
+-        if(ret > 0)
++        if(ret > 0) {
+             drmHandleEvent(drm_dev->fd, &drm_dev->drm_event_ctx);
+-        else {
++        }
++        else if(ret == 0) {
++            LV_LOG_ERROR("DRM page-flip timed out; dropping pending flip");
++            if(drm_dev->req) {
++                drmModeAtomicFree(drm_dev->req);
++                drm_dev->req = NULL;
++            }
++            return;
++        }
++        else {
+             LV_LOG_ERROR("poll failed: %s", strerror(errno));
++            if(drm_dev->req) {
++                drmModeAtomicFree(drm_dev->req);
++                drm_dev->req = NULL;
++            }
+             return;
+         }
+     }
+ }
