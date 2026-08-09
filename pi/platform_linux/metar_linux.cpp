@@ -1,6 +1,9 @@
 // Linux METAR fetch — aviationweather.gov Data API. Same semantics as
 // src/data/metar.cpp, with ICAO-first for saved airports and a 50nm
 // nearest-station fallback (waypoints / non-reporting fields).
+//
+// In-memory per-location cache: switching back to an airport within the
+// refresh window restores the last METAR immediately (no blank + refetch).
 
 #include "../../src/data/metar.h"
 #include "../../src/data/locations.h"
@@ -9,6 +12,7 @@
 
 #include <ArduinoJson.h>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -17,6 +21,7 @@
 // Routine METARs are roughly hourly (US ASOS often ~:51–:58). Poll at ~4×
 // that rate so SPECI updates show up without hammering the API.
 #define METAR_REFRESH_MS (15UL * 60UL * 1000UL)
+#define METAR_CACHE_SLOTS 16
 
 volatile MetarStatus metar_status = METAR_IDLE;
 char metar_raw[METAR_RAW_LEN] = "";
@@ -26,6 +31,51 @@ namespace {
 
 std::mutex _fetch_mutex;
 bool _busy = false;
+
+struct MetarCacheEntry {
+    char key[24];
+    char raw[METAR_RAW_LEN];
+    char station[8];
+    MetarStatus status;
+    uint32_t fetched_ms;
+};
+MetarCacheEntry _cache[METAR_CACHE_SLOTS] = {};
+int _cache_count = 0;
+
+void cache_key_for(const Location *loc, char *out, size_t out_sz) {
+    if (loc && loc->icao[0]) {
+        strlcpy(out, loc->icao, out_sz);
+        return;
+    }
+    // Waypoint: round to ~0.01° so tiny jitter doesn't miss the cache.
+    snprintf(out, out_sz, "WP%.2f,%.2f",
+             loc ? (double)loc->lat : 0.0, loc ? (double)loc->lon : 0.0);
+}
+
+MetarCacheEntry *cache_find(const char *key) {
+    for (int i = 0; i < _cache_count; i++) {
+        if (strcmp(_cache[i].key, key) == 0) return &_cache[i];
+    }
+    return nullptr;
+}
+
+void cache_store(const char *key, MetarStatus st, const char *raw, const char *station) {
+    MetarCacheEntry *e = cache_find(key);
+    if (!e) {
+        e = (_cache_count < METAR_CACHE_SLOTS) ? &_cache[_cache_count++] : &_cache[0];
+    }
+    strlcpy(e->key, key, sizeof(e->key));
+    strlcpy(e->raw, raw ? raw : "", sizeof(e->raw));
+    strlcpy(e->station, station ? station : "", sizeof(e->station));
+    e->status = st;
+    e->fetched_ms = platform_millis();
+}
+
+void apply_to_globals(const MetarCacheEntry *e) {
+    strlcpy(metar_raw, e->raw, sizeof(metar_raw));
+    strlcpy(metar_station, e->station, sizeof(metar_station));
+    metar_status = e->status;
+}
 
 bool pick_best_from_array(JsonDocument &doc, float lat, float lon,
                           const char **best_raw, const char **best_id, float *best_dist) {
@@ -64,7 +114,6 @@ bool fetch_ids(const char *icao, float lat, float lon) {
     const char *best_id = nullptr;
     float best_dist = 1e9f;
     if (!pick_best_from_array(doc, lat, lon, &best_raw, &best_id, &best_dist)) {
-        // Exact ICAO hit may omit lat/lon — still accept a single rawOb.
         if (doc.is<JsonArray>() && doc.as<JsonArray>().size() > 0) {
             JsonObject s = doc.as<JsonArray>()[0];
             best_raw = s["rawOb"] | "";
@@ -129,16 +178,15 @@ void do_fetch(float lat, float lon, const char *icao) {
     metar_status = METAR_FETCHING;
     if (icao && icao[0]) {
         if (fetch_ids(icao, lat, lon)) return;
-        // Airport ICAO with no ASOS — fall through to nearest in range.
     }
     fetch_bbox(lat, lon);
 }
 
-void run_fetch(float lat, float lon, std::string icao, int loc_idx) {
+void run_fetch(float lat, float lon, std::string icao, std::string key) {
     do_fetch(lat, lon, icao.c_str());
+    cache_store(key.c_str(), metar_status, metar_raw, metar_station);
     std::lock_guard<std::mutex> lock(_fetch_mutex);
     _busy = false;
-    (void)loc_idx;
 }
 
 } // namespace
@@ -158,16 +206,33 @@ void metar_poll() {
         return;
     }
 
-    uint32_t now = platform_millis();
-    bool loc_changed = (idx != last_loc_idx);
-    bool due = (now - last_fetch_ms >= METAR_REFRESH_MS);
-    if (!loc_changed && !due) return;
-
     float lat, lon;
     if (!locations_get_active_coords(&lat, &lon, nullptr)) return;
-
     const Location *loc = locations_get(idx);
+    char key[24];
+    cache_key_for(loc, key, sizeof(key));
     std::string icao = (loc && loc->icao[0]) ? loc->icao : "";
+
+    uint32_t now = platform_millis();
+    bool loc_changed = (idx != last_loc_idx);
+
+    if (loc_changed) {
+        last_loc_idx = idx;
+        MetarCacheEntry *hit = cache_find(key);
+        if (hit && (now - hit->fetched_ms) < METAR_REFRESH_MS) {
+            apply_to_globals(hit);
+            last_fetch_ms = hit->fetched_ms;
+            platform_log("METAR: cache hit %s\n", key);
+            return; // still fresh — no network
+        }
+        // Cold switch: don't leave the previous airport's text up.
+        metar_raw[0] = '\0';
+        metar_station[0] = '\0';
+        metar_status = METAR_FETCHING;
+    } else {
+        bool due = (now - last_fetch_ms >= METAR_REFRESH_MS);
+        if (!due) return;
+    }
 
     {
         std::lock_guard<std::mutex> lock(_fetch_mutex);
@@ -175,12 +240,9 @@ void metar_poll() {
         _busy = true;
     }
 
-    if (loc_changed) {
-        metar_raw[0] = '\0';
-        metar_station[0] = '\0';
-    }
-    last_loc_idx = idx;
     last_fetch_ms = now;
-
-    std::thread([lat, lon, icao, idx]() { run_fetch(lat, lon, icao, idx); }).detach();
+    std::string key_copy(key);
+    std::thread([lat, lon, icao, key_copy]() {
+        run_fetch(lat, lon, icao, key_copy);
+    }).detach();
 }

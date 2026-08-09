@@ -73,14 +73,13 @@ static lv_obj_t *_type_labels[5] = {};
 #define COL_HEADER_GAP 40
 #endif
 
-// Right-column weather fonts (Pi). METARs are typically one observation
-// line (~60–120 chars) plus short remarks — a few wrap lines at 20pt on
-// the 2/3-width pane. ATIS is longer, so it owns the rest of the column.
-#define WX_BODY_FONT   &lv_font_montserrat_20
-#define WX_HEADER_FONT &lv_font_montserrat_28
-#define WX_SUBHDR_FONT &lv_font_montserrat_20
-// Fixed METAR band so ATIS can sit high; ~3 lines of 20pt + header.
-#define METAR_BAND_H   120
+// Right-column weather fonts (Pi). Slightly under the first pass — body
+// matches readable 16pt, headers at 20pt (RECORDS-style gray via DIM_COLOR).
+#define WX_BODY_FONT   &lv_font_montserrat_16
+#define WX_HEADER_FONT &lv_font_montserrat_20
+#define WX_SUBHDR_FONT &lv_font_montserrat_16
+// Fixed METAR band so ATIS can sit high; ~3 lines of 16pt + header.
+#define METAR_BAND_H   110
 
 static lv_obj_t *create_bar(lv_obj_t *parent, int x, int y, lv_color_t color) {
     lv_obj_t *bar = lv_obj_create(parent);
@@ -191,16 +190,16 @@ static void refresh_stats(lv_timer_t *t) {
 
     static int _wx_last_loc = -2;
     int wx_loc = locations_active_index();
-    if (wx_loc != _wx_last_loc) {
-        _wx_last_loc = wx_loc;
-        if (_metar_lbl) lv_label_set_text(_metar_lbl, "");
-        set_atis_visibility(false, true);
-        if (_atis_status_lbl) lv_label_set_text(_atis_status_lbl, "");
-    } else if (_metar_lbl) {
+    // Do not blank weather on location change — metar/atis poll restore from
+    // cache synchronously (or set FETCHING). Blanking here raced the cache
+    // restore and made every switch look like a cold refetch.
+    if (wx_loc != _wx_last_loc) _wx_last_loc = wx_loc;
+
+    if (_metar_lbl) {
         switch (metar_status) {
             case METAR_OK:
                 lv_label_set_text(_metar_lbl, metar_raw);
-                lv_obj_set_style_text_color(_metar_lbl, TEXT_COLOR, 0);
+                lv_obj_set_style_text_color(_metar_lbl, DIM_COLOR, 0);
                 break;
             case METAR_NO_STATION:
                 lv_label_set_text(_metar_lbl, "No stations within 50nm");
@@ -231,6 +230,9 @@ static void refresh_stats(lv_timer_t *t) {
                     }
                     break;
                 case ATIS_UNAVAILABLE:
+                case ATIS_ERROR:
+                    // 404 / non-US majors land as UNAVAILABLE; transport
+                    // failures as ERROR — both show the same simple line.
                     set_atis_visibility(false, true);
                     if (_atis_status_lbl) {
                         lv_label_set_text(_atis_status_lbl, "NOT AVAILABLE");
@@ -245,10 +247,8 @@ static void refresh_stats(lv_timer_t *t) {
                     set_atis_visibility(false, true);
                     if (_atis_status_lbl) {
                         lv_label_set_text(_atis_status_lbl, "Fetching...");
-                        lv_obj_set_style_text_color(_atis_status_lbl, ACCENT_COLOR, 0);
+                        lv_obj_set_style_text_color(_atis_status_lbl, DIM_COLOR, 0);
                     }
-                    break;
-                case ATIS_ERROR:
                     break;
             }
         }
@@ -473,22 +473,23 @@ static void build_pi_quadrants() {
     lv_obj_t *metar_hdr = lv_label_create(_container);
     lv_label_set_text(metar_hdr, "METAR");
     lv_obj_set_style_text_font(metar_hdr, WX_HEADER_FONT, 0);
-    lv_obj_set_style_text_color(metar_hdr, ACCENT_COLOR, 0);
+    lv_obj_set_style_text_color(metar_hdr, DIM_COLOR, 0);
     lv_obj_set_pos(metar_hdr, rx, 8);
     lv_obj_clear_flag(metar_hdr, LV_OBJ_FLAG_CLICKABLE);
 
     _metar_lbl = make_wrap_label(_container, weather_w);
-    lv_obj_set_pos(_metar_lbl, rx, 44);
+    lv_obj_set_pos(_metar_lbl, rx, 40);
     lv_obj_set_style_text_font(_metar_lbl, WX_BODY_FONT, 0);
+    lv_obj_set_style_text_color(_metar_lbl, DIM_COLOR, 0);
 
     _atis_hdr = lv_label_create(_container);
     lv_label_set_text(_atis_hdr, "ATIS");
     lv_obj_set_style_text_font(_atis_hdr, WX_HEADER_FONT, 0);
-    lv_obj_set_style_text_color(_atis_hdr, ACCENT_COLOR, 0);
+    lv_obj_set_style_text_color(_atis_hdr, DIM_COLOR, 0);
     lv_obj_set_pos(_atis_hdr, rx, METAR_BAND_H);
     lv_obj_clear_flag(_atis_hdr, LV_OBJ_FLAG_CLICKABLE);
 
-    int scroll_y = METAR_BAND_H + 40;
+    int scroll_y = METAR_BAND_H + 36;
     int scroll_h = STATS_H - scroll_y - 12;
     _atis_scroll = lv_obj_create(_container);
     lv_obj_set_size(_atis_scroll, weather_w, scroll_h);
@@ -498,13 +499,19 @@ static void build_pi_quadrants() {
     lv_obj_set_style_pad_all(_atis_scroll, 0, 0);
     lv_obj_set_scroll_dir(_atis_scroll, LV_DIR_VER);
     lv_obj_add_flag(_atis_scroll, LV_OBJ_FLAG_SCROLLABLE);
+    // Scrollable children eat pointer events — without this, horizontal
+    // swipes starting over ATIS never reach _container's swipe handlers.
+    lv_obj_clear_flag(_atis_scroll, LV_OBJ_FLAG_SCROLL_CHAIN);
+    views_attach_swipe(_atis_scroll);
 
     _atis_status_lbl = make_wrap_label(_atis_scroll, weather_w);
     lv_obj_set_style_text_font(_atis_status_lbl, WX_BODY_FONT, 0);
+    lv_obj_set_style_text_color(_atis_status_lbl, DIM_COLOR, 0);
     lv_obj_set_pos(_atis_status_lbl, 0, 0);
 
     _atis_combined_lbl = make_wrap_label(_atis_scroll, weather_w);
     lv_obj_set_style_text_font(_atis_combined_lbl, WX_BODY_FONT, 0);
+    lv_obj_set_style_text_color(_atis_combined_lbl, DIM_COLOR, 0);
     lv_obj_set_pos(_atis_combined_lbl, 0, 0);
     lv_obj_add_flag(_atis_combined_lbl, LV_OBJ_FLAG_HIDDEN);
 
@@ -517,7 +524,8 @@ static void build_pi_quadrants() {
 
     _atis_arr_lbl = make_wrap_label(_atis_scroll, weather_w);
     lv_obj_set_style_text_font(_atis_arr_lbl, WX_BODY_FONT, 0);
-    lv_obj_set_pos(_atis_arr_lbl, 0, 28);
+    lv_obj_set_style_text_color(_atis_arr_lbl, DIM_COLOR, 0);
+    lv_obj_set_pos(_atis_arr_lbl, 0, 24);
     lv_obj_add_flag(_atis_arr_lbl, LV_OBJ_FLAG_HIDDEN);
 
     _atis_dep_hdr = lv_label_create(_atis_scroll);
@@ -529,6 +537,7 @@ static void build_pi_quadrants() {
 
     _atis_dep_lbl = make_wrap_label(_atis_scroll, weather_w);
     lv_obj_set_style_text_font(_atis_dep_lbl, WX_BODY_FONT, 0);
+    lv_obj_set_style_text_color(_atis_dep_lbl, DIM_COLOR, 0);
     lv_obj_set_pos(_atis_dep_lbl, 0, 0);
     lv_obj_add_flag(_atis_dep_lbl, LV_OBJ_FLAG_HIDDEN);
 }
