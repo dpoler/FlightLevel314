@@ -118,6 +118,15 @@ Then open **Settings** (gear) → enable AirportDB / AeroDataBox under API KEYS
 and pick the AeroDataBox gateway if needed. Use **TRAFFIC SOURCE** to choose
 adsb.lol or adsb.fi.
 
+### App updates (Pi)
+
+Tagged GitHub Releases publish `flightlevel314-linux-aarch64` (DRM/Pi) and
+`flightlevel314-linux-x86_64` (SDL). Settings → **DEVICE** can check for a
+newer release, download the matching binary over the running path, and exit so
+`systemd` restarts the kiosk. The status bar shows `Upd vX.Y.Z` when an update
+is available. Dev builds report `v0.0.0-dev` and always see a newer tag as an
+update.
+
 ## Layout
 
 | Path | Role |

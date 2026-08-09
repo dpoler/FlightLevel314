@@ -10,19 +10,20 @@
 // error_log.cpp, both ported for real (see project_pi_port memory).
 //
 // Dropped entirely for now: WiFi/Ethernet UI (Pi's networking is
-// OS-managed), OTA (Pi would need an entirely different update mechanism,
-// not designed yet), heap/PSRAM/temp/tasks/flash (ESP32-specific
-// concepts with no Pi equivalent worth faking).
+// OS-managed), heap/PSRAM/temp/tasks/flash (ESP32-specific). Online
+// app updates are implemented via GitHub Releases (ota_linux.cpp).
 
 #include "../src/ui/settings.h"
 #include "../src/data/enrichment.h"
 #include "../src/data/error_log.h"
 #include "../src/data/fetcher.h"
 #include "../src/data/locations.h"
+#include "../src/data/ota.h"
 #include "../src/platform/platform.h"
 #include "../src/ui/location_picker.h"
 #include "../src/ui/map_view.h"
 #include "../src/ui/range.h"
+#include "../src/version.h"
 #include "basemap.h"
 #include "weather.h"
 #include <cstdio>
@@ -59,6 +60,10 @@ static lv_obj_t *_adbox_valid_val = nullptr;
 static lv_obj_t *_sw_adbox_en = nullptr;
 static lv_obj_t *_dd_adbox_prov = nullptr;
 static lv_obj_t *_adbox_usage_val = nullptr;
+static lv_obj_t *_ota_ver_val = nullptr;
+static lv_obj_t *_ota_status_lbl = nullptr;
+static lv_obj_t *_ota_btn_lbl = nullptr;
+static OtaStatus _last_ota_ui = OTA_IDLE;
 
 enum class KeyValid : uint8_t { Unknown, Checking, Valid, Invalid, Missing };
 static KeyValid _apt_valid = KeyValid::Unknown;
@@ -292,11 +297,16 @@ static void poll_key_validation() {
     }
 }
 
+static void refresh_adbox_usage_ui();
+static void refresh_ota_ui();
+
 static void status_refresh(lv_timer_t *t) {
     (void)t;
     if (_visible) {
         poll_key_validation();
         refresh_adbox_usage_ui();
+        if (_last_ota_ui != ota_status || ota_status == OTA_DOWNLOADING)
+            refresh_ota_ui();
     }
     if (!_fetch_val) return;
 
@@ -403,6 +413,57 @@ static void save_and_close(lv_event_t *e) {
     if (clear_enrich) enrichment_clear_cache();
     if (_on_change) _on_change(&_cfg);
     settings_hide();
+}
+
+static void refresh_ota_ui() {
+    if (!_ota_status_lbl || !_ota_btn_lbl) return;
+    _last_ota_ui = ota_status;
+    switch (ota_status) {
+    case OTA_IDLE:
+        lv_label_set_text(_ota_status_lbl, "Tap to check");
+        lv_obj_set_style_text_color(_ota_status_lbl, LABEL_COLOR, 0);
+        lv_label_set_text(_ota_btn_lbl, "Check for update");
+        break;
+    case OTA_CHECKING:
+        lv_label_set_text(_ota_status_lbl, "Checking...");
+        lv_obj_set_style_text_color(_ota_status_lbl, WARN_COLOR, 0);
+        lv_label_set_text(_ota_btn_lbl, "Checking...");
+        break;
+    case OTA_UP_TO_DATE:
+        lv_label_set_text_fmt(_ota_status_lbl, "Up to date (%s)",
+                              ota_latest_tag[0] ? ota_latest_tag : FIRMWARE_VERSION_STR);
+        lv_obj_set_style_text_color(_ota_status_lbl, SYS_COLOR, 0);
+        lv_label_set_text(_ota_btn_lbl, "Check again");
+        break;
+    case OTA_AVAILABLE:
+        lv_label_set_text_fmt(_ota_status_lbl, "Available: %s", ota_latest_tag);
+        lv_obj_set_style_text_color(_ota_status_lbl, WARN_COLOR, 0);
+        lv_label_set_text(_ota_btn_lbl, "Install & restart");
+        break;
+    case OTA_DOWNLOADING:
+        lv_label_set_text_fmt(_ota_status_lbl, "Downloading %d%%", ota_progress);
+        lv_obj_set_style_text_color(_ota_status_lbl, WARN_COLOR, 0);
+        lv_label_set_text(_ota_btn_lbl, "Downloading...");
+        break;
+    case OTA_DONE:
+        lv_label_set_text(_ota_status_lbl, "Installed - restarting");
+        lv_obj_set_style_text_color(_ota_status_lbl, SYS_COLOR, 0);
+        lv_label_set_text(_ota_btn_lbl, "Restarting...");
+        break;
+    case OTA_ERROR:
+    default:
+        lv_label_set_text(_ota_status_lbl, "Check failed (see log)");
+        lv_obj_set_style_text_color(_ota_status_lbl, ERR_COLOR, 0);
+        lv_label_set_text(_ota_btn_lbl, "Retry check");
+        break;
+    }
+}
+
+static void ota_btn_cb(lv_event_t *e) {
+    (void)e;
+    if (ota_status == OTA_AVAILABLE) ota_request_update();
+    else if (ota_status != OTA_CHECKING && ota_status != OTA_DOWNLOADING) ota_request_check();
+    refresh_ota_ui();
 }
 
 static void clear_all_caches_cb(lv_event_t *e) {
@@ -550,6 +611,33 @@ void settings_init(lv_obj_t *parent) {
     _uptime_val = create_inline_row(_content, "UPTIME", left, sy + 62, 90);
 
     int ey = sy + 96;
+    create_label(_content, "DEVICE", left, ey);
+    _ota_ver_val = create_inline_row(_content, "VERSION", left, ey + 22, 90);
+    lv_label_set_text(_ota_ver_val, FIRMWARE_VERSION_STR);
+    _ota_status_lbl = lv_label_create(_content);
+    lv_label_set_text(_ota_status_lbl, "Tap to check");
+    lv_obj_set_style_text_font(_ota_status_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_ota_status_lbl, LABEL_COLOR, 0);
+    lv_obj_set_pos(_ota_status_lbl, left, ey + 44);
+    lv_obj_set_width(_ota_status_lbl, COL_W - 8);
+    lv_obj_clear_flag(_ota_status_lbl, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *ota_btn = lv_button_create(_content);
+    lv_obj_set_size(ota_btn, COL_W - 8, 34);
+    lv_obj_set_pos(ota_btn, left, ey + 68);
+    lv_obj_set_style_bg_color(ota_btn, lv_color_hex(0x1a1a2a), 0);
+    lv_obj_set_style_border_color(ota_btn, lv_color_hex(0x444466), 0);
+    lv_obj_set_style_border_width(ota_btn, 1, 0);
+    lv_obj_set_style_radius(ota_btn, 6, 0);
+    _ota_btn_lbl = lv_label_create(ota_btn);
+    lv_label_set_text(_ota_btn_lbl, "Check for update");
+    lv_obj_set_style_text_color(_ota_btn_lbl, ACCENT_COLOR, 0);
+    lv_obj_set_style_text_font(_ota_btn_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(_ota_btn_lbl);
+    lv_obj_add_event_cb(ota_btn, ota_btn_cb, LV_EVENT_CLICKED, nullptr);
+    refresh_ota_ui();
+
+    ey = ey + 118;
     create_label(_content, "ERRORS", left, ey);
     _err_count_lbl = lv_label_create(_content);
     lv_label_set_text(_err_count_lbl, "(0)");
