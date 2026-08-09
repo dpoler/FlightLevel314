@@ -60,7 +60,7 @@ PAT/SSH setup unless he asks; push from Mac instead.
 
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
-- Follow Mode
+- Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 
 Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
