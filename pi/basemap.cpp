@@ -979,9 +979,9 @@ void basemap_draw(lv_layer_t *layer) {
         ld.opa = LV_OPA_COVER;
         ld.text = "VFR sectional basemap not available outside of US.\n"
                   "Select another basemap for this location.";
-        // Bottom-left of the map canvas (above legend).
-        lv_area_t ta = {12, (lv_coord_t)(g_req_h - 72),
-                        (lv_coord_t)(g_req_w - 12), (lv_coord_t)(g_req_h - 16)};
+        // Upper-left of the map canvas (above legend at bottom).
+        lv_area_t ta = {12, 12,
+                        (lv_coord_t)(g_req_w - 12), 68};
         lv_draw_label(layer, &ld, &ta);
         return;
     }
