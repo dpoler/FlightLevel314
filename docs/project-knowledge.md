@@ -462,9 +462,9 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   factory-reset / new config only; existing installs keep saved values).
 
 - ~~**Need a way to view/edit/rename saved locations, not just add/remove**~~
-  **done 2026-08-09** — picker pencil opens edit form; waypoints:
-  name/lat/lon/elev; airports: rename + read-only coords. `locations_update`
-  on both backends (ESP32 migrates nearby NVS key on rename).
+  **done 2026-08-09** — picker **ⓘ** opens a read-only details panel (name /
+  ICAO / lat / lon / elev). Edits = delete + re-add. Icon order: Eye | Info |
+  Grip | X. (`locations_update` remains available on both backends if needed.)
 
 - **Follow Mode — track a single flight as it travels**: select an aircraft and
   have Map/Radar re-center on it continuously. Main open design question: the
