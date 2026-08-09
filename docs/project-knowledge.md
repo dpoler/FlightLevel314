@@ -294,6 +294,18 @@ known-issue), but the Pi has no such constraint — real aircraft photos in the
 detail card. See backlog §7 for full scope.
 
 ### Notable bugs found and fixed during the port (worth remembering)
+- **Pi DRM hard freeze (UI painted once, then touch/timer dead, kill -9)**:
+  LVGL v9.5.0 `lv_linux_drm.c` can hang the UI thread in `drm_flush_wait()`
+  forever — `poll(..., -1)` with no timeout, and a failed
+  `drmModeAtomicCommit` frees `drm_dev->req` but leaves the dangling
+  non-NULL pointer so the next wait never exits. Matches: first frame
+  visible, update counter stuck, touch dead. Fixed via idempotent configure
+  patch `pi/patches/apply_lvgl_drm_patch.py` (NULL `req` on failure, 500ms
+  poll timeout, NONBLOCK→blocking retry). Also blank the VC4 hardware
+  cursor plane in `display_drm.cpp` (stuck pointer at upper-left).
+  Reported 2026-08-09 after FlightLevel314 redeploy; README changes were
+  unrelated. **Rebuild DRM binary after pull** (`cmake` reconfigure runs
+  the patch).
 - **`platform.h` must `#include <Arduino.h>` itself under `#if defined(ARDUINO)`**
   — a file switched from directly including Arduino.h to including platform.h
   can silently lose `millis()` on the ESP32 build if platform.h doesn't
