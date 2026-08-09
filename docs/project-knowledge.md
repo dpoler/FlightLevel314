@@ -542,8 +542,21 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
     likely offending now). `fade-in` / `spinfinity` still logo-heavy.
   - **Clone `pix`:** swap `splash.png` for a dim 1280×800 black+logo PNG
     (don't edit stock `pix` in place — updates overwrite; clone theme).
-  - Still need to mind the getty/login flash until the kiosk owns DRM
-    (console→tty3 / delay / earlier service) — separate from the logo itself.
+  - **Console flash after splash (Dan asked 2026-08-09):** yes, mostly
+    preventable. Typical gap = Plymouth quits → getty/login on tty1 →
+    kiosk finally opens DRM. Fixes (on-device):
+    1. `cmdline.txt`: `console=tty3` (or keep serial, not tty1),
+       `quiet splash`, `logo.nologo`, `vt.global_cursor_default=0`,
+       `loglevel=3` (or lower).
+    2. `systemctl disable getty@tty1` (or mask) so no login prompt on the
+       visible VT — SSH still works; serial/tty3 if you need a local shell.
+    3. Don't wait on network to paint: our unit currently
+       `After=network-online.target`, which can leave a long black/console
+       gap. Prefer start after DRM/local-fs; fetch traffic once network is up.
+    4. Optional: hold Plymouth until `flightlevel314` starts
+       (`plymouth-quit-wait` / order After Plymouth) so spinner stays until
+       first frame.
+    Perfect zero-flash is hard; (1)+(2)+(3) usually kills the obvious console.
 
 - **Device provisioning — get API keys / tokens onto the Pi**: remember to
   sort out the story. Today: hand-edit
