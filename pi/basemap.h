@@ -29,6 +29,13 @@ void basemap_draw(lv_layer_t *layer);
 // True once at least one basemap buffer is ready to blit.
 bool basemap_ready(void);
 
+// FAA VFR sectional coverage (CONUS / AK / HI / PR rough bounds).
+bool basemap_sectional_covered(float lat, float lon);
+
+// Non-null when the active style cannot be shown for the current request
+// (e.g. sectional outside the US). LVGL-thread safe; string is static.
+const char *basemap_unavailable_message(void);
+
 // True while a network/build is in progress for the current request
 // (not shown for instant disk-cache hits). *out_pct is 0..100 best-effort
 // progress; pass nullptr if unused. LVGL-thread safe.
