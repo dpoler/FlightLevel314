@@ -97,6 +97,39 @@ void map_basemap_style_cycle() {
     storage_save_config(g_config);
 }
 
+void map_basemap_style_set(int style) {
+    if (style < 0 || style >= MAP_BASEMAP_STYLE_COUNT) style = MAP_BASEMAP_STYLE_DARK;
+    if (g_config.map_basemap_style == style) return;
+    g_config.map_basemap_style = style;
+    storage_save_config(g_config);
+}
+
+// VIEW menu order (not raw style enum order — sectional is 2 in storage).
+static const int k_style_dropdown_order[MAP_BASEMAP_STYLE_COUNT] = {
+    MAP_BASEMAP_STYLE_DARK,
+    MAP_BASEMAP_STYLE_DARK_NOLABELS,
+    MAP_BASEMAP_STYLE_LIGHT,
+    MAP_BASEMAP_STYLE_LIGHT_NOLABELS,
+    MAP_BASEMAP_STYLE_TOPO,
+    MAP_BASEMAP_STYLE_SECTIONAL,
+};
+
+const char *map_basemap_style_dropdown_opts() {
+    return "Dark\nDark (no labels)\nLight\nLight (no labels)\nTopo\nVFR Sectional (US)";
+}
+
+int map_basemap_style_to_dropdown_index(int style) {
+    for (int i = 0; i < MAP_BASEMAP_STYLE_COUNT; i++) {
+        if (k_style_dropdown_order[i] == style) return i;
+    }
+    return 0;
+}
+
+int map_basemap_dropdown_index_to_style(int idx) {
+    if (idx < 0 || idx >= MAP_BASEMAP_STYLE_COUNT) return MAP_BASEMAP_STYLE_DARK;
+    return k_style_dropdown_order[idx];
+}
+
 bool map_weather_shown() { return g_config.map_weather_enabled; }
 void map_weather_toggle() {
     g_config.map_weather_enabled = !g_config.map_weather_enabled;

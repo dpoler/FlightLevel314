@@ -8,6 +8,7 @@
 #include "../data/storage.h"
 #if !defined(ARDUINO)
 #include "basemap.h"
+#include "display_prefs.h"
 #include "../data/ota.h"
 #endif
 
@@ -213,6 +214,13 @@ void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircra
     if (basemap_updating(&bm_pct)) {
         lv_label_set_text_fmt(update_label, "Map %d%%", bm_pct);
         return;
+    }
+    {
+        const char *bm_unavail = basemap_unavailable_message();
+        if (bm_unavail && map_basemap_shown()) {
+            lv_label_set_text(update_label, bm_unavail);
+            return;
+        }
     }
     if (ota_status == OTA_DOWNLOADING) {
         lv_label_set_text_fmt(update_label, "OTA %d%%", ota_progress);

@@ -9,9 +9,11 @@
 #include "../pins_config.h"
 #include "../data/storage.h"
 
-#define PANEL_W 270
+#define PANEL_W 300
 #define PANEL_H 460
 // Extra height when the Pi Map BASEMAP + WEATHER sections are shown.
+// Same section spacing as before the cycle-button era; style is a dropdown
+// (one commit per pick) instead of a cycle button.
 #define PANEL_H_WITH_BASEMAP 780
 
 #define COLOR_PANEL  lv_color_hex(0x14142a)
@@ -24,7 +26,7 @@ static lv_obj_t *_overlay = nullptr;
 static lv_obj_t *_panel = nullptr;
 static lv_obj_t *_len_label = nullptr;
 static lv_obj_t *_bm_opa_label = nullptr;
-static lv_obj_t *_bm_style_lbl = nullptr;
+static lv_obj_t *_bm_style_dd = nullptr;
 static lv_obj_t *_bm_opa_slider = nullptr;
 static lv_obj_t *_wx_opa_label = nullptr;
 static lv_obj_t *_wx_opa_slider = nullptr;
@@ -49,7 +51,7 @@ static void close_overlay() {
         _panel = nullptr;
         _len_label = nullptr;
         _bm_opa_label = nullptr;
-        _bm_style_lbl = nullptr;
+        _bm_style_dd = nullptr;
         _bm_opa_slider = nullptr;
         _wx_opa_label = nullptr;
         _wx_opa_slider = nullptr;
@@ -261,8 +263,9 @@ static void open_overlay() {
     if (show_basemap) {
         // ============================================================
         // Basemap -- Carto dark / FAA VFR sectional under Map.
-        // Style: Dark → Dark NL → Light (Voyager) → Light NL → Topo → Sectional.
-        // Opacity is per-style (10-100%); each style remembers its own.
+        // Style via dropdown (Dark / Dark NL / Light / Light NL / Topo /
+        // Sectional). Opacity is per-style (10-100%); each style remembers
+        // its own. Changing style calls map_view_on_show() once.
         // ============================================================
         section_header(_panel, "BASEMAP", 352);
         toggle_row(_panel, "Show basemap", 380, map_basemap_shown(), [](lv_event_t *e) {
@@ -271,31 +274,27 @@ static void open_overlay() {
             map_view_update();
         });
 
-        lv_obj_t *style_btn = lv_obj_create(_panel);
-        lv_obj_set_size(style_btn, PANEL_W - 20, 32);
-        lv_obj_set_pos(style_btn, 0, 414);
-        lv_obj_set_style_bg_color(style_btn, COLOR_ROW, 0);
-        lv_obj_set_style_border_color(style_btn, COLOR_ACCENT, 0);
-        lv_obj_set_style_border_width(style_btn, 1, 0);
-        lv_obj_set_style_radius(style_btn, 6, 0);
-        lv_obj_set_style_pad_all(style_btn, 0, 0);
-        lv_obj_clear_flag(style_btn, LV_OBJ_FLAG_SCROLLABLE);
-        _bm_style_lbl = lv_label_create(style_btn);
-        lv_label_set_text_fmt(_bm_style_lbl, "Style: %s", map_basemap_style_name());
-        lv_obj_set_style_text_color(_bm_style_lbl, COLOR_ACCENT, 0);
-        lv_obj_set_style_text_font(_bm_style_lbl, &lv_font_montserrat_14, 0);
-        lv_obj_center(_bm_style_lbl);
-        lv_obj_add_event_cb(style_btn, [](lv_event_t *e) {
-            map_basemap_style_cycle();
-            if (_bm_style_lbl)
-                lv_label_set_text_fmt(_bm_style_lbl, "Style: %s", map_basemap_style_name());
+        _bm_style_dd = lv_dropdown_create(_panel);
+        lv_dropdown_set_options(_bm_style_dd, map_basemap_style_dropdown_opts());
+        lv_obj_set_size(_bm_style_dd, PANEL_W - 20, 32);
+        lv_obj_set_pos(_bm_style_dd, 0, 414);
+        lv_obj_set_style_bg_color(_bm_style_dd, COLOR_ROW, 0);
+        lv_obj_set_style_text_color(_bm_style_dd, COLOR_ACCENT, 0);
+        lv_obj_set_style_text_font(_bm_style_dd, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_border_color(_bm_style_dd, COLOR_ACCENT, 0);
+        lv_obj_set_style_border_width(_bm_style_dd, 1, 0);
+        lv_dropdown_set_selected(_bm_style_dd,
+            (uint16_t)map_basemap_style_to_dropdown_index(map_basemap_style()));
+        lv_obj_add_event_cb(_bm_style_dd, [](lv_event_t *e) {
+            int sel = (int)lv_dropdown_get_selected(lv_event_get_target_obj(e));
+            map_basemap_style_set(map_basemap_dropdown_index_to_style(sel));
             // Each style remembers its own opacity — refresh slider/label.
             int opa = map_basemap_opa();
             if (_bm_opa_label) lv_label_set_text_fmt(_bm_opa_label, "%d%%", opa);
             if (_bm_opa_slider) lv_slider_set_value(_bm_opa_slider, opa, LV_ANIM_OFF);
-            // Re-request tiles for the new style (clears stale front buffer).
+            // Re-request tiles for the new style once (not on every cycle tap).
             map_view_on_show();
-        }, LV_EVENT_CLICKED, nullptr);
+        }, LV_EVENT_VALUE_CHANGED, nullptr);
 
         lv_obj_t *opa_lbl = lv_label_create(_panel);
         lv_label_set_text(opa_lbl, "Opacity");

@@ -61,11 +61,14 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
+- LIST shows GND aircraft when GND filter is off until the filter is toggled
+- Rework LIST screen for Pi real estate (still ESP32-era layout)
 
 Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
 
-Recently closed (2026-08-09 highest-signal pass): photo credit timing; UK
-basemap tile AABB + sectional US label; Pi online app updates.
+Recently closed (2026-08-09): Settings 3-col (no scroll); VFR sectional outside
+US → paper + message (no fetch); VIEW basemap style dropdown + compact menu;
+photo credit timing; UK tile AABB; Pi OTA.
 
 ### Dan / workflow
 - Name: Dan. Prefers working directly in code; builds himself unless asked.
@@ -431,10 +434,28 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   — Pi shows credit only with visible pixels.
 
 - ~~**Basemap / sectional outside US; UK tile AABB**~~ **done 2026-08-09** —
-  drop zoom when AABB > 300 tiles; VIEW label "VFR Sectional (US)".
+  drop zoom when AABB > 300 tiles; VIEW label "VFR Sectional (US)". Follow-up
+  same day: skip sectional fetch outside coverage; chart-paper placeholder +
+  corner/status message (EGLL no longer greys out after a fake progress bar).
 
 - ~~**Pi online app updates**~~ **done 2026-08-09** — GitHub Releases check /
   status-bar notice / Settings install + systemd restart (`ota_linux.cpp`).
+
+- ~~**Settings taller / three columns (DEVICE+OTA made it scroll)**~~
+  **done 2026-08-09** — Pi Settings `1100×700`, three columns, no body scroll.
+
+- ~~**Basemap loads while still cycling styles; VIEW menu too long**~~
+  **done 2026-08-09** — basemap style is a dropdown (one commit per pick);
+  VIEW keeps prior section spacing (`PANEL_H_WITH_BASEMAP` 780).
+
+- **LIST shows ground aircraft when GND is filtered off** until you toggle
+  the filter off and back on. Suspected stale apply on first paint / location
+  change — need to force filter re-eval when LIST becomes active or when
+  `view_hide_ground` is loaded from config.
+
+- **Rework LIST screen for Pi real estate** — still the dense ESP32-era layout;
+  unused horizontal/vertical space on 1280×800. Columns, row height, detail
+  density TBD when Dan asks.
 
 - **Optional: fresher README gallery LIST/INFO shots** — still open.
 
