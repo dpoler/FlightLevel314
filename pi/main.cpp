@@ -76,6 +76,10 @@ int main() {
     storage_save_config(g_config);
     locations_init();
 
+    // Bind the list so location-switch clears can empty it (see
+    // fetcher_request_immediate_fetch in fetcher_stats_linux.cpp).
+    fetcher_init(&aircraft_list);
+
     // Airline code→name table (dpoler/AirlinesCSV). ESP32 loads this once
     // inside fetcher_init()'s boot task; Pi has no equivalent, so kick it
     // here on a background thread — blocking curl on the UI thread would
@@ -149,7 +153,10 @@ int main() {
         locations_get_active_coords(&center_lat, &center_lon, nullptr);
         float radius_nm = range_get_nm();
         bool is_map = (views_filterable_index() == VIEW_MAP);
-        if (aircraft_list.lock(5)) {
+        // 50ms matches stats_update / fetch merge -- the old 5ms timeout
+        // lost the race during RemoteApiDataSource merges and reported 0 AC
+        // while stats (50ms) still showed a full count (0/N in the title bar).
+        if (aircraft_list.lock(50)) {
             uint32_t now = platform_millis();
             for (int i = 0; i < aircraft_list.count; i++) {
                 Aircraft &ac = aircraft_list.aircraft[i];

@@ -1432,6 +1432,14 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         // Update loading overlay
         overlay_update();
 
+        // Keep projection centered on the active location even when Map is
+        // not the visible tab (or while touch_active defers redraw). Otherwise
+        // a location switch while on List/Radar/Stats leaves Map's _proj on
+        // the previous airport; the status-bar count uses map_view_aircraft_visible
+        // whenever Map is the filterable view, so it reads 0/N with a full
+        // list of aircraft for the *new* site sitting off-canvas.
+        sync_active_location();
+
         // Skip rendering when touch is active
         if (touch_active) return;
 
@@ -1445,7 +1453,6 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
                 map_weather_sync();
 #endif
             }
-            sync_active_location();
 #if !defined(ARDUINO)
             basemap_poll_swap();
             weather_poll_swap();
@@ -1493,6 +1500,10 @@ void map_view_on_show() {
 void map_view_center_on(float lat, float lon) {
     _proj.center_lat = lat;
     _proj.center_lon = lon;
+    // Treat this as an authoritative recenter (location picker / track).
+    // Keep _last_active_loc in sync so the next sync_active_location tick
+    // does not no-op after a picker switch that already moved the projection.
+    _last_active_loc = locations_active_index();
 #if !defined(ARDUINO)
     map_basemap_sync();
     map_weather_sync();

@@ -1312,3 +1312,10 @@ void radar_view_clear_trails() {
     if (_radar_obj) lv_obj_invalidate(_radar_obj);
 }
 
+void radar_view_center_on(float lat, float lon) {
+    _proj.center_lat = lat;
+    _proj.center_lon = lon;
+    _last_active_loc = locations_active_index();
+    if (_radar_obj) lv_obj_invalidate(_radar_obj);
+}
+

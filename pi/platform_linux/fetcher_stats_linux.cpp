@@ -1,19 +1,19 @@
 // map_view.cpp and (now) status_bar.cpp read fetcher_get_stats()/
 // fetcher_connection_type()/fetcher_wifi_connected()/fetcher_last_update()
-// -- fetcher_init() is the ESP32/WiFi/C6-co-processor management API that
-// pi/main.cpp doesn't use (it drives RemoteApiDataSource directly instead --
-// see project_pi_port memory), so that one stays undefined here
-// deliberately; nothing on Pi calls it.
+// -- fetcher_init() on Pi only stores the AircraftList pointer so
+// fetcher_request_immediate_fetch() can clear it on location switch
+// (matching ESP32 fetcher.cpp). Pi drives RemoteApiDataSource from
+// main.cpp instead of the ESP32 WiFi/C6 fetch task.
 //
-// fetcher_request_immediate_fetch() DOES need a real implementation now
-// that locations_linux.cpp's locations_set_active() calls it (switching
-// location should refresh data immediately, not wait up to ~20s for the
-// next scheduled tick, same as ESP32). Implemented as a condition variable
-// pi_wait_for_next_fetch() (called from main.cpp's fetch_loop() instead of a
-// flat sleep_for) waits on, so a wake-up call cuts the wait short instead of
-// needing a signal/interrupt mechanism.
+// fetcher_request_immediate_fetch() wakes the fetch loop and clears the
+// aircraft list. Without the clear, a full list (MAX_AIRCRAFT, often after
+// a busy KJFK fetch) cannot accept aircraft for the new location until
+// ghosts age out -- Map recenters immediately so old traffic is off-screen
+// and the bar reads 0/N until the next successful merge. locations_set_active()
+// calls this on every location switch.
 
 #include "../../src/data/fetcher.h"
+#include "../../src/data/aircraft.h"
 #include "../../src/platform/platform.h"
 #include <mutex>
 #include <condition_variable>
@@ -27,8 +27,21 @@ static uint32_t _last_success_ms = 0;
 
 static std::condition_variable _fetch_cv;
 static bool _fetch_wake = false;
+static AircraftList *_aircraft_list = nullptr;
+
+void fetcher_init(AircraftList *list) {
+    _aircraft_list = list;
+}
 
 void fetcher_request_immediate_fetch() {
+    // Location switch is a hard cut, not a 30s ghost fade -- same rationale
+    // as ESP32 fetcher.cpp. Clear before waking the fetch loop so the next
+    // merge starts from an empty list and can accept the new location's
+    // aircraft even when the previous site had filled MAX_AIRCRAFT.
+    if (_aircraft_list && _aircraft_list->lock(50)) {
+        _aircraft_list->count = 0;
+        _aircraft_list->unlock();
+    }
     std::lock_guard<std::mutex> lock(_mutex);
     _fetch_wake = true;
     _fetch_cv.notify_all();
