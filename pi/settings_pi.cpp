@@ -33,7 +33,7 @@
 
 static lv_obj_t *_overlay = nullptr;
 static lv_obj_t *_panel = nullptr;
-static lv_obj_t *_content = nullptr; // scrollable body above the action row
+static lv_obj_t *_content = nullptr; // body above the action row (no scroll)
 static lv_obj_t *_keyboard = nullptr;
 static bool _visible = false;
 static uint32_t _shown_at_ms = 0;
@@ -74,13 +74,13 @@ static bool _adbox_verify_pending = false;
 static UserConfig _cfg;
 static settings_changed_cb_t _on_change = nullptr;
 
-// Wide enough for two columns (ranges/status | API keys) without overlap.
-#define PANEL_W 740
-#define PANEL_H 580
+// Wide enough for three columns on 1280x800 (fits under status bar + margin).
+#define PANEL_W 1100
+#define PANEL_H 700
 #define TITLE_H 36
 #define ACTION_H 100
-#define COL_GAP 24
-#define COL_W ((PANEL_W - 40 - COL_GAP) / 2) // pad_all ~20 each side
+#define COL_GAP 20
+#define COL_W ((PANEL_W - 40 - 2 * COL_GAP) / 3) // pad_all ~20 each side
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
 #define ACCENT_COLOR lv_color_hex(0x00cc66)
