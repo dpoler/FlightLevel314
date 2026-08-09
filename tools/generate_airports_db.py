@@ -34,6 +34,24 @@ INCLUDED_TYPES = {"large_airport", "medium_airport"}
 # location-picker label at montserrat_16 on a ~540px panel.
 NAME_MAX = 63  # + NUL in char name[64]
 
+# Markers that must appear in a current airports_db.h. CMake --ensure and
+# airports_db_include.h both key off these after schema bumps.
+SCHEMA_MARKERS = (
+    "AIRPORTS_DB_HAS_ALIAS",
+    "char alias[5]",
+    "char name[64]",
+)
+
+
+def header_is_current(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:1200]
+    except OSError:
+        return False
+    return all(m in head for m in SCHEMA_MARKERS)
+
 
 def download_csv(url: str) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "ADS-B-Display-Airports-DB/1.0"})
@@ -145,10 +163,19 @@ def main():
     parser = argparse.ArgumentParser(description="Generate static airport glyph DB for ADS-B display")
     parser.add_argument("--output", type=str, default=None,
                         help="Output path (default: src/ui/airports_db.h)")
+    parser.add_argument(
+        "--ensure",
+        action="store_true",
+        help="Only download/regenerate when the header is missing or schema-stale",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
-    output = args.output or str(repo_root / "src" / "ui" / "airports_db.h")
+    output = Path(args.output or (repo_root / "src" / "ui" / "airports_db.h"))
+
+    if args.ensure and header_is_current(output):
+        print(f"airports_db.h schema OK ({output})")
+        return
 
     print(f"Downloading {AIRPORTS_CSV_URL} ...")
     try:
@@ -162,7 +189,7 @@ def main():
         print("ERROR: no airports parsed — check the CSV format/URL", file=sys.stderr)
         sys.exit(1)
 
-    write_header(airports, output)
+    write_header(airports, str(output))
 
 
 if __name__ == "__main__":
