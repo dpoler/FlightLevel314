@@ -477,12 +477,26 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   ICAO / lat / lon / elev). Edits = delete + re-add. Icon order: Eye | Info |
   Grip | X. (`locations_update` remains available on both backends if needed.)
 
-- **Follow Mode — track a single flight as it travels**: select an aircraft and
-  have Map/Radar re-center on it continuously. Main open design question: the
-  underlying ADS-B query is a fixed-radius fetch around the active location —
-  a followed aircraft flying away will eventually exceed the query radius and
-  vanish. Needs an answer (re-center the query too? accept follow ends at query
-  edge?), a clear exit path, and probably a status-bar indicator.
+- **Follow Mode — track a single flight as it travels** (design notes
+  2026-08-09; **hold — Dan thinking; do not implement yet**):
+  - **Entry (current lean):** location menu **"+ Add Flight"** (not yet
+    built). Earlier idea was detail-card / map tap; still open.
+  - **While following:** Map keeps the flight centered (projection recenter
+    on the aircraft each tick). Status-bar chip; clear exit (chip tap and/or
+    location change).
+  - **Basemap / continuous scroll:** today's basemap is a full-frame baked
+    mosaic for one `(lat, lon, range, style)` — not a slippy layer.
+    `MapProjection.offset_x/y` exist but are unused. Recenter → new mosaic
+    (HTTP + warp or disk cache). True per-frame basemap scroll needs a real
+    tile/pan layer (major). Practical v1: center overlays every tick; debounce
+    basemap rebuild (every N nm / M s); accept brief geography lag. Rebuilding
+    every small move would thrash cache and blank/misalign the map.
+  - **ADS-B fetch:** still fixed-radius around the *active location*, not map
+    center. Following a plane out of range loses it unless the query center
+    moves with the aircraft (or follow ends at the edge). Main open design
+    question.
+  - **Existing "track":** `map_view_track` only draws a red ring; does not
+    move center or fetch.
 
 - ~~**Airport Mode, Phase 3 (INFO METAR/ATIS)**~~ **done 2026-08-09** —
   Pi INFO four-quadrant / 1/3–2/3 layout; METAR via aviationweather.gov;
