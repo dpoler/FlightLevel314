@@ -72,24 +72,28 @@ target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
 find_package(Threads REQUIRED)
 target_link_libraries(lvgl PUBLIC Threads::Threads)
 
-# Static large/medium airport glyph DB (gitignored). Generate at configure
-# time if missing. Also regenerate when an older header still has name[32]
-# (bumped to name[64] for full airport names in the picker/detail card).
+# Static large/medium airport glyph DB (gitignored). Regenerate when missing
+# or schema-stale (name[64], alias[], AIRPORTS_DB_HAS_ALIAS). Configure-time
+# covers fresh checkouts; the ensure target also runs on every build so a
+# plain `cmake --build` after git pull fixes a stale header without a
+# manual reconfigure.
 set(AIRPORTS_DB_H "${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/airports_db.h")
+set(AIRPORTS_DB_GEN "${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_airports_db.py")
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
 if(EXISTS "${AIRPORTS_DB_H}")
-    file(READ "${AIRPORTS_DB_H}" _adb_hdr LIMIT 800)
-    if(NOT _adb_hdr MATCHES "char name\\[64\\]")
-        message(STATUS "airports_db.h is outdated (need name[64]) — regenerating")
+    file(READ "${AIRPORTS_DB_H}" _adb_hdr LIMIT 1200)
+    if(NOT _adb_hdr MATCHES "AIRPORTS_DB_HAS_ALIAS"
+       OR NOT _adb_hdr MATCHES "char alias\\[5\\]"
+       OR NOT _adb_hdr MATCHES "char name\\[64\\]")
+        message(STATUS "airports_db.h is schema-stale — regenerating")
         file(REMOVE "${AIRPORTS_DB_H}")
     endif()
 endif()
 if(NOT EXISTS "${AIRPORTS_DB_H}")
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
     message(STATUS "Generating ${AIRPORTS_DB_H} (OurAirports large/medium DB)")
     execute_process(
-        COMMAND "${Python3_EXECUTABLE}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_airports_db.py"
-                --output "${AIRPORTS_DB_H}"
+        COMMAND "${Python3_EXECUTABLE}" "${AIRPORTS_DB_GEN}" --output "${AIRPORTS_DB_H}"
         RESULT_VARIABLE _airports_db_rc
         ERROR_VARIABLE _airports_db_err
     )
@@ -99,6 +103,14 @@ if(NOT EXISTS "${AIRPORTS_DB_H}")
                         "Run: python3 tools/generate_airports_db.py")
     endif()
 endif()
+
+add_custom_target(airports_db_ensure
+    COMMAND "${Python3_EXECUTABLE}" "${AIRPORTS_DB_GEN}"
+            --ensure --output "${AIRPORTS_DB_H}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    COMMENT "Ensuring airports_db.h matches current schema"
+    VERBATIM
+)
 
 # Shared UI/data sources (historical ARDUINO forks remain in some files).
 set(SHARED_SOURCES
@@ -147,6 +159,7 @@ target_include_directories(flightlevel314 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui
 )
 target_link_libraries(flightlevel314 PRIVATE lvgl ArduinoJson CURL::libcurl)
+add_dependencies(flightlevel314 airports_db_ensure)
 
 if(PI_DISPLAY_BACKEND STREQUAL "SDL")
     find_package(SDL2 REQUIRED)
