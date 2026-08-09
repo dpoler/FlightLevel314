@@ -2,7 +2,13 @@
 #include <cstddef>
 #include "aircraft.h"
 
-#define MAX_LOCATIONS 15   // saved locations (airports + waypoints)
+// Saved locations (airports + waypoints). ESP32 keeps the NVS/DRAM-era cap;
+// Pi can comfortably hold more favorites.
+#if defined(ARDUINO)
+#define MAX_LOCATIONS 15
+#else
+#define MAX_LOCATIONS 64
+#endif
 #define MAX_RUNWAYS   12   // KORD has exactly 8 active runways (11 total, 3
                             // closed) -- was capped at 8, right at the edge;
                             // bumped for headroom now that closed runways are

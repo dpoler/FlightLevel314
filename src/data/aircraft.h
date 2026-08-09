@@ -12,7 +12,13 @@
 #include <chrono>
 #endif
 
+// Aircraft list capacity. ESP32 keeps the historical PSRAM-era cap; Pi has
+// room for denser 50–250 nm queries (KJFK alone can exceed 200).
+#if defined(ARDUINO)
 #define MAX_AIRCRAFT 200
+#else
+#define MAX_AIRCRAFT 1000
+#endif
 #define TRAIL_LENGTH 60
 
 struct TrailPoint {
@@ -93,7 +99,8 @@ public:
         count = 0;
 #if defined(ARDUINO)
         mutex = xSemaphoreCreateMutex();
-        // Allocate in PSRAM — too large for internal DRAM (~226KB for 200 aircraft)
+        // Allocate in PSRAM — too large for internal DRAM (~226KB at the
+        // historical MAX_AIRCRAFT=200 with TRAIL_LENGTH=60).
         aircraft = (Aircraft *)heap_caps_malloc(MAX_AIRCRAFT * sizeof(Aircraft), MALLOC_CAP_SPIRAM);
 #else
         // No PSRAM-vs-internal-DRAM split on Linux -- plain heap is plenty.
