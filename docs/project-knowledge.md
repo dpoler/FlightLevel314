@@ -61,7 +61,9 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
+- Device provisioning for API keys / secrets (how they get onto the Pi)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
+- Tidy Pi boot splash (center / dim or quiet→app)
 
 Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
 
@@ -416,9 +418,8 @@ detail card. See backlog §7 for full scope.
 
 ### Remaining known gaps (not blocking, tracked in backlog)
 - Boot sequence isn't tidy — console text/login prompt likely visible before
-  the kiosk grabs the display.
-- No on-device way to set the airportdb.io token on Pi (worked around once
-  with a one-off Python script hand-editing the config JSON).
+  the kiosk grabs the display (bright/off-center Pi logo; see §7.1).
+- Getting API keys / tokens onto the device — no good story yet (see §7.1).
 
 ---
 
@@ -525,7 +526,23 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   scripts deleted with Pi-only cleanup (USB-serial board tool). Use Settings
   / editing `~/.config/flightlevel314/config.json` on Pi instead.
 
-- **Tidy up the Pi's boot sequence**: see §6.
+- **Tidy up the Pi's boot sequence**: see §6. Current pain: off-center
+  bright white Pi logo on the Waveshare 1280×800 DSI before the kiosk
+  grabs DRM. Options discussed 2026-08-09 (not started): quiet/black until
+  app; custom dim fullscreen splash sized for the panel; or Plymouth/
+  `cmdline.txt`/`config.txt` tweaks (`logo.nologo`, `disable_splash`, etc.).
+  On-device OS config, not app code.
+
+- **Device provisioning — get API keys / tokens onto the Pi**: remember to
+  sort out the story. Today: hand-edit
+  `~/.config/flightlevel314/config.json` (or the kiosk path under
+  `/opt/flightlevel314/.config/…`) for `apt_tok`, `adbox_key`, etc. Settings
+  toggles features but does **not** accept typing secrets on the touchscreen
+  (deliberate). Old ESP32 path was USB-serial `configure_device.sh` +
+  `serial_config` — removed in Pi-only cleanup. Need a Pi-appropriate
+  approach (SSH/scp recipe, first-boot wizard over SSH, companion script,
+  USB stick drop, etc.). Scope: AirportDB, AeroDataBox, and any future
+  keys — not just airportdb.
 
 - **Pi-exclusive: real maps/sector charts using the extra resource budget**:
   raster/vector basemap tiles, FAA VFR sectionals. `tile_cache.cpp` exists in
