@@ -64,8 +64,8 @@ See §7.1. Highest-signal open items:
 
 Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
 
-Recently closed (2026-08-09): LIST GND refresh + Pi column layout; Settings
-Cancel/Save; brightness slider; VIEW two-col; VFR outside-US note; OTA.
+Recently closed (2026-08-09): GND default hidden; edit/rename saved locations;
+LIST GND refresh + Pi columns; Settings Cancel/Save; brightness; VIEW two-col.
 
 ### Dan / workflow
 - Name: Dan. Prefers working directly in code; builds himself unless asked.
@@ -457,22 +457,14 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
 
 - **Optional: fresher README gallery LIST/INFO shots** — still open.
 
-- ~~**Write a proper FlightLevel314 README.md (with original-author credit)**~~
-  **done 2026-08-09** — see §0 handoff. Gallery may still need fresher
-  LIST/INFO shots with live traffic (optional polish).
+- ~~**Ground traffic (GND) should default to hidden, not shown**~~
+  **done 2026-08-09** — `view_hide_ground[i]` defaults true (fresh
+  factory-reset / new config only; existing installs keep saved values).
 
-- **Ground traffic (GND) should default to hidden, not shown**: flip
-  `storage.cpp`'s `cfg.view_hide_ground[i]` default false→true. Check whether
-  existing saved installs (which already have an explicit NVS value) should be
-  migrated — probably not, this only affects a fresh factory-reset device.
-
-- **Need a way to view/edit/rename saved locations, not just add/remove**:
-  motivating case — a sign-flipped-longitude typo (Inner Mongolia instead of
-  Denver) currently can only be fixed by delete-and-re-add, with no way to even
-  glance at a saved location's actual lat/lon to notice something's wrong.
-  Needs a details/edit view (on-device + CLI script), with airport-type
-  locations (ICAO-sourced) possibly needing different edit semantics than plain
-  waypoints (not designed).
+- ~~**Need a way to view/edit/rename saved locations, not just add/remove**~~
+  **done 2026-08-09** — picker pencil opens edit form; waypoints:
+  name/lat/lon/elev; airports: rename + read-only coords. `locations_update`
+  on both backends (ESP32 migrates nearby NVS key on rename).
 
 - **Follow Mode — track a single flight as it travels**: select an aircraft and
   have Map/Radar re-center on it continuously. Main open design question: the

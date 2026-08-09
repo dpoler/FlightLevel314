@@ -75,6 +75,14 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size);
 bool locations_add_waypoint(const char *name, float lat, float lon, int elevation_ft,
                              char *err, size_t err_size);
 
+// Update an existing location. Waypoints: name + lat/lon/elev all apply.
+// Airports (non-empty ICAO): only `name` changes — lat/lon/elev/runways stay
+// airportdb-sourced. Name must be unique among other entries. If this is the
+// active location, updates last_location_name. On ESP32, migrates the
+// name-hashed nearby NVS blob when the name changes.
+bool locations_update(int idx, const char *name, float lat, float lon, int elevation_ft,
+                      char *err, size_t err_size);
+
 // Request/response pair for adding a location from the UI thread without
 // spawning a new task — a dedicated task's stack was enough extra internal-DRAM
 // pressure to crash the SDIO driver on this board (see

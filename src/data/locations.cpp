@@ -48,6 +48,8 @@ static Location _locations[MAX_LOCATIONS];
 static int _count = 0;
 static int _active_index = -1; // -1 = nothing selected (empty list, or none chosen yet)
 
+static uint32_t fnv1a_hash(const char *s); // defined with nearby-cache helpers below
+
 // Nearby-large-airport cache -- only the *active* location's data is ever
 // resident in DRAM (loaded lazily, see locations_nearby_get_active()).
 // Everything else lives in NVS under a per-owner key until it's needed.
@@ -571,6 +573,73 @@ bool locations_add_waypoint(const char *name, float lat, float lon, int elevatio
     loc.elevation_ft = elevation_ft;
 
     _locations[_count++] = loc;
+    save_all();
+    return true;
+}
+
+bool locations_update(int idx, const char *name, float lat, float lon, int elevation_ft,
+                      char *err, size_t err_size) {
+    auto fail = [&](const char *msg) {
+        if (err && err_size) strlcpy(err, msg, err_size);
+        return false;
+    };
+
+    if (idx < 0 || idx >= _count) return fail("bad index");
+    if (!name || !name[0]) return fail("no name given");
+
+    char clean_name[LOC_NAME_LEN] = {};
+    size_t j = 0;
+    for (const char *p = name; *p && j < sizeof(clean_name) - 1; p++) {
+        if (*p == '|') continue;
+        clean_name[j++] = *p;
+    }
+    clean_name[j] = '\0';
+    if (!clean_name[0]) return fail("name is empty");
+
+    for (int i = 0; i < _count; i++) {
+        if (i == idx) continue;
+        if (strcmp(_locations[i].name, clean_name) == 0) return fail("name already used");
+    }
+
+    Location &loc = _locations[idx];
+    const bool was_active = (_active_index == idx);
+    char old_name[LOC_NAME_LEN];
+    strlcpy(old_name, loc.name, sizeof(old_name));
+    const bool renamed = (strcmp(old_name, clean_name) != 0);
+
+    strlcpy(loc.name, clean_name, sizeof(loc.name));
+    // Airports keep airportdb geometry; waypoints get full field edit.
+    if (!loc.icao[0]) {
+        loc.lat = lat;
+        loc.lon = lon;
+        loc.elevation_ft = elevation_ft;
+    }
+
+    if (renamed) {
+        // Nearby cache NVS key is hashed from the location name — migrate
+        // the blob so toggling the eye still finds prior fetch results.
+        char old_key[16], new_key[16];
+        snprintf(old_key, sizeof(old_key), "nb_%08lx", (unsigned long)fnv1a_hash(old_name));
+        snprintf(new_key, sizeof(new_key), "nb_%08lx", (unsigned long)fnv1a_hash(clean_name));
+        _prefs.begin("adsb_locs", false);
+        size_t len = _prefs.getBytesLength(old_key);
+        if (len > 0 && strcmp(old_key, new_key) != 0) {
+            uint8_t *buf = (uint8_t *)malloc(len);
+            if (buf) {
+                size_t got = _prefs.getBytes(old_key, buf, len);
+                if (got == len) _prefs.putBytes(new_key, buf, len);
+                free(buf);
+            }
+            _prefs.remove(old_key);
+        }
+        _prefs.end();
+    }
+
+    if (was_active && renamed) {
+        strlcpy(g_config.last_location_name, clean_name, sizeof(g_config.last_location_name));
+        storage_save_config(g_config);
+    }
+
     save_all();
     return true;
 }
