@@ -639,44 +639,57 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     };
 
     int z = zoom_for_style(slot.style, slot.radius_nm, usable_h, slot.lat);
-    int n = 1 << z;
+    const int z_floor = (slot.style == MAP_BASEMAP_STYLE_SECTIONAL) ? SECTIONAL_Z_MIN : 4;
 
     // Mercator AABB covering the equirectangular canvas (corners + edge mids).
-    double min_mx = 1e300, min_my = 1e300, max_mx = -1e300, max_my = -1e300;
-    const float xs[] = {0.f, (float)(slot.w - 1), (float)(slot.w / 2)};
-    const float ys[] = {0.f, (float)(slot.h - 1), (float)(slot.h / 2)};
-    for (float sy : ys) {
-        for (float sx : xs) {
-            float lat, lon;
-            screen_to_ll(sx, sy, lat, lon);
-            if (lat > 85.0f) lat = 85.0f;
-            if (lat < -85.0f) lat = -85.0f;
-            double mx, my;
-            pixel_of_coord(lat, lon, z, mx, my);
-            if (mx < min_mx) min_mx = mx;
-            if (my < min_my) min_my = my;
-            if (mx > max_mx) max_mx = mx;
-            if (my > max_my) max_my = my;
+    // At high latitudes the AABB grows vs the nm-based canvas; if the tile
+    // count would exceed MAX_BASEMAP_TILES, drop zoom until it fits (or we
+    // hit z_floor) instead of aborting the whole basemap rebuild.
+    constexpr int MAX_BASEMAP_TILES = 300;
+    int tx0 = 0, tx1 = 0, ty0 = 0, ty1 = 0, tiles_w = 0, tiles_h = 0;
+    for (;;) {
+        int n = 1 << z;
+        double min_mx = 1e300, min_my = 1e300, max_mx = -1e300, max_my = -1e300;
+        const float xs[] = {0.f, (float)(slot.w - 1), (float)(slot.w / 2)};
+        const float ys[] = {0.f, (float)(slot.h - 1), (float)(slot.h / 2)};
+        for (float sy : ys) {
+            for (float sx : xs) {
+                float lat, lon;
+                screen_to_ll(sx, sy, lat, lon);
+                if (lat > 85.0f) lat = 85.0f;
+                if (lat < -85.0f) lat = -85.0f;
+                double mx, my;
+                pixel_of_coord(lat, lon, z, mx, my);
+                if (mx < min_mx) min_mx = mx;
+                if (my < min_my) min_my = my;
+                if (mx > max_mx) max_mx = mx;
+                if (my > max_my) max_my = my;
+            }
         }
-    }
 
-    int tx0 = (int)floor(min_mx / TILE_PX) - 1;
-    int tx1 = (int)floor(max_mx / TILE_PX) + 1;
-    int ty0 = (int)floor(min_my / TILE_PX) - 1;
-    int ty1 = (int)floor(max_my / TILE_PX) + 1;
-    // Clamp Y to valid mercator tile rows; X wraps.
-    if (ty0 < 0) ty0 = 0;
-    if (ty1 >= n) ty1 = n - 1;
-    if (ty1 < ty0) return false;
+        tx0 = (int)floor(min_mx / TILE_PX) - 1;
+        tx1 = (int)floor(max_mx / TILE_PX) + 1;
+        ty0 = (int)floor(min_my / TILE_PX) - 1;
+        ty1 = (int)floor(max_my / TILE_PX) + 1;
+        // Clamp Y to valid mercator tile rows; X wraps.
+        if (ty0 < 0) ty0 = 0;
+        if (ty1 >= n) ty1 = n - 1;
+        if (ty1 < ty0) return false;
 
-    int tiles_w = tx1 - tx0 + 1;
-    int tiles_h = ty1 - ty0 + 1;
-    // Guard against pathological zoom/AABB (keeps worker memory bounded).
-    if (tiles_w <= 0 || tiles_h <= 0 || tiles_w * tiles_h > 300) {
-        platform_log("Basemap: tile AABB too large (%dx%d at z=%d), abort\n",
-                     tiles_w, tiles_h, z);
-        return false;
+        tiles_w = tx1 - tx0 + 1;
+        tiles_h = ty1 - ty0 + 1;
+        if (tiles_w <= 0 || tiles_h <= 0) return false;
+        if (tiles_w * tiles_h <= MAX_BASEMAP_TILES) break;
+        if (z <= z_floor) {
+            platform_log("Basemap: tile AABB too large (%dx%d at z=%d), abort\n",
+                         tiles_w, tiles_h, z);
+            return false;
+        }
+        platform_log("Basemap: tile AABB %dx%d at z=%d exceeds %d — dropping zoom\n",
+                     tiles_w, tiles_h, z, MAX_BASEMAP_TILES);
+        z--;
     }
+    const int n = 1 << z;
 
     const int mosaic_w = tiles_w * TILE_PX;
     const int mosaic_h = tiles_h * TILE_PX;
