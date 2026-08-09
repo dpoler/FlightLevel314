@@ -47,6 +47,8 @@ const StaticAirport *airports_lookup_icao(const char *icao) {
     icao_upper(icao, key, sizeof(key));
     for (int i = 0; i < AIRPORTS_DB_COUNT; i++) {
         if (str_ieq(airports_db[i].icao, key)) return &airports_db[i];
+        if (airports_db[i].alias[0] && str_ieq(airports_db[i].alias, key))
+            return &airports_db[i];
     }
     return nullptr;
 }
@@ -77,7 +79,8 @@ int airports_search(const char *query, const StaticAirport **out, int max_out) {
 
     for (int i = 0; i < AIRPORTS_DB_COUNT && n < max_out; i++) {
         if (maybe_icao && n > 0 && out[0] == &airports_db[i]) continue;
-        if (str_istr(airports_db[i].name, key) || str_istr(airports_db[i].icao, key)) {
+        if (str_istr(airports_db[i].name, key) || str_istr(airports_db[i].icao, key) ||
+            (airports_db[i].alias[0] && str_istr(airports_db[i].alias, key))) {
             out[n++] = &airports_db[i];
         }
     }

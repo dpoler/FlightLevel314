@@ -12,13 +12,14 @@
 // Stub so call sites compile without regenerating the DB.
 struct StaticAirport {
     char icao[5];
+    char alias[5];
     char name[64];
     float lat, lon;
     unsigned char large;
 };
 #endif
 
-// Exact ICAO match (case-insensitive). nullptr if unknown / DB absent.
+// Exact ICAO or alias match (case-insensitive). nullptr if unknown / DB absent.
 const StaticAirport *airports_lookup_icao(const char *icao);
 
 // Case-insensitive substring match on name/ICAO. Writes up to max_out

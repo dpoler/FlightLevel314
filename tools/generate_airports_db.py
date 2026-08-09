@@ -3,11 +3,16 @@
 
 Downloads OurAirports' airports.csv, filters to large_airport and
 medium_airport types, and emits a compact C array of
-{icao, name, lat, lon, large} for Map view glyphs and ICAO↔name lookup
-(detail-card routes, location picker). Airports the user has saved as a
-Location (with runway data from airportdb.io) are drawn with full runway
-geometry instead — see draw_saved_airports() in map_view.cpp, which
+{icao, alias, name, lat, lon, large} for Map view glyphs and ICAO↔name
+lookup (detail-card routes, location picker). Airports the user has saved
+as a Location (with runway data from airportdb.io) are drawn with full
+runway geometry instead — see draw_saved_airports() in map_view.cpp, which
 skips any static-DB entry whose ICAO matches a saved Location.
+
+Primary `icao` prefers OurAirports `icao_code` when present (what flight
+APIs return, e.g. SPJC). `ident` is kept as `alias` when it differs
+(e.g. SPIM) so lookups still resolve historical / local codes without
+drawing a second map glyph.
 
 Usage:
     python3 tools/generate_airports_db.py [--output PATH]
@@ -57,24 +62,47 @@ def truncate_name(name: str) -> str:
     return cut + "..."
 
 
+def valid_code(code: str) -> bool:
+    """OurAirports ICAO / local idents used as icao[5] keys (len ≤ 4)."""
+    return bool(code) and len(code) <= 4 and code.isalnum()
+
+
 def parse_airports(csv_text: str):
     airports = []
+    seen_primary = set()
     reader = csv.DictReader(io.StringIO(csv_text))
     for row in reader:
         if row.get("type") not in INCLUDED_TYPES:
             continue
-        icao = (row.get("ident") or "").strip()
-        if not icao or len(icao) > 4:
-            continue  # skip non-ICAO idents (some entries use local codes)
+        ident = (row.get("ident") or "").strip().upper()
+        icao_code = (row.get("icao_code") or "").strip().upper()
+
+        # Prefer official ICAO (flight APIs / AeroDataBox). Fall back to ident
+        # when icao_code is blank. Keep ident as alias when both exist and differ
+        # so SPJC and SPIM both resolve without a duplicate map glyph.
+        if valid_code(icao_code):
+            primary = icao_code
+            alias = ident if valid_code(ident) and ident != icao_code else ""
+        elif valid_code(ident):
+            primary = ident
+            alias = ""
+        else:
+            continue  # skip non-ICAO idents (AU-0539, IN-0276, …) with no icao_code
+
+        if primary in seen_primary:
+            continue
+        seen_primary.add(primary)
+
         try:
             lat = float(row["latitude_deg"])
             lon = float(row["longitude_deg"])
         except (KeyError, ValueError):
             continue
         # Prefer official name; fall back to municipality if blank.
-        raw_name = (row.get("name") or "").strip() or (row.get("municipality") or "").strip() or icao
+        raw_name = (row.get("name") or "").strip() or (row.get("municipality") or "").strip() or primary
         airports.append({
-            "icao": icao,
+            "icao": primary,
+            "alias": alias,
             "name": truncate_name(raw_name),
             "lat": lat,
             "lon": lon,
@@ -91,7 +119,8 @@ def write_header(airports, output_path: str):
         f.write(f"// {len(airports)} airports (large_airport + medium_airport)\n")
         f.write("#pragma once\n\n")
         f.write("struct StaticAirport {\n")
-        f.write("    char icao[5];\n")
+        f.write("    char icao[5];  // preferred OurAirports icao_code (else ident)\n")
+        f.write("    char alias[5]; // alternate ident when it differs from icao\n")
         f.write("    char name[64]; // ASCII-folded OurAirports name (may end in ...)\n")
         f.write("    float lat, lon;\n")
         f.write("    unsigned char large; // 1 = large_airport, 0 = medium_airport\n")
@@ -100,13 +129,13 @@ def write_header(airports, output_path: str):
         f.write(f"static const StaticAirport airports_db[AIRPORTS_DB_COUNT] = {{\n")
         for ap in airports:
             f.write(
-                f'    {{"{ap["icao"]}", "{c_escape(ap["name"])}", '
+                f'    {{"{ap["icao"]}", "{ap["alias"]}", "{c_escape(ap["name"])}", '
                 f'{ap["lat"]:.6f}f, {ap["lon"]:.6f}f, {ap["large"]}}},\n'
             )
         f.write("};\n")
 
-    # icao[5] + name[64] + floats + large + padding ≈ 80 bytes/entry
-    size_estimate = len(airports) * 80
+    # icao[5] + alias[5] + name[64] + floats + large + padding ≈ 88 bytes/entry
+    size_estimate = len(airports) * 88
     print(f"Wrote {len(airports)} airports to {output_path} (~{size_estimate/1024:.1f} KB)")
 
 
