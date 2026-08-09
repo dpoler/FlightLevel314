@@ -7,7 +7,7 @@
 #include "filters.h"
 #include "display_prefs.h"
 #include "aircraft_icons.h"
-// #include "tile_cache.h" // disabled: tiles broken on ESP32-P4
+// #include "tile_cache.h" // historical ESP32 OSM tile path — unused on Pi (basemap.cpp)
 #include "../pins_config.h"
 #include "../data/storage.h"
 #include "../data/fetcher.h"

@@ -1,7 +1,5 @@
-.pio/
 .vscode/
 build/
-components/vendor_hal/
 *.o
 *.a
 *.so

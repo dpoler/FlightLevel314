@@ -2,23 +2,11 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
-
-#if defined(ARDUINO)
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "esp_heap_caps.h"
-#else
 #include <mutex>
 #include <chrono>
-#endif
 
-// Aircraft list capacity. ESP32 keeps the historical PSRAM-era cap; Pi has
-// room for denser 50–250 nm queries (KJFK alone can exceed 200).
-#if defined(ARDUINO)
-#define MAX_AIRCRAFT 200
-#else
+// Aircraft list capacity — sized for denser 50–250 nm queries on Pi.
 #define MAX_AIRCRAFT 1000
-#endif
 #define TRAIL_LENGTH 60
 
 struct TrailPoint {
@@ -77,47 +65,19 @@ static inline uint8_t compute_aircraft_opacity(uint32_t stale_since, uint32_t no
     return (uint8_t)(255 - (elapsed * 255 / GHOST_TIMEOUT_MS));
 }
 
-// Thread-safe aircraft list. Mutex/allocation are the one place this
-// struct forks per-platform (#if defined(ARDUINO)) rather than going
-// through src/platform/platform.h -- both are tiny, self-contained
-// implementation details entirely inside this header, so a seam header +
-// two .cpp files would've been more indirection than the thing it's
-// abstracting. lock()/unlock()'s call signature is unchanged either way,
-// so every existing call site (data/ui *.cpp) works untouched on both
-// targets.
+// Thread-safe aircraft list (std::timed_mutex on Linux).
 class AircraftList {
 public:
     Aircraft *aircraft = nullptr;
     int count = 0;
-#if defined(ARDUINO)
-    SemaphoreHandle_t mutex;
-#else
     std::timed_mutex mutex;
-#endif
 
     void init() {
         count = 0;
-#if defined(ARDUINO)
-        mutex = xSemaphoreCreateMutex();
-        // Allocate in PSRAM — too large for internal DRAM (~226KB at the
-        // historical MAX_AIRCRAFT=200 with TRAIL_LENGTH=60).
-        aircraft = (Aircraft *)heap_caps_malloc(MAX_AIRCRAFT * sizeof(Aircraft), MALLOC_CAP_SPIRAM);
-#else
-        // No PSRAM-vs-internal-DRAM split on Linux -- plain heap is plenty.
         aircraft = (Aircraft *)malloc(MAX_AIRCRAFT * sizeof(Aircraft));
-#endif
         if (aircraft) memset(aircraft, 0, MAX_AIRCRAFT * sizeof(Aircraft));
     }
 
-#if defined(ARDUINO)
-    bool lock(TickType_t timeout = pdMS_TO_TICKS(100)) {
-        return xSemaphoreTake(mutex, timeout) == pdTRUE;
-    }
-
-    void unlock() {
-        xSemaphoreGive(mutex);
-    }
-#else
     bool lock(uint32_t timeout_ms = 100) {
         return mutex.try_lock_for(std::chrono::milliseconds(timeout_ms));
     }
@@ -125,5 +85,4 @@ public:
     void unlock() {
         mutex.unlock();
     }
-#endif
 };

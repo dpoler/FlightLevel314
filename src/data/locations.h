@@ -2,17 +2,12 @@
 #include <cstddef>
 #include "aircraft.h"
 
-// Saved locations (airports + waypoints). ESP32 keeps the NVS/DRAM-era cap;
-// Pi can comfortably hold more favorites.
-#if defined(ARDUINO)
-#define MAX_LOCATIONS 15
-#else
+// Saved locations (airports + waypoints).
 #define MAX_LOCATIONS 64
-#endif
 #define MAX_RUNWAYS   12   // KORD has exactly 8 active runways (11 total, 3
                             // closed) -- was capped at 8, right at the edge;
                             // bumped for headroom now that closed runways are
-                            // filtered out during parsing (locations.cpp)
+                            // filtered out during parsing
 #define LOC_ICAO_LEN  8
 #define LOC_NAME_LEN  17   // 16 usable chars + null -- picker rows are narrow;
                             // airports auto-name themselves after their ICAO,
@@ -68,10 +63,9 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size);
 
 // Adds a plain waypoint -- no network fetch, so this is synchronous and safe
 // to call directly from the UI thread (unlike locations_add_from_icao(),
-// there's nothing to poll for). name is truncated to LOC_NAME_LEN-1 and has
-// any '|' stripped (the serial-config protocol's field delimiter -- see
-// serial_config.cpp). Returns true on success; on failure (name empty, or
-// the location list is full), if err is non-null, writes a short reason.
+// there's nothing to poll for). name is truncated to LOC_NAME_LEN-1.
+// Returns true on success; on failure (name empty, or the location list is
+// full), if err is non-null, writes a short reason.
 bool locations_add_waypoint(const char *name, float lat, float lon, int elevation_ft,
                              char *err, size_t err_size);
 
@@ -105,16 +99,12 @@ void locations_add_poll();
 // completed since the last call. *ok/err are only valid when this returns true.
 bool locations_add_result(bool *ok, char *err, size_t err_size);
 
-// Live token check -- same request/poll/result shape and same reason as the
-// "add by ICAO" trio above (a real fetch_airport_data() call blocks on an
-// HTTPS round trip; serial_config_poll() runs on the main render loop, not
-// location_poll_task, so this can't be called directly from a serial
-// command handler without freezing the display for however long the
-// request takes). Tests the currently-saved token against a fixed,
-// always-present ICAO and discards the result -- this only tells you
-// whether the token *authenticates*, not anything about the test airport
-// itself. ok=false with "no token set" if the field is empty; doesn't
-// attempt a network call in that case.
+// Live token check -- same request/poll/result shape as the "add by ICAO"
+// trio above (a real fetch blocks on an HTTPS round trip). Tests the
+// currently-saved token against a fixed, always-present ICAO and discards
+// the result -- this only tells you whether the token *authenticates*, not
+// anything about the test airport itself. ok=false with "no token set" if
+// the field is empty; doesn't attempt a network call in that case.
 void locations_request_verify_token();
 void locations_verify_token_poll();
 bool locations_verify_token_result(bool *ok, char *err, size_t err_size);
@@ -175,12 +165,7 @@ void locations_nearby_poll();
 // "Clear all caches".
 void locations_nearby_cache_clear();
 
-// Erases the entire "adsb_locs" NVS namespace -- every saved location and
-// every nearby-runways cache blob (nb_<name> keys live in this same
-// namespace, so a full clear takes those with it too, no separate cleanup
-// needed). Does not touch in-memory state -- caller is expected to reboot
-// immediately (serial_config.cpp's FACTORY_RESET does), at which point
-// locations_init() picks up the now-empty namespace on next boot.
-// Pi (locations_linux.cpp) also clears the in-memory tables and deletes
-// ~/.config/flightlevel314/locations.json so a reboot is not required there.
+// Erases all saved locations and nearby-runway caches (deletes
+// ~/.config/flightlevel314/locations.json on Pi) and clears in-memory
+// tables. Callers that also wipe UserConfig should do so separately.
 void locations_factory_reset();

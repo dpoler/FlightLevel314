@@ -1,24 +1,10 @@
 #pragma once
 #include "aircraft.h"
 
-// Data source abstraction -- lets the app fetch aircraft data from
-// different backends without callers needing to know which. Today
-// RemoteApiDataSource talks to a remote aggregator (adsb.lol or adsb.fi,
-// selected via UserConfig::traffic_provider), implemented Pi-only for now
-// (see pi/platform_linux/datasource_remote.cpp -- calls platform_http_get(),
-// not yet implemented on the ESP32 side). LocalSdrDataSource is a
-// deliberate stub, wired now so a future RTL-SDR + dump1090/readsb local
-// feed is a new class later, not a fetcher rewrite. See project_pi_port
-// memory.
-//
-// jc1060 doesn't use this yet -- src/data/fetcher.cpp's existing WiFi/C6-
-// co-processor recovery loop is untouched, deliberately: it's exactly the
-// kind of hard-won, extensively-commented hardware recovery code (see
-// project_p4_heap_constraints / project_platform_pin memories) not worth
-// risking a shared-abstraction refactor on for this port. This header is
-// safe to sit in src/data/ regardless -- it's declarations only, so it
-// costs nothing at ESP32 link time as long as nothing there instantiates
-// RemoteApiDataSource or calls its fetch().
+// Data source abstraction -- fetch aircraft without callers knowing the
+// backend. RemoteApiDataSource talks to adsb.lol or adsb.fi (see
+// UserConfig::traffic_provider / pi/platform_linux/datasource_remote.cpp).
+// LocalSdrDataSource is a stub for a future RTL-SDR + dump1090/readsb feed.
 
 class AircraftDataSource {
 public:
@@ -34,7 +20,7 @@ public:
     const char *name() const override;
 };
 
-// Stub only -- not implemented. See project_pi_port memory.
+// Stub only -- not implemented.
 class LocalSdrDataSource : public AircraftDataSource {
 public:
     bool fetch(AircraftList *) override { return false; }
