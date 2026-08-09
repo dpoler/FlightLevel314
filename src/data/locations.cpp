@@ -15,15 +15,8 @@
 
 // Static airport glyph DB (icao/lat/lon/large-flag only, no runway geometry
 // -- see tools/generate_airports_db.py) is gitignored like static_map_data.h;
-// same __has_include pattern map_view.cpp/radar_view.cpp use, needed here
-// too since the nearby-large-airport scan (locations_nearby_set_enabled())
-// reads it directly rather than going through a view file.
-#if __has_include("../ui/airports_db.h")
-#include "../ui/airports_db.h"
-#define HAS_AIRPORTS_DB 1
-#else
-#define HAS_AIRPORTS_DB 0
-#endif
+// nearby-large-airport scan reads it directly (see airports_db_include.h).
+#include "../ui/airports_db_include.h"
 
 // NetworkClientSecure's default TLS handshake timeout is 120s and is NOT
 // bounded by HTTPClient::setTimeout() (that only covers the read phase after
