@@ -1,4 +1,4 @@
-# System packages for Cloud Agents working on dpoler/adsb.
+# System packages for Cloud Agents working on dpoler/FlightLevel314.
 # Cursor checks out the repo into the workspace; do not COPY project sources here.
 FROM ubuntu:24.04
 
