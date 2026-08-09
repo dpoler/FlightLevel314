@@ -24,13 +24,27 @@ static lv_obj_t *_gnd_lbl = nullptr;
 static lv_obj_t *_filter_lbls[NUM_FILTERS] = {};
 static bool _filter_just_clicked = false; // suppress the row-tap handler right after a filter button tap
 
+static void update_board(lv_timer_t *t); // defined below; gnd_click_cb needs it
+
 #define BOARD_W LCD_H_RES
 #define BOARD_H (LCD_V_RES - STATUS_BAR_HEIGHT)
 
+// jc1060 keeps the dense Solari board. Pi (1280×800) spreads columns across
+// the width left of the filter stack and uses slightly taller rows.
+#if LCD_H_RES >= 1280
+#define CELL_H 32
+#define ROW_H (CELL_H + 4)   // 36
+#define TITLE_H 36
+#define COL_HEADER_H 22
+#define FILTER_COL_W 72      // btn 64 + margin; columns must stay left of this
+#define CONTENT_RIGHT (BOARD_W - FILTER_COL_W - 8)
+#else
 #define CELL_H 28
-#define ROW_H (CELL_H + 4)
+#define ROW_H (CELL_H + 4)   // 32
 #define TITLE_H 30
 #define COL_HEADER_H 18
+#define CONTENT_RIGHT BOARD_W
+#endif
 #define HEADER_H (TITLE_H + COL_HEADER_H)
 // Was a bare literal 16, then 15 -- the tileview's own horizontal
 // scrollbar ("swipe bar") runs right along the bottom edge and was
@@ -79,6 +93,17 @@ struct Column {
 };
 
 static Column columns[] = {
+#if LCD_H_RES >= 1280
+    // Spread across ~1200px left of the filter stack (was clustered for 1024).
+    {"FLIGHT",  16,  true},
+    {"TYPE",   200, false},
+    {"ALT",    320, true},
+    {"SPD",    440, true},
+    {"DIST",   560, true},
+    {"HDG",    700, false},
+    {"STATUS", 820, false},
+    {"FPM",    980, false},
+#else
     {"FLIGHT",  10,  true},
     {"TYPE",   180, false},
     {"ALT",    280, true},
@@ -87,6 +112,7 @@ static Column columns[] = {
     {"HDG",    550, false},
     {"STATUS", 630, false},
     {"FPM",    770, false}, // split the difference between 800 (too far) and 740 (too close)
+#endif
 };
 #define NUM_COLS 8
 
@@ -263,6 +289,10 @@ static void gnd_click_cb(lv_event_t *e) {
         filter_toggle(FILT_VERT);
         update_filter_visuals();
     }
+
+    // Same immediate rebuild as filter_click_cb — without this, rows stay
+    // stale until the 2s timer (GND button visual updated but board didn't).
+    update_board(nullptr);
 }
 
 // Update board data from aircraft list
@@ -518,14 +548,19 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
 
     _title_label = lv_label_create(title_bg);
     lv_label_set_text(_title_label, "OVERHEAD TRAFFIC  Loading...");
+#if LCD_H_RES >= 1280
+    lv_obj_set_style_text_font(_title_label, &lv_font_montserrat_28, 0);
+#else
     lv_obj_set_style_text_font(_title_label, &lv_font_montserrat_20, 0);
+#endif
     lv_obj_set_style_text_color(_title_label, HEADER_TEXT, 0);
     lv_obj_align(_title_label, LV_ALIGN_LEFT_MID, 10, 0);
 
     // Column header labels — sortable ones get wide clickable containers
     for (int i = 0; i < NUM_COLS; i++) {
-        // Calculate column width (to next column, or to board edge)
-        int col_w = (i < NUM_COLS - 1) ? (columns[i + 1].x - columns[i].x) : (BOARD_W - columns[i].x);
+        // Calculate column width (to next column, or to content edge left of filters)
+        int col_w = (i < NUM_COLS - 1) ? (columns[i + 1].x - columns[i].x)
+                                       : (CONTENT_RIGHT - columns[i].x);
 
         if (columns[i].sortable) {
             // Clickable container spanning full column width for easy tap target
