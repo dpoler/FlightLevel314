@@ -63,6 +63,11 @@ bool _add_result_ready = false;
 bool _add_result_ok = false;
 char _add_result_err[48] = {};
 
+std::mutex _refresh_mutex;
+bool _refresh_result_ready = false;
+bool _refresh_result_ok = false;
+char _refresh_result_err[48] = {};
+
 std::mutex _verify_mutex;
 bool _verify_result_ready = false;
 bool _verify_result_ok = false;
@@ -404,7 +409,10 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
             if (strcmp(airports_db[i].icao, icao_upper) == 0) {
                 loc = Location{};
                 strlcpy(loc.icao, icao_upper, sizeof(loc.icao));
-                strlcpy(loc.name, icao_upper, sizeof(loc.name));
+                if (airports_db[i].name[0])
+                    strlcpy(loc.name, airports_db[i].name, sizeof(loc.name));
+                else
+                    strlcpy(loc.name, icao_upper, sizeof(loc.name));
                 loc.lat = airports_db[i].lat;
                 loc.lon = airports_db[i].lon;
                 found = true;
@@ -509,6 +517,78 @@ bool locations_update(int idx, const char *name, float lat, float lon, int eleva
     }
 
     save_all_locked();
+    return true;
+}
+
+bool locations_refresh_airport(int idx, char *err, size_t err_size) {
+    auto fail = [&](const char *msg) {
+        if (err && err_size) strlcpy(err, msg, err_size);
+        return false;
+    };
+
+    char icao[LOC_ICAO_LEN] = {};
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (idx < 0 || idx >= _count) return fail("bad index");
+        if (!_locations[idx].icao[0]) return fail("not an airport");
+        strlcpy(icao, _locations[idx].icao, sizeof(icao));
+    }
+
+    if (!g_config.airportdb_enabled || !g_config.airportdb_token[0]) {
+        if (!g_config.airportdb_token[0]) return fail("no airportdb.io token set");
+        return fail("airportdb.io disabled");
+    }
+
+    Location fetched;
+    if (!fetch_airport_data(icao, fetched, err, err_size)) return false;
+
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (idx < 0 || idx >= _count) return fail("bad index");
+    Location &loc = _locations[idx];
+    if (strcmp(loc.icao, icao) != 0) return fail("location changed");
+
+    // Keep display name + nearby toggle/cache; replace geometry from AirportDB.
+    char kept_name[LOC_NAME_LEN];
+    strlcpy(kept_name, loc.name, sizeof(kept_name));
+    const bool nearby_on = loc.nearby_enabled;
+    const int nearby_n = loc.nearby_count;
+
+    loc.lat = fetched.lat;
+    loc.lon = fetched.lon;
+    loc.elevation_ft = fetched.elevation_ft;
+    loc.runway_count = fetched.runway_count;
+    memcpy(loc.runways, fetched.runways, sizeof(loc.runways));
+    strlcpy(loc.name, kept_name, sizeof(loc.name));
+    loc.nearby_enabled = nearby_on;
+    loc.nearby_count = nearby_n;
+
+    save_all_locked();
+    return true;
+}
+
+void locations_request_refresh(int idx) {
+    {
+        std::lock_guard<std::mutex> lock(_refresh_mutex);
+        _refresh_result_ready = false;
+    }
+    std::thread([idx]() {
+        char err[48] = {};
+        bool ok = locations_refresh_airport(idx, err, sizeof(err));
+        std::lock_guard<std::mutex> lock(_refresh_mutex);
+        _refresh_result_ok = ok;
+        strlcpy(_refresh_result_err, err, sizeof(_refresh_result_err));
+        _refresh_result_ready = true;
+    }).detach();
+}
+
+void locations_refresh_poll() {}
+
+bool locations_refresh_result(bool *ok, char *err, size_t err_size) {
+    std::lock_guard<std::mutex> lock(_refresh_mutex);
+    if (!_refresh_result_ready) return false;
+    if (ok) *ok = _refresh_result_ok;
+    if (err && err_size) strlcpy(err, _refresh_result_err, err_size);
+    _refresh_result_ready = false;
     return true;
 }
 

@@ -16,7 +16,15 @@
 // Wide enough for "KJFK  John F. Kennedy International" + icon cluster.
 #define PANEL_W    540
 #define ROW_H      56   // was 44 -- felt cramped once the reorder handle was added (reported)
-#define ROW_ICON_RESERVE 120 // eye + info + grip + close on the right
+// Icon cluster (right → left): Close, Grip, Info, Eye. Offsets are the
+// object's right edge from the row's right edge (LV_ALIGN_RIGHT_MID). Step
+// of 34 keeps ~equal visual gaps across 14–22px-wide icons; reserve must
+// cover eye's left edge so the name label doesn't collide.
+#define ICON_CLOSE_X       (-10)
+#define ICON_GRIP_X        (-44)
+#define ICON_INFO_X        (-78)
+#define ICON_EYE_X         (-112)
+#define ROW_ICON_RESERVE   140
 #define BTN_W      60   // matches status_bar.cpp's CHIP_W -- same width as every other button in the bar (nav tabs, range/TRAIL/TAG chips)
 #define BTN_H      24   // matches status_bar.cpp's CHIP_H (and the nav tabs' own height)
 #define ADD_MATCH_MAX 5
@@ -40,6 +48,9 @@ static lv_obj_t *_keyboard = nullptr;  // shared by the add-view textarea, lives
 // task for this crashed the SDIO driver under memory pressure). This module
 // just tracks whether a request is outstanding so the UI can poll for it.
 static bool _add_in_progress = false;
+static bool _refresh_in_progress = false;
+static int _info_idx = -1;
+static lv_obj_t *_info_status_lbl = nullptr;
 
 static lv_obj_t *_add_status_lbl = nullptr;
 static lv_obj_t *_add_fetch_btn = nullptr;
@@ -99,6 +110,8 @@ static void close_overlay() {
         _wp_lon_ta = nullptr;
         _wp_elev_ta = nullptr;
         _wp_status_lbl = nullptr;
+        _info_status_lbl = nullptr;
+        _info_idx = -1;
     }
 }
 
@@ -190,7 +203,7 @@ static void add_nearby_toggle(lv_obj_t *row, int idx) {
     lv_label_set_text(eye, LV_SYMBOL_EYE_OPEN);
     lv_obj_set_style_text_color(eye, locations_nearby_enabled(idx) ? COLOR_ACCENT : COLOR_DIM, 0);
     // Leftmost of the icon cluster: Eye | Info | Grip | X
-    lv_obj_align(eye, LV_ALIGN_RIGHT_MID, -92, 0);
+    lv_obj_align(eye, LV_ALIGN_RIGHT_MID, ICON_EYE_X, 0);
     lv_obj_add_flag(eye, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(eye, 10);
     lv_obj_add_event_cb(eye, nearby_toggle_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
@@ -391,7 +404,7 @@ static void build_list_view() {
         lv_obj_t *rm = lv_label_create(row);
         lv_label_set_text(rm, LV_SYMBOL_CLOSE);
         lv_obj_set_style_text_color(rm, COLOR_DIM, 0);
-        lv_obj_align(rm, LV_ALIGN_RIGHT_MID, -8, 0);
+        lv_obj_align(rm, LV_ALIGN_RIGHT_MID, ICON_CLOSE_X, 0);
         lv_obj_add_flag(rm, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_ext_click_area(rm, 10);
         lv_obj_add_event_cb(rm, remove_row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
@@ -399,10 +412,10 @@ static void build_list_view() {
         add_nearby_toggle(row, i);
 
         // Info (i-in-circle) — view name/coords; edits are delete + re-add.
-        // Right of the eye: Eye | Info | Grip | X
+        // Cluster order: Eye | Info | Grip | X
         lv_obj_t *info = lv_obj_create(row);
         lv_obj_set_size(info, 22, 22);
-        lv_obj_align(info, LV_ALIGN_RIGHT_MID, -64, 0);
+        lv_obj_align(info, LV_ALIGN_RIGHT_MID, ICON_INFO_X, 0);
         lv_obj_set_style_radius(info, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_opa(info, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(info, 1, 0);
@@ -424,7 +437,7 @@ static void build_list_view() {
         lv_obj_t *grip = lv_label_create(row);
         lv_label_set_text(grip, LV_SYMBOL_BARS);
         lv_obj_set_style_text_color(grip, COLOR_DIM, 0);
-        lv_obj_align(grip, LV_ALIGN_RIGHT_MID, -36, 0);
+        lv_obj_align(grip, LV_ALIGN_RIGHT_MID, ICON_GRIP_X, 0);
         lv_obj_add_flag(grip, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_ext_click_area(grip, 10);
         lv_obj_add_event_cb(grip, drag_handle_event_cb, LV_EVENT_PRESSED, nullptr);
@@ -777,6 +790,8 @@ static void build_add_waypoint_view() {
 }
 
 // Read-only location details. Fixing a typo = delete + re-add.
+// Airports added with AirportDB off have runway_count 0; offer a fetch
+// once the token is enabled so KORD-style entries don't need delete/re-add.
 static void build_info_view(int idx) {
     const Location *loc = locations_get(idx);
     if (!loc) return;
@@ -786,11 +801,16 @@ static void build_info_view(int idx) {
         lv_obj_delete_async(_panel);
     }
 
+    _info_idx = idx;
+    _info_status_lbl = nullptr;
+
     const bool is_airport = loc->icao[0] != '\0';
     const StaticAirport *ap = is_airport ? airports_lookup_icao(loc->icao) : nullptr;
+    const bool can_fetch_runways = is_airport && loc->runway_count == 0
+        && g_config.airportdb_enabled && g_config.airportdb_token[0];
 
     _panel = lv_obj_create(_overlay);
-    lv_obj_set_size(_panel, PANEL_W, 260);
+    lv_obj_set_size(_panel, PANEL_W, can_fetch_runways || _refresh_in_progress ? 300 : 270);
     lv_obj_set_pos(_panel, 8, 8);
     lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
@@ -836,9 +856,40 @@ static void build_info_view(int idx) {
     snprintf(buf, sizeof(buf), "Elev  %d ft", loc->elevation_ft);
     line(buf, COLOR_TEXT);
 
-    if (is_airport && loc->runway_count > 0) {
+    if (is_airport) {
         snprintf(buf, sizeof(buf), "Runways  %d", loc->runway_count);
-        line(buf, COLOR_DIM);
+        line(buf, loc->runway_count > 0 ? COLOR_DIM : COLOR_TEXT);
+        if (loc->runway_count == 0 && !can_fetch_runways && !_refresh_in_progress) {
+            line("No runway data (AirportDB was off)", COLOR_DIM);
+        }
+    }
+
+    if (_refresh_in_progress) {
+        _info_status_lbl = lv_label_create(_panel);
+        lv_label_set_text(_info_status_lbl, "Fetching runways...");
+        lv_obj_set_style_text_font(_info_status_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(_info_status_lbl, COLOR_ACCENT, 0);
+        lv_obj_set_pos(_info_status_lbl, 0, y);
+        y += 26;
+    } else if (can_fetch_runways) {
+        lv_obj_t *fetch_btn = lv_obj_create(_panel);
+        lv_obj_set_size(fetch_btn, 150, BTN_H + 10);
+        lv_obj_set_pos(fetch_btn, 0, y);
+        lv_obj_set_style_bg_color(fetch_btn, COLOR_ROW, 0);
+        lv_obj_set_style_radius(fetch_btn, 6, 0);
+        lv_obj_clear_flag(fetch_btn, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(fetch_btn, [](lv_event_t *e) {
+            int i = (int)(intptr_t)lv_event_get_user_data(e);
+            if (_refresh_in_progress) return;
+            _refresh_in_progress = true;
+            locations_request_refresh(i);
+            build_info_view(i);
+        }, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
+        lv_obj_t *fetch_lbl = lv_label_create(fetch_btn);
+        lv_label_set_text(fetch_lbl, "Fetch runways");
+        lv_obj_set_style_text_color(fetch_lbl, COLOR_ACCENT, 0);
+        lv_obj_center(fetch_lbl);
+        y += BTN_H + 18;
     }
 
     y += 8;
@@ -892,28 +943,40 @@ void location_picker_init(lv_obj_t *screen) {
     lv_obj_center(_picker_lbl);
     update_picker_label();
 
-    // Poll for a completed "add" fetch — the actual work happens on
-    // location_poll_task's stack via locations_add_poll(); this just checks
-    // for the result (see locations.h / project_p4_heap_constraints memory).
+    // Poll for completed add / runway-refresh fetches.
     lv_timer_create([](lv_timer_t *t) {
-        if (!_add_in_progress) return;
-        bool ok;
-        char err[48];
-        if (!locations_add_result(&ok, err, sizeof(err))) return;
-        _add_in_progress = false;
-
-        if (!_add_status_lbl) return; // user backed out of the add view already
-        if (ok) {
-            build_list_view(); // back to the list, now showing the new airport
-        } else {
-            lv_label_set_text(_add_status_lbl, err);
-            lv_obj_set_style_text_color(_add_status_lbl, COLOR_ERR, 0);
-            // Previously only shown here, inline in the popover -- invisible
-            // again the moment the popover closes, and absent from the
-            // STATUS tab's ERRORS section even though it's exactly the kind
-            // of thing that section exists for (reported: a bad-token
-            // failure left no trace to look back at afterward).
-            error_log_add("Add %s: %s", lv_textarea_get_text(_add_ta), err);
+        (void)t;
+        if (_add_in_progress) {
+            bool ok;
+            char err[48];
+            if (locations_add_result(&ok, err, sizeof(err))) {
+                _add_in_progress = false;
+                if (_add_status_lbl) {
+                    if (ok) {
+                        build_list_view();
+                    } else {
+                        lv_label_set_text(_add_status_lbl, err);
+                        lv_obj_set_style_text_color(_add_status_lbl, COLOR_ERR, 0);
+                        error_log_add("Add %s: %s", lv_textarea_get_text(_add_ta), err);
+                    }
+                }
+            }
+        }
+        if (_refresh_in_progress) {
+            bool ok;
+            char err[48];
+            if (!locations_refresh_result(&ok, err, sizeof(err))) return;
+            _refresh_in_progress = false;
+            if (_info_idx < 0 || !_overlay) return;
+            if (ok) {
+                build_info_view(_info_idx);
+            } else if (_info_status_lbl) {
+                lv_label_set_text(_info_status_lbl, err);
+                lv_obj_set_style_text_color(_info_status_lbl, COLOR_ERR, 0);
+                error_log_add("Refresh runways: %s", err);
+            } else {
+                build_info_view(_info_idx);
+            }
         }
     }, 300, nullptr);
 }

@@ -96,6 +96,13 @@ static bool _add_result_ready = false;
 static bool _add_result_ok = false;
 static char _add_result_err[48] = {};
 
+// "Refresh airport runways" — same stack constraints as add-by-ICAO.
+static bool _refresh_pending = false;
+static int _refresh_pending_idx = -1;
+static bool _refresh_result_ready = false;
+static bool _refresh_result_ok = false;
+static char _refresh_result_err[48] = {};
+
 // "Verify token" request/response -- same shape/reason as "add by ICAO"
 // above, reusing _add_mutex rather than a second semaphore for one more
 // small flag. See locations_verify_token_poll() for the actual check.
@@ -642,6 +649,90 @@ bool locations_update(int idx, const char *name, float lat, float lon, int eleva
 
     save_all();
     return true;
+}
+
+bool locations_refresh_airport(int idx, char *err, size_t err_size) {
+    auto fail = [&](const char *msg) {
+        if (err && err_size) strlcpy(err, msg, err_size);
+        return false;
+    };
+
+    if (idx < 0 || idx >= _count) return fail("bad index");
+    if (!_locations[idx].icao[0]) return fail("not an airport");
+
+    if (!g_config.airportdb_enabled || !g_config.airportdb_token[0]) {
+        if (!g_config.airportdb_token[0]) return fail("no airportdb.io token set");
+        return fail("airportdb.io disabled");
+    }
+
+    char icao[LOC_ICAO_LEN];
+    strlcpy(icao, _locations[idx].icao, sizeof(icao));
+
+    Location fetched;
+    if (!fetch_airport_data(icao, fetched, err, err_size)) return false;
+
+    Location &loc = _locations[idx];
+    char kept_name[LOC_NAME_LEN];
+    strlcpy(kept_name, loc.name, sizeof(kept_name));
+    const bool nearby_on = loc.nearby_enabled;
+    const int nearby_n = loc.nearby_count;
+
+    loc.lat = fetched.lat;
+    loc.lon = fetched.lon;
+    loc.elevation_ft = fetched.elevation_ft;
+    loc.runway_count = fetched.runway_count;
+    memcpy(loc.runways, fetched.runways, sizeof(loc.runways));
+    strlcpy(loc.name, kept_name, sizeof(loc.name));
+    loc.nearby_enabled = nearby_on;
+    loc.nearby_count = nearby_n;
+
+    save_all();
+    return true;
+}
+
+void locations_request_refresh(int idx) {
+    xSemaphoreTake(_add_mutex, portMAX_DELAY);
+    _refresh_pending_idx = idx;
+    _refresh_pending = true;
+    _refresh_result_ready = false;
+    xSemaphoreGive(_add_mutex);
+}
+
+void locations_refresh_poll() {
+    int idx = -1;
+    bool has_request = false;
+
+    xSemaphoreTake(_add_mutex, portMAX_DELAY);
+    if (_refresh_pending) {
+        idx = _refresh_pending_idx;
+        _refresh_pending = false;
+        has_request = true;
+    }
+    xSemaphoreGive(_add_mutex);
+
+    if (!has_request) return;
+
+    char err[48] = {};
+    bool ok = locations_refresh_airport(idx, err, sizeof(err));
+
+    xSemaphoreTake(_add_mutex, portMAX_DELAY);
+    _refresh_result_ok = ok;
+    strlcpy(_refresh_result_err, err, sizeof(_refresh_result_err));
+    _refresh_result_ready = true;
+    xSemaphoreGive(_add_mutex);
+}
+
+bool locations_refresh_result(bool *ok, char *err, size_t err_size) {
+    bool ready;
+    xSemaphoreTake(_add_mutex, portMAX_DELAY);
+    ready = _refresh_result_ready;
+    if (ready) {
+        if (ok) *ok = _refresh_result_ok;
+        if (err && err_size) strlcpy(err, _refresh_result_err, err_size);
+        _refresh_result_ready = false;
+    }
+    xSemaphoreGive(_add_mutex);
+    return ready;
 }
 
 void locations_request_add(const char *icao) {

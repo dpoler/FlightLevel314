@@ -83,6 +83,15 @@ bool locations_add_waypoint(const char *name, float lat, float lon, int elevatio
 bool locations_update(int idx, const char *name, float lat, float lon, int elevation_ft,
                       char *err, size_t err_size);
 
+// Re-fetch lat/lon/elevation/runways from airportdb.io for an existing
+// airport-type location (e.g. one added via the static-DB fallback with no
+// runway geometry). Preserves `name` and nearby_* fields. Blocking network
+// call — use the request/result pair from the UI thread.
+bool locations_refresh_airport(int idx, char *err, size_t err_size);
+void locations_request_refresh(int idx);
+void locations_refresh_poll();
+bool locations_refresh_result(bool *ok, char *err, size_t err_size);
+
 // Request/response pair for adding a location from the UI thread without
 // spawning a new task — a dedicated task's stack was enough extra internal-DRAM
 // pressure to crash the SDIO driver on this board (see
