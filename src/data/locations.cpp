@@ -507,10 +507,18 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
 #if HAS_AIRPORTS_DB
         bool found = false;
         for (int i = 0; i < AIRPORTS_DB_COUNT; i++) {
-            if (strcmp(airports_db[i].icao, icao_upper) == 0) {
+            const bool icao_hit = strcmp(airports_db[i].icao, icao_upper) == 0;
+            const bool alias_hit = airports_db[i].alias[0] &&
+                                   strcmp(airports_db[i].alias, icao_upper) == 0;
+            if (icao_hit || alias_hit) {
                 loc = Location{};
-                strlcpy(loc.icao, icao_upper, sizeof(loc.icao));
-                strlcpy(loc.name, icao_upper, sizeof(loc.name));
+                // Prefer the DB primary ICAO (icao_code) so saved locations
+                // match what AeroDataBox / routes use (e.g. SPJC not SPIM).
+                strlcpy(loc.icao, airports_db[i].icao, sizeof(loc.icao));
+                if (airports_db[i].name[0])
+                    strlcpy(loc.name, airports_db[i].name, sizeof(loc.name));
+                else
+                    strlcpy(loc.name, loc.icao, sizeof(loc.name));
                 loc.lat = airports_db[i].lat;
                 loc.lon = airports_db[i].lon;
                 found = true;
@@ -812,7 +820,10 @@ static void nearby_start_scan(int idx) {
         // Skip the owner itself -- only ever matches for an airport-type
         // owner (owner->icao is empty for a waypoint, so this never
         // falsely excludes anything for that case).
-        if (owner->icao[0] && strcmp(ap.icao, owner->icao) == 0) continue;
+        if (owner->icao[0] &&
+            (strcmp(ap.icao, owner->icao) == 0 ||
+             (ap.alias[0] && strcmp(ap.alias, owner->icao) == 0)))
+            continue;
         if (MapProjection::distance_nm(owner->lat, owner->lon, ap.lat, ap.lon) > radius) continue;
         strlcpy(_nearby_queue_icao[_nearby_queue_len], ap.icao, LOC_ICAO_LEN);
         _nearby_queue_len++;

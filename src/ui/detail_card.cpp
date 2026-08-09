@@ -325,8 +325,9 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
 
         lv_label_set_text(_route_from_icao, o);
         lv_label_set_text(_route_to_icao, d);
-        lv_label_set_text(_route_from_name, oshort[0] ? oshort : "—");
-        lv_label_set_text(_route_to_name, dshort[0] ? dshort : "—");
+        // ASCII "-" only — Montserrat has no U+2014 em dash (renders as tofu).
+        lv_label_set_text(_route_from_name, oshort[0] ? oshort : "-");
+        lv_label_set_text(_route_to_name, dshort[0] ? dshort : "-");
         route_set_hidden(false);
     }
 
