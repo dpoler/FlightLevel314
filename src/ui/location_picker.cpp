@@ -452,7 +452,7 @@ static void add_match_click_cb(lv_event_t *e) {
     const StaticAirport *ap = _add_match_ptrs[idx];
     lv_textarea_set_text(_add_ta, ap->icao);
     if (_add_hint_lbl) {
-        lv_label_set_text_fmt(_add_hint_lbl, "%s — %s", ap->icao, ap->name);
+        lv_label_set_text_fmt(_add_hint_lbl, "%s - %s", ap->icao, ap->name);
         lv_obj_set_style_text_color(_add_hint_lbl, COLOR_ACCENT, 0);
     }
     request_add_icao(ap->icao);
@@ -484,7 +484,7 @@ static void refresh_add_matches() {
 
     if (_add_hint_lbl) {
         if (n == 1) {
-            lv_label_set_text_fmt(_add_hint_lbl, "%s — %s", hits[0]->icao, hits[0]->name);
+            lv_label_set_text_fmt(_add_hint_lbl, "%s - %s", hits[0]->icao, hits[0]->name);
             lv_obj_set_style_text_color(_add_hint_lbl, COLOR_ACCENT, 0);
         } else if (n > 1) {
             lv_label_set_text(_add_hint_lbl, "Tap a match, or Fetch with an ICAO");
@@ -531,10 +531,10 @@ static void fetch_btn_click_cb(lv_event_t *e) {
     }
 
     if (n > 1) {
-        lv_label_set_text(_add_status_lbl, "Multiple matches — tap one");
+        lv_label_set_text(_add_status_lbl, "Multiple matches - tap one");
         lv_obj_set_style_text_color(_add_status_lbl, COLOR_ERR, 0);
     } else {
-        lv_label_set_text(_add_status_lbl, "No airport match — try ICAO");
+        lv_label_set_text(_add_status_lbl, "No airport match - try ICAO");
         lv_obj_set_style_text_color(_add_status_lbl, COLOR_ERR, 0);
     }
 }

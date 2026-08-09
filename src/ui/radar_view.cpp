@@ -850,6 +850,7 @@ static void draw_radar_static_airport_glyphs(lv_layer_t *layer) {
         int sx, sy;
         if (!to_radar_screen(ap.lat, ap.lon, sx, sy)) continue;
         if (radar_is_saved_icao(ap.icao)) continue;
+        if (ap.alias[0] && radar_is_saved_icao(ap.alias)) continue;
         draw_radar_airport_glyph(layer, sx, sy, ap.icao);
     }
 }
