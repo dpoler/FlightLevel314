@@ -81,7 +81,7 @@ struct UserConfig {
 
     // Pi Map basemap (Carto / FAA sectional tiles under Map). Unused on
     // Radar but kept in the shared UserConfig JSON schema.
-    // sets stay aligned. Defaults: on at 50% opacity, Carto dark_all.
+    // Defaults: on at 50% opacity, Carto dark_all.
     // Style: 0=Carto dark, 1=Carto dark (no labels), 2=FAA VFR sectional,
     // 3=Carto voyager (cream light), 4=voyager no labels, 5=OpenTopoMap.
     // Opacity is per-style.
@@ -89,8 +89,8 @@ struct UserConfig {
     int map_basemap_opa[6];         // 10-100 percent per style (default 50)
     int map_basemap_style;          // see display_prefs / basemap styles
 
-    // Pi Map weather overlay (RainViewer precip radar). Unused on ESP32 /
-    // Radar but kept in shared UserConfig. Defaults: off at 60% opacity.
+    // Pi Map weather overlay (RainViewer precip radar). Unused on Radar
+    // but kept in shared UserConfig. Defaults: off at 60% opacity.
     bool map_weather_enabled;
     int map_weather_opa;            // 10-100 percent (default 60)
 
