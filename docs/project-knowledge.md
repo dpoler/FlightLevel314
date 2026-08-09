@@ -493,8 +493,10 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   panel on the existing saved-airport UI.
 
 - **Quality of life / display settings**: color themes, font size — not
-  started. Brightness backend is real/complete but has no working UI on either
-  board (see Screensaver entry below — the only exposing UI is disabled).
+  started. ~~Brightness backend is real/complete but has no working UI~~
+  **Pi brightness slider done 2026-08-09** (Settings DEVICE → sysfs
+  `/sys/class/backlight`; needs udev write perms — see README). ESP32 UI
+  still only lived in the deactivated screensaver settings.
 
 - **Screensaver / sleep mode (brightness control included)**: built once
   (commit cf531b2: independent dim/blank idle timers, brightness slider, a

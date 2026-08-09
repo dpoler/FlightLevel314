@@ -143,6 +143,8 @@ add_executable(flightlevel314
     basemap.h
     weather.cpp
     weather.h
+    backlight.cpp
+    backlight.h
     platform_linux/platform_linux.cpp
     platform_linux/storage_linux.cpp
     platform_linux/http_linux.cpp

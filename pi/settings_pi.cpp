@@ -26,6 +26,7 @@
 #include "../src/version.h"
 #include "basemap.h"
 #include "weather.h"
+#include "backlight.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -64,6 +65,8 @@ static lv_obj_t *_ota_ver_val = nullptr;
 static lv_obj_t *_ota_status_lbl = nullptr;
 static lv_obj_t *_ota_btn_lbl = nullptr;
 static OtaStatus _last_ota_ui = OTA_IDLE;
+static lv_obj_t *_bright_label = nullptr;
+static lv_obj_t *_bright_slider = nullptr;
 
 enum class KeyValid : uint8_t { Unknown, Checking, Valid, Invalid, Missing };
 static KeyValid _apt_valid = KeyValid::Unknown;
@@ -364,6 +367,14 @@ static void apply_cfg_to_fields() {
     if (prov < 0 || prov > 2) prov = 0;
     if (_dd_adbox_prov) lv_dropdown_set_selected(_dd_adbox_prov, (uint16_t)prov);
 
+    if (_bright_slider) {
+        int b = _cfg.display_brightness_pct;
+        if (b < 10) b = 10;
+        if (b > 100) b = 100;
+        lv_slider_set_value(_bright_slider, b, LV_ANIM_OFF);
+        if (_bright_label) lv_label_set_text_fmt(_bright_label, "%d%%", b);
+    }
+
     refresh_key_presence_ui();
 }
 
@@ -407,6 +418,13 @@ static void save_and_close(lv_event_t *e) {
     if (adbox_en && g_config.adbox_rate_limited) {
         aerodatabox_clear_rate_limit();
         _cfg.adbox_rate_limited = false;
+    }
+
+    if (_bright_slider) {
+        int b = (int)lv_slider_get_value(_bright_slider);
+        if (b < 10) b = 10;
+        if (b > 100) b = 100;
+        _cfg.display_brightness_pct = b;
     }
 
     storage_save_config(_cfg);
@@ -688,7 +706,49 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_add_event_cb(ota_btn, ota_btn_cb, LV_EVENT_CLICKED, nullptr);
     refresh_ota_ui();
 
-    const int ey = 118;
+    // Brightness — live-applies via sysfs; persisted on Save (and slider release).
+    create_label(_content, "Brightness", col2, 112);
+    _bright_label = lv_label_create(_content);
+    lv_label_set_text_fmt(_bright_label, "%d%%", _cfg.display_brightness_pct);
+    lv_obj_set_style_text_font(_bright_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_bright_label, SYS_COLOR, 0);
+    lv_obj_set_pos(_bright_label, col2 + COL_W - 56, 112);
+    lv_obj_clear_flag(_bright_label, LV_OBJ_FLAG_CLICKABLE);
+
+    _bright_slider = lv_slider_create(_content);
+    lv_obj_set_size(_bright_slider, COL_W - 8, 12);
+    lv_obj_set_pos(_bright_slider, col2, 136);
+    lv_slider_set_range(_bright_slider, 10, 100);
+    {
+        int b = _cfg.display_brightness_pct;
+        if (b < 10) b = 10;
+        if (b > 100) b = 100;
+        lv_slider_set_value(_bright_slider, b, LV_ANIM_OFF);
+    }
+    lv_obj_set_style_bg_color(_bright_slider, lv_color_hex(0x333366), 0);
+    lv_obj_set_style_bg_color(_bright_slider, ACCENT_COLOR, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_bright_slider, ACCENT_COLOR, LV_PART_KNOB);
+    lv_obj_add_event_cb(_bright_slider, [](lv_event_t *e) {
+        int v = (int)lv_slider_get_value(lv_event_get_target_obj(e));
+        if (v < 10) v = 10;
+        if (v > 100) v = 100;
+        _cfg.display_brightness_pct = v;
+        if (_bright_label) lv_label_set_text_fmt(_bright_label, "%d%%", v);
+        backlight_set_percent(v);
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(_bright_slider, [](lv_event_t *e) {
+        (void)e;
+        storage_save_config(_cfg);
+        // Keep g_config in sync so quitting without Save still sticks.
+        g_config.display_brightness_pct = _cfg.display_brightness_pct;
+    }, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(_bright_slider, [](lv_event_t *e) {
+        (void)e;
+        storage_save_config(_cfg);
+        g_config.display_brightness_pct = _cfg.display_brightness_pct;
+    }, LV_EVENT_PRESS_LOST, nullptr);
+
+    const int ey = 168;
     create_label(_content, "ERRORS", col2, ey);
     _err_count_lbl = lv_label_create(_content);
     lv_label_set_text(_err_count_lbl, "(0)");

@@ -128,6 +128,8 @@ UserConfig storage_load_config() {
     cfg.alert_emergency = doc["alrt_emg"] | cfg.alert_emergency;
     cfg.trail_style = doc["trail_sty"] | cfg.trail_style;
     cfg.display_brightness_pct = doc["disp_bright"] | cfg.display_brightness_pct;
+    if (cfg.display_brightness_pct < 10) cfg.display_brightness_pct = 10;
+    if (cfg.display_brightness_pct > 100) cfg.display_brightness_pct = 100;
     cfg.display_dim_after_min = doc["disp_dimmin"] | cfg.display_dim_after_min;
     cfg.display_blank_after_min = doc["disp_blkmin"] | cfg.display_blank_after_min;
     cfg.screensaver_enabled = doc["ss_enabled"] | cfg.screensaver_enabled;
