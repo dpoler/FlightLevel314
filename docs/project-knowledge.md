@@ -528,10 +528,22 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
 
 - **Tidy up the Pi's boot sequence**: see §6. Current pain: off-center
   bright white Pi logo on the Waveshare 1280×800 DSI before the kiosk
-  grabs DRM. Options discussed 2026-08-09 (not started): quiet/black until
-  app; custom dim fullscreen splash sized for the panel; or Plymouth/
-  `cmdline.txt`/`config.txt` tweaks (`logo.nologo`, `disable_splash`, etc.).
-  On-device OS config, not app code.
+  grabs DRM. On-device OS config, not app code.
+  **Lean (2026-08-09, Dan):** quiet fullscreen image is fine — e.g. small
+  RPi logo on black, centered for 1280×800. Open to a stock quieter theme.
+  Practical options when we do it:
+  - **Preferred simple path:** early fullscreen splash via
+    `rpi-splash-screen-support` / `configure-splash` (TGA; black margins from
+    top-left pixel; max 1920×1080) + `disable_splash=1` (no rainbow) +
+    `logo.nologo` / quiet cmdline so kernel raspberries don't sit top-left.
+  - **Stock quieter Plymouth (if Plymouth stays on):** install
+    `plymouth-themes` and try **`spinner`** (dark bg + small spinner — least
+    loud). Avoid stock **`pix`** ("Welcome to…" big white raspberry — what's
+    likely offending now). `fade-in` / `spinfinity` still logo-heavy.
+  - **Clone `pix`:** swap `splash.png` for a dim 1280×800 black+logo PNG
+    (don't edit stock `pix` in place — updates overwrite; clone theme).
+  - Still need to mind the getty/login flash until the kiosk owns DRM
+    (console→tty3 / delay / earlier service) — separate from the logo itself.
 
 - **Device provisioning — get API keys / tokens onto the Pi**: remember to
   sort out the story. Today: hand-edit
