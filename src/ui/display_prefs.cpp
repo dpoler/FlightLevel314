@@ -73,7 +73,7 @@ int map_basemap_style() { return g_config.map_basemap_style; }
 const char *map_basemap_style_name() {
     switch (g_config.map_basemap_style) {
     case MAP_BASEMAP_STYLE_DARK_NOLABELS:  return "Dark (no labels)";
-    case MAP_BASEMAP_STYLE_SECTIONAL:      return "VFR Sectional";
+    case MAP_BASEMAP_STYLE_SECTIONAL:      return "VFR Sectional (US)";
     case MAP_BASEMAP_STYLE_LIGHT:          return "Light";
     case MAP_BASEMAP_STYLE_LIGHT_NOLABELS: return "Light (no labels)";
     case MAP_BASEMAP_STYLE_TOPO:           return "Topo";
