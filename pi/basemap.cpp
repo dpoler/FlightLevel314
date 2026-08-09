@@ -83,6 +83,8 @@ uint32_t g_req_gen = 0;
 // UI progress (network/build only — cache hits stay silent).
 bool g_prog_visible = false;
 int g_prog_pct = 0; // 0..100
+// Sectional (or other) style selected outside coverage — no fetch, paper bg.
+bool g_unavailable = false;
 
 void progress_set(uint32_t gen, bool visible, int pct) {
     if (pct < 0) pct = 0;
@@ -108,6 +110,8 @@ bool slot_matches(const BasemapSlot &s, float lat, float lon, float radius_nm,
            fabsf(s.radius_nm - radius_nm) < 0.5f &&
            s.w == w && s.h == h && s.geo_cy == cy && s.bullseye_r == br;
 }
+
+bool basemap_sectional_covered(float lat, float lon); // defined with public API
 
 const char *style_cache_tag(int style) {
     switch (style) {
@@ -871,7 +875,31 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
 
     const int style = map_basemap_style();
 
+    // FAA VFR sectionals only cover US chart areas — don't fetch empty tiles
+    // (gray paper after a pointless progress bar) for EGLL / etc.
+    if (style == MAP_BASEMAP_STYLE_SECTIONAL && !basemap_sectional_covered(lat, lon)) {
+        std::lock_guard<std::mutex> lock(g_mu);
+        g_req_lat = lat;
+        g_req_lon = lon;
+        g_req_radius = radius_nm;
+        g_req_w = canvas_w;
+        g_req_h = canvas_h;
+        g_req_cy = geo_center_y;
+        g_req_br = bullseye_r_px;
+        g_req_style = style;
+        g_req_gen++;
+        g_front.valid = false;
+        g_inbox_ready = false;
+        g_unavailable = true;
+        g_prog_visible = false;
+        g_prog_pct = 0;
+        platform_log("Basemap: VFR sectional not available at %.2f,%.2f — skip fetch\n",
+                     lat, lon);
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(g_mu);
+    g_unavailable = false;
     const bool front_ok = slot_matches(g_front, lat, lon, radius_nm,
                                        canvas_w, canvas_h, geo_center_y, bullseye_r_px,
                                        style);
@@ -932,6 +960,34 @@ bool basemap_poll_swap(void) {
 
 void basemap_draw(lv_layer_t *layer) {
     if (!map_basemap_shown()) return;
+
+    if (g_unavailable && g_req_style == MAP_BASEMAP_STYLE_SECTIONAL) {
+        // Static chart-paper fill + corner note (no tile fetch).
+        uint8_t pr, pg, pb;
+        style_paper_rgb(MAP_BASEMAP_STYLE_SECTIONAL, pr, pg, pb);
+        lv_draw_rect_dsc_t rd;
+        lv_draw_rect_dsc_init(&rd);
+        rd.bg_color = lv_color_make(pr, pg, pb);
+        rd.bg_opa = LV_OPA_COVER;
+        rd.border_width = 0;
+        lv_area_t fill = {0, 0, (lv_coord_t)(g_req_w - 1), (lv_coord_t)(g_req_h - 1)};
+        lv_draw_rect(layer, &rd, &fill);
+
+        lv_draw_label_dsc_t ld;
+        lv_draw_label_dsc_init(&ld);
+        ld.color = lv_color_hex(0x333322);
+        ld.font = &lv_font_montserrat_14;
+        ld.align = LV_TEXT_ALIGN_LEFT;
+        ld.opa = LV_OPA_COVER;
+        ld.text = "VFR sectional basemap not available outside of US.\n"
+                  "Select another basemap for this location.";
+        // Bottom-left of the map canvas (above legend).
+        lv_area_t ta = {12, (lv_coord_t)(g_req_h - 72),
+                        (lv_coord_t)(g_req_w - 12), (lv_coord_t)(g_req_h - 16)};
+        lv_draw_label(layer, &ld, &ta);
+        return;
+    }
+
     if (!slot_matches(g_front, g_req_lat, g_req_lon, g_req_radius,
                       g_req_w, g_req_h, g_req_cy, g_req_br, g_req_style)) {
         return;
@@ -952,7 +1008,24 @@ void basemap_draw(lv_layer_t *layer) {
     lv_draw_image(layer, &img, &a);
 }
 
+bool basemap_sectional_covered(float lat, float lon) {
+    // Rough FAA VFR sectional coverage (CONUS + AK + HI + PR/VI).
+    if (lat >= 24.0f && lat <= 50.0f && lon >= -125.0f && lon <= -66.0f) return true;
+    if (lat >= 51.0f && lat <= 72.0f && lon >= -180.0f && lon <= -129.0f) return true;
+    if (lat >= 18.0f && lat <= 23.0f && lon >= -161.0f && lon <= -154.0f) return true;
+    if (lat >= 17.5f && lat <= 18.6f && lon >= -68.0f && lon <= -64.5f) return true;
+    return false;
+}
+
+const char *basemap_unavailable_message(void) {
+    if (!g_unavailable) return nullptr;
+    if (g_req_style == MAP_BASEMAP_STYLE_SECTIONAL)
+        return "VFR sectional not available outside US";
+    return nullptr;
+}
+
 bool basemap_ready(void) {
+    if (g_unavailable) return true; // "ready" as in not loading — paper placeholder shown
     return slot_matches(g_front, g_req_lat, g_req_lon, g_req_radius,
                         g_req_w, g_req_h, g_req_cy, g_req_br, g_req_style);
 }
@@ -973,6 +1046,7 @@ int basemap_cache_clear(void) {
         g_req_gen++; // supersede any in-flight worker publish
         g_prog_visible = false;
         g_prog_pct = 0;
+        g_unavailable = false;
     }
 
     std::string dir = cache_dir();
