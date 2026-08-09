@@ -21,6 +21,7 @@
 #include "../src/ui/alerts.h"
 #include "../src/ui/location_picker.h"
 #include "basemap.h"
+#include "backlight.h"
 #include <chrono>
 #include <cstring>
 #include <thread>
@@ -75,6 +76,8 @@ int main() {
     // proves the JSON-file config storage actually works, not just links.
     g_config = storage_load_config();
     storage_save_config(g_config);
+    // DSI panel backlight (sysfs). No-op on SDL / HDMI-only.
+    backlight_set_percent(g_config.display_brightness_pct);
     locations_init();
 
     // Bind the list so location-switch clears can empty it (see
@@ -135,8 +138,10 @@ int main() {
     settings_set_change_callback([](const UserConfig *cfg) {
         bool presets_changed = (memcmp(cfg->radius_presets, g_config.radius_presets,
                                        sizeof(g_config.radius_presets)) != 0);
+        const int bright = cfg->display_brightness_pct;
         g_config = *cfg;
         range_set_levels(cfg->radius_presets, 4);
+        backlight_set_percent(bright);
         if (presets_changed) {
             range_set_default(cfg->radius_nm);
             g_config.last_range_idx = range_get_index();

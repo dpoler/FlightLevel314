@@ -78,6 +78,17 @@ cmake --build build -j4
 Add your user to the `video`, `render`, and `input` groups if DRM or touch
 fail to open.
 
+DSI panel brightness (Settings → DEVICE) writes
+`/sys/class/backlight/*/brightness`. If the slider does nothing, add a udev
+rule so the service user can write it:
+
+```bash
+echo 'SUBSYSTEM=="backlight", RUN+="/bin/chmod 666 /sys/class/backlight/%k/brightness /sys/class/backlight/%k/bl_power"' \
+  | sudo tee /etc/udev/rules.d/99-backlight.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger -s backlight
+```
+
 ### Install as a service
 
 ```bash
