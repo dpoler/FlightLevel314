@@ -8,9 +8,9 @@
 
 
 Generated 2026-08-07 from accumulated cross-session memory; FlightLevel314
-fork notes added 2026-08-08; handoff refreshed **2026-08-09**. Point-in-time
-snapshot — verify against current code before treating any specific claim as
-still true.
+fork notes added 2026-08-08; handoff refreshed **2026-08-09**; backlog status
+refreshed **2026-08-09** (Dan). Point-in-time snapshot — verify against
+current code before treating any specific claim as still true.
 
 Current product: **FlightLevel314** (Pi). Historical ESP32 branch: `dpoler/adsb`.
 
@@ -61,11 +61,11 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Detail-card photo credit appears before the photo loads
-- Empty Map for a couple of refreshes after location switch (EGLL→KDEN)
 - Basemap / sectional outside US; `tile AABB too large` at UK latitudes
-- Small airports in static DB (~+2.1 MB)
 - Pi online app updates (check / notify / pull / restart)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
+
+Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
 
 ### Dan / workflow
 - Name: Dan. Prefers working directly in code; builds himself unless asked.
@@ -419,14 +419,13 @@ detail card. See backlog §7 for full scope.
 
 ---
 
-## 7. Full backlog (as of 2026-08-08)
+## 7. Full backlog (as of 2026-08-09)
 
-This preserves essentially the full detail of every backlog entry — done items
-are kept for their debugging trail/rationale (useful history), open items are
-what's actually outstanding. Grouped roughly by theme; original memory file is
-mostly chronological.
+This preserves detail for open / deferred items and a short trail for recently
+closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
+**Do not start open work unless explicitly asked.**
 
-### 7.1 Genuinely open / not started
+### 7.1 Open
 
 - ~~**Write a proper FlightLevel314 README.md (with original-author credit)**~~
   **done 2026-08-09** — see §0 handoff. Gallery may still need fresher
@@ -437,14 +436,6 @@ mostly chronological.
   finished loading (or when the image path fails / is still decoding). Credit
   should stay hidden until pixels are actually shown, or sit only under the
   photo slot. **Do not start until explicitly asked** — reported 2026-08-08.
-
-- **Location switch: successful fetch but empty Map for a couple of refreshes**:
-  switching active location from Heathrow (EGLL) to Denver, `adsb.lol`
-  appeared to fetch successfully but no aircraft rendered for a couple of
-  refresh cycles afterward. Possible stale list / range filter / projection
-  center race, or a brief empty payload accepted as OK before the new
-  location's traffic arrives. Repro and root-cause not done. **Do not start
-  until explicitly asked** — reported 2026-08-08.
 
 - **Basemap / sectional coverage outside the US (esp. UK)**: FAA VFR
   sectional style is US-charting only — expected empty/useless for UK and
@@ -458,14 +449,6 @@ mostly chronological.
   hemispheres). **Do not start until explicitly asked** — reported
   2026-08-08.
 
-- **Include small airports in the static on-device airport DB**: today's
-  `tools/generate_airports_db.py` keeps only OurAirports `large_airport` +
-  `medium_airport` (~5k entries, ~0.4 MB const with `name[64]`). Adding
-  `small_airport` (ident ≤4, same filter) is ~+25.6k rows → ~30.6k total and
-  ~2.5 MB aligned const flash (~+2.1 MB). Header text scales similarly
-  (~0.35 → ~2.1 MB). Fine on Pi; painful if the same table stays shared with
-  ESP32. **Do not start until explicitly asked** — sized 2026-08-08.
-
 - ~~**Fork the Pi port into its own project/repo**~~: **Done 2026-08-08** as
   **FlightLevel314** — https://github.com/dpoler/FlightLevel314 (`master`
   seeded from `cursor/flightlevel314-7c95`). jc1060 / PlatformIO removed;
@@ -473,26 +456,14 @@ mostly chronological.
   `#if defined(ARDUINO)` from `src/`.
 
 - **Pi online app updates (check / notify / pull / restart)**: periodically
-  check whether a newer `adsb_pi` (or package) is available, surface a
-  non-intrusive "update available" notice in the UI, download it, and restart
-  into the new build. Not designed — open questions include update source
-  (GitHub Releases vs self-hosted URL vs apt), signature/verification,
+  check whether a newer `flightlevel314` binary (or package) is available,
+  surface a non-intrusive "update available" notice in the UI, download it,
+  and restart into the new build. Not designed — open questions include update
+  source (GitHub Releases vs self-hosted URL vs apt), signature/verification,
   whether the kiosk systemd unit should own the swap, and how aggressive the
   check cadence should be on a wall-mounted always-on display. Related to the
-  Settings "Device" column / "Check for Update" idea below, but that entry was
-  framed around ESP32 OTA; this is the Pi-native equivalent. **Do not start
-  until explicitly asked** — parked 2026-08-08 so it isn't forgotten.
-
-- **planespotters.net photo fetch — dead on jc1060, revive for Pi**: PSRAM
-  cache-coherency erratum on jc1060 corrupts image data (a genuine hardware
-  blocker), so this was originally slated for removal — **reversed 2026-07-31**,
-  user wants real aircraft photos on the **Pi port** specifically, since Pi has
-  no such constraint. Not started: needs an image decoder/HTTP-image-fetch path
-  (`LV_USE_LODEPNG` is already enabled in both `lv_conf.h`s but nothing fetches
-  +decodes a remote JPEG/PNG into an `lv_img` buffer yet), and `detail_card.cpp`
-  (shared code) needs an actual image widget, gated so jc1060 keeps its current
-  text-only credit line. Worth checking `photo_url`'s actual image
-  format/size from a live response before designing the decode path.
+  Settings Device / "Check for Update" UI (Device column itself is done).
+  **Do not start until explicitly asked** — parked 2026-08-08.
 
 - **Ground traffic (GND) should default to hidden, not shown**: flip
   `storage.cpp`'s `cfg.view_hide_ground[i]` default false→true. Check whether
@@ -506,35 +477,6 @@ mostly chronological.
   Needs a details/edit view (on-device + CLI script), with airport-type
   locations (ICAO-sourced) possibly needing different edit semantics than plain
   waypoints (not designed).
-
-- **WiFi-only on-screen/script messaging needs to account for Ethernet**: the
-  "No WiFi configured" overlay is gated to suppress correctly when Ethernet is
-  already on, but a factory-reset device defaults to WiFi mode, so it shows a
-  WiFi-only message even for someone planning to use Ethernet. The setup
-  scripts have no "I'm using Ethernet" branch and no serial command to set
-  `use_ethernet` at all. Needs an `ETHERNET=` serial command + wizard branch +
-  overlay wording covering both options.
-
-- **Generalize "Home" into the saved-locations system (remove the Home/
-  saved-airport split)**: user wants Home eliminated as an architecturally
-  distinct concept — one unified list (suggested cap ~8, not final) where each
-  slot is either an airport or a plain lat/lon waypoint. Needs a discriminator
-  field on `Location` (can't reuse `runway_count==0`, that already means
-  "fetch pending" for airports). Every current Home special-case needs
-  collapsing into the general path. NVS migration undecided (fold into slot 0,
-  or drop and let user re-add). UI needs a second add-mode (manual lat/lon
-  entry, replacing the Settings home-lat/lon fields).
-  *(Note: memory says "Done, per user confirmation 2026-07-26" in one place but
-  the detailed body describes it as not-yet-implemented design work — treat as
-  unclear/needs a fresh check against current code before assuming either
-  status.)*
-
-- **Departure/destination via airframes.io ACARS**: deferred. Static
-  callsign→route tables (adsbdb, adsb.lol) are unreliable/stale/non-directional.
-  Better source: airframes.io OOOI events (actual departure/destination
-  telemetry from the aircraft), but free tier requires running an ACARS feeder
-  (acarsdec/dumpvdl2) on the same SDR hardware. Commercial-jets-only coverage.
-  Revisit if/when an ACARS feeder exists.
 
 - **Follow Mode — track a single flight as it travels**: select an aircraft and
   have Map/Radar re-center on it continuously. Main open design question: the
@@ -568,33 +510,10 @@ mostly chronological.
   real time-of-day, only `millis()`-based elapsed time). Not decided — deferred
   for a later conversation.
 
-- **Alert beeper**: decided against — no buzzer on the jc1060 board, would need
-  external piezo/speaker + GPIO + `ledc` PWM. If hardware is ever added: short
-  beep on watchlist, escalating tone on military, urgent pattern on emergency.
-
 - **Redesign `configure_device.sh`/`.ps1`'s UX**: functionality confirmed
   working end-to-end; presentation is "really ugly" per the user. No specific
   redesign direction given yet — ask for specifics (menu layout? colored
   output? progress indication?) before implementing.
-
-- **Rationalize View/Filter UI — FILTER menu next to VIEW**: **built, then
-  fully reverted the same day (2026-07-28)**. User's reaction after seeing it
-  working: the always-visible button *column* gave a "real radar display,
-  instrument panel" feel that a collapsed "FILTER: X + Y" text line lost
-  entirely, even though it was more compact/discreet as literally requested.
-  **Lesson for next attempt**: "more discreet" and "keep the instrument-panel
-  look" are in tension and weren't surfaced as a tradeoff before building —
-  ask up front next time. Three alternatives were offered (always-visible
-  non-interactive dot strip, active-only colored chips, full revert); user
-  chose full revert, meaning the visual presence of the button column is
-  apparently a feature in itself, not just clutter to minimize.
-
-- **Add a "Device" column to Settings; move VERSION off Stats**: Stats' NETWORK
-  column has a VERSION row as a stopgap, but Stats is about live telemetry, not
-  device identity. Plan: a second Settings column (single-column since commit
-  2c09307) for VERSION + "Check for Update" button + potentially AIRPORTDB
-  status (currently also on Stats). Not designed — exact contents/whether this
-  revives the two-column layout is open.
 
 - **No way to set the airportdb.io token on a Pi device**: see §6.
 
@@ -610,36 +529,11 @@ mostly chronological.
   voyager_nolabels / OpenTopoMap / FAA VFR sectional — with per-style
   disk-cache TTLs and a Settings "Clear map cache" button; see PR #4.)
 
-- **Map legend backdrop vs basemap (Pi)**: before the basemap, the opaque
-  legend panel (`draw_legend_backdrop` in `map_view.cpp`) was invisible
-  against the solid `#0a0a1a` canvas. With tiles under Map it reads as a
-  solid bar over geography. Prefer making that backdrop transparent (or
-  much lower opacity) so coastlines show through; if that hurts label
-  readability, bump Map bullseye center up a little instead (`MAP_BULLSEYE_CY`
-  on the 800px Pi path) so the rings clear the legend. Noted 2026-08-07.
-
 - **Basemap vs runway/aircraft alignment (Pi)**: ~~Mercator tiles blitted
   1:1 vs equirectangular `MapProjection`~~ — addressed 2026-08-07: basemap
   build now warps tiles into the MapProjection frame (`eq1` cache key in
   `pi/basemap.cpp`). Residual mismatch can still come from OSM/FAA chart
   artwork vs airportdb runway endpoint definitions (different datasets).
-
-- **Radar sweep arm — make it smoother/more "radar-like"**: wants improved
-  motion, implies something like a fading trail behind the sweep line. Not
-  scoped yet — current implementation not re-examined against this request.
-  (Note: separately, real Pi profiling — see §6 — found each draw call costs
-  ~5ms flat on the Pi's DRM backend; any redesign here needs to budget draw
-  calls tightly on that platform.)
-
-- **Origin/destination display — user has a new approach, revisit**: feature
-  was fully removed (§8, route data) due to unreliable VRS-sourced data. User
-  says they've since "figured out a way to deal with" the accuracy problem —
-  no details given yet. Treat the original critique as still valid until the
-  new approach is explained; don't assume it's solved.
-
-- **Flight following / tracking mode**: new idea, name only, no detail —
-  possibly the same as "Follow Mode" above, possibly distinct. Needs scoping
-  with the user before design starts.
 
 - **Tap-to-open ATIS overlay on the INFO/Stats screen**: follow-on to the
   already-shipped METAR readout. Scoped to US airports first. Known complexity:
@@ -660,13 +554,46 @@ mostly chronological.
   fixable here) and the full WiFi/platform-version-pin saga (host/C6 matching
   requirement, the confirmed-stable 55.03.37/2.11.6 pairing vs. confirmed-bad
   55.03.39/2.12.8, `dpoler/c6_updater`, the fast-fail/flat-delay WiFi fixes,
-  and that this is a two-repo story).
+  and that this is a two-repo story). Note: a proper FlightLevel314 README
+  already landed 2026-08-09 — this entry is the remaining ESP32/history/
+  known-issues depth, not a from-scratch rewrite.
 
-- **Configurable poll/refresh interval in settings**: *(deprioritized
-  2026-07-21, not current priority)* fetch interval is hardcoded 20000ms in
-  `fetcher.cpp`. Would need a `poll_interval_s` field (default 20s, range
-  5-120s), NVS persistence, a settings slider, and the fetcher loop + stats
-  view timer reading from it.
+### 7.1b Deferred (Dan, 2026-08-09 — do not start)
+
+- **Include small airports in the static on-device airport DB**: today's
+  `tools/generate_airports_db.py` keeps only OurAirports `large_airport` +
+  `medium_airport` (~5k entries, ~0.4 MB const with `name[64]`). Adding
+  `small_airport` (ident ≤4, same filter) is ~+25.6k rows → ~30.6k total and
+  ~2.5 MB aligned const (~+2.1 MB). Fine on Pi; painful if the same table
+  stays shared with ESP32. Sized 2026-08-08; **deferred**.
+
+- **Departure/destination via airframes.io ACARS**: Static callsign→route
+  tables (adsbdb, adsb.lol) are unreliable/stale/non-directional. Better
+  source: airframes.io OOOI events, but free tier needs an ACARS feeder
+  (acarsdec/dumpvdl2) on the same SDR hardware. Commercial-jets-only.
+  **Deferred** until/unless an ACARS feeder exists. (AeroDataBox / other O/D
+  path on Pi is separate — see §8.)
+
+### 7.1c Closed 2026-08-09 (Dan confirmation)
+
+- ~~**Location switch: empty Map for a couple of refreshes (EGLL→KDEN)**~~
+  **done** — list clear + recenter on Pi location switch (PR #3 era and
+  follow-ups).
+- ~~**planespotters.net photo fetch on Pi**~~ **done** — Pi detail-card
+  image path (jc1060 remains text-only / PSRAM-limited).
+- ~~**Ethernet-aware setup messaging / `ETHERNET=`**~~ **done**.
+- ~~**Generalize Home into saved locations**~~ **done** — Home/saved-airport
+  split removed; unified locations list (see §11).
+- ~~**Settings "Device" column; move VERSION off Stats**~~ **done**.
+- ~~**Map legend backdrop vs basemap**~~ **done**.
+- ~~**Radar sweep arm smoother / fade trail**~~ **done**.
+- ~~**Origin/destination display — revisit with new approach**~~ **done** —
+  see §8 (no longer an open "revisit" item).
+
+Removed from backlog entirely (2026-08-09): alert beeper (no hardware);
+FILTER-menu-next-to-VIEW experiment (built then reverted); "flight
+following / tracking" as a separate item (duplicate of Follow Mode);
+configurable poll/refresh interval (deprioritized, dropped).
 
 ### 7.2 Notable "done" items worth knowing about (bugs, root causes, decisions)
 
@@ -766,23 +693,15 @@ without new evidence.)*
 
 ---
 
-## 8. Route/origin-destination data (removed feature)
+## 8. Route/origin-destination data
 
-**Status: removed entirely from the app** (`Aircraft.origin`/`.dest`, the
-background enrichment task, the Arrivals ROUTE column, Radar's route display,
-detail card route labels). Root cause: confirmed `adsbdb.com` (the API this
-app used) sources flight-route data from the exact same VRS Standing Data
-Maintenance source as adsb.lol itself — same crowd-sourced, callsign-keyed, no
-date-range/versioning staleness problem, not a genuinely different or more
-reliable source. Routes are keyed on callsign only (one static row per
-callsign, e.g. `UAL123` → `DEN-JFK`), and flight numbers get reassigned to
-different routes over time with no automatic correction — a human has to notice
-and submit a fix to the SDM site. If this UI is ever brought back, the
-underlying accuracy problem hasn't changed and needs to be weighed again.
+**History:** VRS/adsbdb-sourced route tables were removed from the app
+(`Aircraft.origin`/`.dest`, Arrivals ROUTE column, etc.) because callsign-keyed
+crowd data was unreliable (same SDM staleness as adsb.lol).
 
-**2026-08-06 update**: user says they've since found "a way to deal with"
-this — flagged in the backlog as a real open item to revisit, no details on
-the new approach given yet.
+**2026-08-09 (Dan):** origin/destination is **done** again via the current
+approach (AeroDataBox / enrichment on Pi — not the old VRS tables). airframes.io
+ACARS remains a separate **deferred** idea (§7.1b) if a feeder ever exists.
 
 ---
 
@@ -826,17 +745,17 @@ separate, harder problem — see §4/§5).
   say flashing during this phase is expected/harmless. Explicitly not chasing
   a fully flash-free update — visibility judged more valuable once the *bulk*
   of the flashing (other views' redraw traffic) was already eliminated.
-- Open: the fuller "Device column" Settings reorg (see backlog §7.1); the
-  `.ps1` Windows OTA function was never syntax-checked (no pwsh in the dev
-  environment).
+- Open: Pi-native online app updates (§7.1); the `.ps1` Windows OTA function
+  was never syntax-checked (no pwsh in the dev environment). Settings Device
+  column / VERSION move off Stats is **done** (Dan, 2026-08-09).
 
 ---
 
 ## 11. Location-picker architecture
 
-Moved from "APRT is a 5th swipeable tile" to a location-picker model: Home plus
-up to 15 saved airports/waypoints (`src/data/locations.h/.cpp`), selectable via
-a picker button. All views (Map/Radar/Arrivals/Stats) read from whichever
+Moved from "APRT is a 5th swipeable tile" to a location-picker model: a unified
+list of airports/waypoints (`src/data/locations.h/.cpp`), selectable via a
+picker button. All views (Map/Radar/Arrivals/Stats) read from whichever
 location is currently active. Runway diagrams draw inline in Map view instead
 of a separate screen; the old `aprt_view.cpp`/`VIEW_APRT` was deleted.
 
@@ -846,10 +765,8 @@ every numeric read uses `.as<float>()`/`.as<int>()`, not `| default`. Per-runway
 `closed` field (also string-typed) must be checked — some airports (KORD) have
 decommissioned runways that still carry valid coordinates.
 
-A planned overhaul (see backlog §7.1's "Generalize Home" entry) would remove
-the Home/saved-airport architectural split entirely — treat the "Home is
-special-cased" description here as accurate for *current* code, not fixed
-design, and double check current status before relying on it.
+**2026-08-09 (Dan):** generalizing Home into the saved-locations system is
+**done** — do not treat Home as an architecturally distinct special case.
 
 ---
 
