@@ -446,7 +446,8 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
 
 - ~~**Basemap loads while still cycling styles; VIEW menu too long**~~
   **done 2026-08-09** — basemap style is a dropdown (one commit per pick);
-  VIEW keeps prior section spacing (`PANEL_H_WITH_BASEMAP` 780).
+  Pi Map VIEW is two columns (~604×470: left Trails/Tags/Locations/Alerts,
+  right Basemap/Weather). Radar stays single-column.
 
 - **LIST shows ground aircraft when GND is filtered off** until you toggle
   the filter off and back on. Suspected stale apply on first paint / location
