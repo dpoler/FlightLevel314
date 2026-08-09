@@ -28,6 +28,10 @@ static void tileview_changed_cb(lv_event_t *e) {
             status_bar_set_active_dot(i);
             // Force immediate redraw of the newly active view
             lv_obj_invalidate(tiles[i]);
+            // LIST rebuilds from aircraft data on a 2s timer — force a pass
+            // when landing here via native tileview scroll (nav uses
+            // views_switch_to → arrivals_view_on_show already).
+            if (i == VIEW_ARRIVALS) arrivals_view_on_show();
             break;
         }
     }

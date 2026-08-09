@@ -61,14 +61,11 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
-- LIST shows GND aircraft when GND filter is off until the filter is toggled
-- Rework LIST screen for Pi real estate (still ESP32-era layout)
 
 Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
 
-Recently closed (2026-08-09): Settings 3-col (no scroll); VFR sectional outside
-US → paper + message (no fetch); VIEW basemap style dropdown + compact menu;
-photo credit timing; UK tile AABB; Pi OTA.
+Recently closed (2026-08-09): LIST GND refresh + Pi column layout; Settings
+Cancel/Save; brightness slider; VIEW two-col; VFR outside-US note; OTA.
 
 ### Dan / workflow
 - Name: Dan. Prefers working directly in code; builds himself unless asked.
@@ -449,14 +446,14 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   Pi Map VIEW is two columns (~604×470: left Trails/Tags/Locations/Alerts,
   right Basemap/Weather). Radar stays single-column.
 
-- **LIST shows ground aircraft when GND is filtered off** until you toggle
-  the filter off and back on. Suspected stale apply on first paint / location
-  change — need to force filter re-eval when LIST becomes active or when
-  `view_hide_ground` is loaded from config.
+- ~~**LIST shows ground aircraft when GND is filtered off** until you toggle
+  the filter off and back on~~ **done 2026-08-09** — `gnd_click_cb` now
+  calls `update_board` immediately (matched FILT taps); tileview activate
+  also forces `arrivals_view_on_show`.
 
-- **Rework LIST screen for Pi real estate** — still the dense ESP32-era layout;
-  unused horizontal/vertical space on 1280×800. Columns, row height, detail
-  density TBD when Dan asks.
+- ~~**Rework LIST screen for Pi real estate**~~ **done 2026-08-09** — on
+  1280×800: wider column layout left of the filter stack, taller rows/title,
+  `montserrat_28` title. jc1060 layout unchanged.
 
 - **Optional: fresher README gallery LIST/INFO shots** — still open.
 
