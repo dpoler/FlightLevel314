@@ -548,8 +548,8 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
     lv_obj_set_pos(title, 4, 0);
 
-    // Scrollable body above a fixed action strip. Content height is computed
-    // so it ends strictly above the action strip (no overlap with Clear/Reset).
+    // Non-scrolling body above a fixed action strip. Content height ends
+    // strictly above the action strip (no overlap with Clear/Reset).
     const int content_h = PANEL_H - 32 /*pad*/ - TITLE_H - ACTION_H - 8 /*gap*/;
     _content = lv_obj_create(_panel);
     lv_obj_set_size(_content, PANEL_W - 32, content_h);
@@ -558,24 +558,23 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_border_width(_content, 0, 0);
     lv_obj_set_style_pad_all(_content, 4, 0);
     lv_obj_set_style_pad_bottom(_content, 16, 0);
-    lv_obj_add_flag(_content, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(_content, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(_content, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_clear_flag(_content, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_clip_corner(_content, true, 0);
 
     _cfg = storage_load_config();
 
-    const int left = 0;
-    const int right = COL_W + COL_GAP;
+    const int col0 = 0;
+    const int col1 = COL_W + COL_GAP;
+    const int col2 = 2 * (COL_W + COL_GAP);
 
-    // --- Left column: ranges + metric + status ---
-    create_label(_content, "Range Presets (nm, 1-500)", left, 0);
+    // --- Column 0 (left): ranges + metric + traffic + status ---
+    create_label(_content, "Range Presets (nm, 1-500)", col0, 0);
     for (int i = 0; i < 4; i++) {
         char rbuf[8];
         snprintf(rbuf, sizeof(rbuf), "%d", _cfg.radius_presets[i]);
         _ta_radius[i] = lv_textarea_create(_content);
         lv_obj_set_size(_ta_radius[i], 70, 36);
-        lv_obj_set_pos(_ta_radius[i], left + i * 78, 22);
+        lv_obj_set_pos(_ta_radius[i], col0 + i * 78, 22);
         lv_textarea_set_one_line(_ta_radius[i], true);
         lv_textarea_set_text(_ta_radius[i], rbuf);
         lv_obj_set_style_bg_color(_ta_radius[i], lv_color_hex(0x1a1a3a), 0);
@@ -587,15 +586,15 @@ void settings_init(lv_obj_t *parent) {
         lv_obj_add_event_cb(_ta_radius[i], ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
     }
 
-    create_label(_content, "Metric Units", left, 72);
-    _sw_metric = make_enable_switch(_content, left + 120, 70);
+    create_label(_content, "Metric Units", col0, 72);
+    _sw_metric = make_enable_switch(_content, col0 + 120, 70);
     if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
 
-    create_label(_content, "TRAFFIC SOURCE", left, 108);
+    create_label(_content, "TRAFFIC SOURCE", col0, 108);
     _dd_traffic_prov = lv_dropdown_create(_content);
     lv_dropdown_set_options(_dd_traffic_prov, TRAFFIC_PROVIDER_OPTS);
     lv_obj_set_size(_dd_traffic_prov, COL_W - 8, 36);
-    lv_obj_set_pos(_dd_traffic_prov, left, 128);
+    lv_obj_set_pos(_dd_traffic_prov, col0, 128);
     lv_obj_set_style_bg_color(_dd_traffic_prov, lv_color_hex(0x1a1a3a), 0);
     lv_obj_set_style_text_color(_dd_traffic_prov, lv_color_white(), 0);
     lv_obj_set_style_text_font(_dd_traffic_prov, &lv_font_montserrat_14, 0);
@@ -605,26 +604,78 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_add_event_cb(_dd_traffic_prov, on_traffic_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
 
     int sy = 180;
-    create_label(_content, "STATUS", left, sy);
-    _fetch_val = create_inline_row(_content, "FETCHES", left, sy + 22, 90);
-    _latency_val = create_inline_row(_content, "LATENCY", left, sy + 42, 90);
-    _uptime_val = create_inline_row(_content, "UPTIME", left, sy + 62, 90);
+    create_label(_content, "STATUS", col0, sy);
+    _fetch_val = create_inline_row(_content, "FETCHES", col0, sy + 22, 90);
+    _latency_val = create_inline_row(_content, "LATENCY", col0, sy + 42, 90);
+    _uptime_val = create_inline_row(_content, "UPTIME", col0, sy + 62, 90);
 
-    int ey = sy + 96;
-    create_label(_content, "DEVICE", left, ey);
-    _ota_ver_val = create_inline_row(_content, "VERSION", left, ey + 22, 90);
+    // --- Column 1 (middle): API keys ---
+    create_label(_content, "API KEYS", col1, 0);
+    lv_obj_t *hint = lv_label_create(_content);
+    lv_label_set_text(hint, "Edit apt_tok / adbox_key in config.json");
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(hint, col1, 20);
+    lv_obj_set_width(hint, COL_W - 8);
+    lv_obj_clear_flag(hint, LV_OBJ_FLAG_CLICKABLE);
+
+    create_label(_content, "AIRPORTDB.IO", col1, 48);
+    _apt_key_val = create_inline_row(_content, "KEY", col1, 70, 70);
+    _apt_valid_val = create_inline_row(_content, "VALID", col1, 90, 70);
+    create_label(_content, "ENABLE", col1, 112);
+    _sw_apt_en = make_enable_switch(_content, col1 + 80, 110);
+
+    create_label(_content, "AERODATABOX", col1, 156);
+    create_label(_content, "PROVIDER", col1, 178);
+    _dd_adbox_prov = lv_dropdown_create(_content);
+    lv_dropdown_set_options(_dd_adbox_prov, ADBOX_PROVIDER_OPTS);
+    lv_obj_set_size(_dd_adbox_prov, COL_W - 8, 36);
+    lv_obj_set_pos(_dd_adbox_prov, col1, 198);
+    lv_obj_set_style_bg_color(_dd_adbox_prov, lv_color_hex(0x1a1a3a), 0);
+    lv_obj_set_style_text_color(_dd_adbox_prov, lv_color_white(), 0);
+    lv_obj_set_style_text_font(_dd_adbox_prov, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_border_color(_dd_adbox_prov, lv_color_hex(0x333366), 0);
+    lv_obj_set_style_border_width(_dd_adbox_prov, 1, 0);
+    lv_dropdown_set_selected(_dd_adbox_prov, (uint16_t)(_cfg.aerodatabox_provider >= 0 && _cfg.aerodatabox_provider <= 2
+                                                         ? _cfg.aerodatabox_provider : 0));
+    lv_obj_add_event_cb(_dd_adbox_prov, on_adbox_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    _adbox_key_val = create_inline_row(_content, "KEY", col1, 246, 70);
+    _adbox_valid_val = create_inline_row(_content, "VALID", col1, 266, 70);
+    _adbox_usage_val = create_inline_row(_content, "USAGE", col1, 286, 70);
+    create_label(_content, "ENABLE", col1, 308);
+    _sw_adbox_en = make_enable_switch(_content, col1 + 80, 306);
+
+    lv_obj_t *quota_note = lv_label_create(_content);
+    // ADB marketplace units reset on the subscription billing cycle
+    // (RapidAPI/API.Market), not a calendar month - see aerodatabox.com/faq.
+    // Our USAGE counter is a local UTC calendar-month tally only.
+    lv_label_set_text(quota_note,
+        "ADB quota resets on billing cycle\n"
+        "(marketplace). USAGE = billed HTTP\n"
+        "lookups this UTC month (not key checks);\n"
+        "adbox_lim soft-cap; 429 auto-disables.");
+    lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(quota_note, col1, 340);
+    lv_obj_set_width(quota_note, COL_W - 8);
+    lv_obj_clear_flag(quota_note, LV_OBJ_FLAG_CLICKABLE);
+
+    // --- Column 2 (right): DEVICE + ERRORS ---
+    create_label(_content, "DEVICE", col2, 0);
+    _ota_ver_val = create_inline_row(_content, "VERSION", col2, 22, 90);
     lv_label_set_text(_ota_ver_val, FIRMWARE_VERSION_STR);
     _ota_status_lbl = lv_label_create(_content);
     lv_label_set_text(_ota_status_lbl, "Tap to check");
     lv_obj_set_style_text_font(_ota_status_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_ota_status_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_ota_status_lbl, left, ey + 44);
+    lv_obj_set_pos(_ota_status_lbl, col2, 44);
     lv_obj_set_width(_ota_status_lbl, COL_W - 8);
     lv_obj_clear_flag(_ota_status_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *ota_btn = lv_button_create(_content);
     lv_obj_set_size(ota_btn, COL_W - 8, 34);
-    lv_obj_set_pos(ota_btn, left, ey + 68);
+    lv_obj_set_pos(ota_btn, col2, 68);
     lv_obj_set_style_bg_color(ota_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(ota_btn, lv_color_hex(0x444466), 0);
     lv_obj_set_style_border_width(ota_btn, 1, 0);
@@ -637,18 +688,18 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_add_event_cb(ota_btn, ota_btn_cb, LV_EVENT_CLICKED, nullptr);
     refresh_ota_ui();
 
-    ey = ey + 118;
-    create_label(_content, "ERRORS", left, ey);
+    const int ey = 118;
+    create_label(_content, "ERRORS", col2, ey);
     _err_count_lbl = lv_label_create(_content);
     lv_label_set_text(_err_count_lbl, "(0)");
     lv_obj_set_style_text_font(_err_count_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_count_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_err_count_lbl, left + 70, ey);
+    lv_obj_set_pos(_err_count_lbl, col2 + 70, ey);
     lv_obj_clear_flag(_err_count_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *clr_btn = lv_obj_create(_content);
     lv_obj_set_size(clr_btn, 40, 22);
-    lv_obj_set_pos(clr_btn, left + 120, ey - 2);
+    lv_obj_set_pos(clr_btn, col2 + 120, ey - 2);
     lv_obj_set_style_bg_color(clr_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_bg_opa(clr_btn, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(clr_btn, lv_color_hex(0x444466), 0);
@@ -667,68 +718,15 @@ void settings_init(lv_obj_t *parent) {
     lv_label_set_text(_err_list_lbl, "(none)");
     lv_obj_set_style_text_font(_err_list_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_list_lbl, ERR_COLOR, 0);
-    lv_obj_set_pos(_err_list_lbl, left, ey + 24);
+    lv_obj_set_pos(_err_list_lbl, col2, ey + 24);
     lv_obj_set_width(_err_list_lbl, COL_W - 8);
     lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
-
-    // --- Right column: API keys ---
-    create_label(_content, "API KEYS", right, 0);
-    lv_obj_t *hint = lv_label_create(_content);
-    lv_label_set_text(hint, "Edit apt_tok / adbox_key in config.json");
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x666688), 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(hint, right, 20);
-    lv_obj_set_width(hint, COL_W - 8);
-    lv_obj_clear_flag(hint, LV_OBJ_FLAG_CLICKABLE);
-
-    create_label(_content, "AIRPORTDB.IO", right, 48);
-    _apt_key_val = create_inline_row(_content, "KEY", right, 70, 70);
-    _apt_valid_val = create_inline_row(_content, "VALID", right, 90, 70);
-    create_label(_content, "ENABLE", right, 112);
-    _sw_apt_en = make_enable_switch(_content, right + 80, 110);
-
-    create_label(_content, "AERODATABOX", right, 156);
-    create_label(_content, "PROVIDER", right, 178);
-    _dd_adbox_prov = lv_dropdown_create(_content);
-    lv_dropdown_set_options(_dd_adbox_prov, ADBOX_PROVIDER_OPTS);
-    lv_obj_set_size(_dd_adbox_prov, COL_W - 8, 36);
-    lv_obj_set_pos(_dd_adbox_prov, right, 198);
-    lv_obj_set_style_bg_color(_dd_adbox_prov, lv_color_hex(0x1a1a3a), 0);
-    lv_obj_set_style_text_color(_dd_adbox_prov, lv_color_white(), 0);
-    lv_obj_set_style_text_font(_dd_adbox_prov, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_border_color(_dd_adbox_prov, lv_color_hex(0x333366), 0);
-    lv_obj_set_style_border_width(_dd_adbox_prov, 1, 0);
-    lv_dropdown_set_selected(_dd_adbox_prov, (uint16_t)(_cfg.aerodatabox_provider >= 0 && _cfg.aerodatabox_provider <= 2
-                                                         ? _cfg.aerodatabox_provider : 0));
-    lv_obj_add_event_cb(_dd_adbox_prov, on_adbox_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
-
-    _adbox_key_val = create_inline_row(_content, "KEY", right, 246, 70);
-    _adbox_valid_val = create_inline_row(_content, "VALID", right, 266, 70);
-    _adbox_usage_val = create_inline_row(_content, "USAGE", right, 286, 70);
-    create_label(_content, "ENABLE", right, 308);
-    _sw_adbox_en = make_enable_switch(_content, right + 80, 306);
-
-    lv_obj_t *quota_note = lv_label_create(_content);
-    // ADB marketplace units reset on the subscription billing cycle
-    // (RapidAPI/API.Market), not a calendar month — see aerodatabox.com/faq.
-    // Our USAGE counter is a local UTC calendar-month tally only.
-    lv_label_set_text(quota_note,
-        "ADB quota resets on billing cycle\n"
-        "(marketplace). USAGE = billed HTTP\n"
-        "lookups this UTC month (not key checks);\n"
-        "adbox_lim soft-cap; 429 auto-disables.");
-    lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
-    lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(quota_note, right, 340);
-    lv_obj_set_width(quota_note, COL_W - 8);
-    lv_obj_clear_flag(quota_note, LV_OBJ_FLAG_CLICKABLE);
 
     status_refresh(nullptr);
     lv_timer_create(status_refresh, 500, nullptr);
 
-    // Fixed action strip under the left column only for Clear/Reset — they
-    // must not sit on top of the right-column API KEYS / USAGE text. Save
-    // stays on the right. Opaque band + clipped content prevent bleed-through.
+    // Fixed action strip: Clear/Reset span col0+col1; Save on the right.
+    // Opaque band + clipped content prevent bleed-through.
     lv_obj_t *actions = lv_obj_create(_panel);
     lv_obj_set_size(actions, PANEL_W - 32, ACTION_H);
     lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -740,8 +738,8 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_move_foreground(actions);
 
-    // Left-column width for Clear/Reset; leave a gap before Save on the right.
-    const int left_btn_w = COL_W;
+    // Span first two columns for Clear/Reset; leave a gap before Save.
+    const int left_btn_w = 2 * COL_W + COL_GAP;
     const int actions_inner_w = PANEL_W - 32;
 
     lv_obj_t *cache_btn = lv_button_create(actions);
