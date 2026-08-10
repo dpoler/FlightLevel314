@@ -251,21 +251,20 @@ static void open_overlay() {
         tag_type_toggle();
     });
 
-    // ============================================================
-    // Secondary locations -- other saved/static airports + the
-    // HOME-elsewhere marker. Off gives the "just dots" look.
-    // ============================================================
-    section_header(_panel, "LOCATIONS", 0, 290);
-    toggle_row(_panel, "Other Airports", 0, 318, col_w, secondary_locations_shown(), [](lv_event_t *e) {
-        // Match Show trails / Show basemap: only flip config when the switch
-        // state actually disagrees (avoids desync if VALUE_CHANGED fires
-        // without a real user toggle).
-        if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != secondary_locations_shown())
-            secondary_locations_toggle();
-        int v = views_get_active_index();
-        if (v == VIEW_MAP) map_view_update();
-        else if (v == VIEW_RADAR) radar_view_update();
-    });
+    // Secondary locations (other airports) are Map-only — Radar no longer
+    // draws airports/runways. Hide the toggle on Radar so it isn't a no-op.
+    const int alerts_y0 = (views_get_active_index() == VIEW_MAP) ? 360 : 290;
+    if (views_get_active_index() == VIEW_MAP) {
+        section_header(_panel, "LOCATIONS", 0, 290);
+        toggle_row(_panel, "Other Airports", 0, 318, col_w, secondary_locations_shown(), [](lv_event_t *e) {
+            // Match Show trails / Show basemap: only flip config when the switch
+            // state actually disagrees (avoids desync if VALUE_CHANGED fires
+            // without a real user toggle).
+            if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != secondary_locations_shown())
+                secondary_locations_toggle();
+            if (views_get_active_index() == VIEW_MAP) map_view_update();
+        });
+    }
 
     // ============================================================
     // Alerts -- military/emergency toast popups. Deliberately global
@@ -275,12 +274,12 @@ static void open_overlay() {
     // you're looking at Map and not Radar. Moved here from Settings, which
     // now has one less thing.
     // ============================================================
-    section_header(_panel, "ALERTS", 0, 360);
-    toggle_row(_panel, "Military", 0, 388, col_w, g_config.alert_military, [](lv_event_t *e) {
+    section_header(_panel, "ALERTS", 0, alerts_y0);
+    toggle_row(_panel, "Military", 0, alerts_y0 + 28, col_w, g_config.alert_military, [](lv_event_t *e) {
         g_config.alert_military = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
         storage_save_config(g_config);
     });
-    toggle_row(_panel, "Emergency", 0, 422, col_w, g_config.alert_emergency, [](lv_event_t *e) {
+    toggle_row(_panel, "Emergency", 0, alerts_y0 + 62, col_w, g_config.alert_emergency, [](lv_event_t *e) {
         g_config.alert_emergency = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
         storage_save_config(g_config);
     });
