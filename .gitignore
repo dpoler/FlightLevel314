@@ -11,3 +11,5 @@ src/ui/airports_db.h
 .claude-sessions/
 docs/plans/
 docs/summaries/
+# Private agent/local notes — never commit (API quota tricks, secrets, etc.)
+docs/local-notes.md
