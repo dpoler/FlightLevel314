@@ -62,6 +62,7 @@ PAT/SSH setup unless he asks; push from Mac instead.
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Device provisioning for API keys / secrets (how they get onto the Pi)
+- Enrichment O/D: hide implausible low-altitude routes at airport views
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -558,6 +559,15 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   USB stick drop, etc.). Scope: AirportDB, AeroDataBox, and any future
   keys — not just airportdb.
 
+- **Enrichment O/D — hide implausible low routes at airport views (Dan,
+  2026-08-10)**: when O/D was looked up, **don’t print** FROM/TO if:
+  (1) active location is an airport (ICAO set; not a waypoint);
+  (2) aircraft is in the LOW band (`agl <= 10000` ft, airborne ground);
+  (3) neither origin nor dest is the view airport or an airport within
+  ~50 nm of it. Probably a bad schedule match; blank is better. Display
+  gate in detail_card (or enrichment read path) — no extra API. Full note
+  under origin/destination history above §9.
+
 - **Map/Radar bullseye declutter**: ~~remove Map range rings; quiet Radar
   (no airport/runway drawing; VIEW "Other Airports" Map-only)~~ —
   done 2026-08-10. Map = geography + traffic; Radar = rings + sweep + blips.
@@ -753,6 +763,19 @@ now; 30‑minute route TTL + invalidate when callsign changes (route-only
 refresh, photo/adsbdb cache kept). Still not live OOOI — GA/codeshare limits
 remain. Follow-up same day: **skip O/D API** for MIL, HELI, and small GA
 (A0–A2 / B/C); only query airline callsign or emitter category A3–A6.
+
+**Backlog (Dan, 2026-08-10):** further O/D display hygiene when enrichment
+already has a route — **do not show** FROM/TO on the detail card if all of:
+(1) active location is an **airport** (has ICAO; not a lat/lon waypoint);
+(2) aircraft altitude meets the **LOW** filter band (`agl <= 10000` ft,
+    not on ground — same `AGL_BAND_FT` as `FILT_LOW` in `filters.cpp`);
+(3) neither origin nor destination ICAO is the active airport **or** any
+    airport within ~50 nm of it (reuse nearby-airports / static DB distance,
+    not “only the active ICAO”).
+Rationale: low near an airport that isn’t on the published route → schedule
+pick is probably wrong; better blank than misleading. Display-only filter
+(don’t need to re-hit AeroDataBox); still show O/D when HIGH / at waypoints /
+when route touches the local airport set. See §7.1.
 
 ---
 
