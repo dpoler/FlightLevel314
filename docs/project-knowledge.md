@@ -71,6 +71,8 @@ Recently closed (2026-08-09): Airport Mode Phase 3 (INFO METAR/ATIS);
 Pi-only cleanup (ESP32/jc1060 sources removed); GND default hidden;
 edit/rename saved locations; LIST GND refresh; Settings Cancel/Save;
 brightness; VIEW two-col.
+Recently closed (2026-08-10): TRAFFIC SOURCE (adsb.fi) now persists on
+change — previously live-only until Save, so Cancel/reboot flipped to lol.
 
 ### Dan / workflow
 - Name: Dan. Prefers working directly in code; builds himself unless asked.
