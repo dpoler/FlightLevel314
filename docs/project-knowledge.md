@@ -582,6 +582,20 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   gate in detail_card (or enrichment read path) — no extra API. Full note
   under origin/destination history above §9.
 
+- **VIEW — “Rebuild this map” (current mosaic only) (Dan, 2026-08-10)**:
+  Settings already has a heavy **Clear map cache** (all on-disk mosaics +
+  in-memory front/inbox). Want a lighter Map-only action — ideally under
+  the VIEW menu — that drops/rebuilds **only the current**
+  `(style, lat, lon, range, geometry)` basemap: delete that cache file,
+  clear the in-memory slot for it, and re-request. Use case: one blank
+  missing tile in an otherwise-good mosaic (seen on the overnight freeze
+  frame; hole suspected unrelated to the hang, but no good way to fix
+  just that map without nuking the whole cache). Do not start unless asked.
+
+- **Map overnight hang / SW draw image-decoder A/B (Dan, 2026-08-10)**:
+  see §6. Trial `LV_DRAW_SW_DRAW_UNIT_CNT=1` on
+  `cursor/draw-unit-cnt1-e1e8`. Soak Map+basemap overnight.
+
 - **Map/Radar bullseye declutter**: ~~remove Map range rings; quiet Radar
   (no airport/runway drawing; VIEW "Other Airports" Map-only)~~ —
   done 2026-08-10. Map = geography + traffic; Radar = rings + sweep + blips.
