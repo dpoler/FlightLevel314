@@ -36,10 +36,17 @@ void enrichment_init();
 
 // Fetch enrichment data in background. Calls callback progressively as data arrives.
 // Callback is always called from LVGL context (safe to update UI).
-// callsign may be null/empty; used for AeroDataBox fallback after icao24.
+// callsign/category/type_code/is_military feed AeroDataBox eligibility
+// (skip small GA / HELI / MIL to save API quota).
 void enrichment_fetch(const char *icao_hex, const char *registration,
                       const char *callsign,
+                      const char *category, const char *type_code, bool is_military,
                       void (*callback)(AircraftEnrichment *data));
+
+// True when AeroDataBox O/D is worth a query: commercial / large (A3–A6)
+// fixed-wing. Skips military, helicopters, and light/small GA (A0–A2, B/C).
+bool enrichment_route_eligible(const char *callsign, const char *category,
+                               const char *type_code, bool is_military);
 
 // On Pi this is a no-op (fetch runs on its own thread). Kept for call-site
 // compatibility with the historical poll loop.

@@ -16,6 +16,7 @@
 #include "../../src/data/enrichment.h"
 #include "../../src/data/storage.h"
 #include "../../src/platform/platform.h"
+#include "../../src/ui/filters.h"
 #include "lvgl.h"
 
 #include <ArduinoJson.h>
@@ -160,8 +161,8 @@ void mark_route_result(AircraftEnrichment *entry, const char *callsign,
 
 // True when we should spend another AeroDataBox lookup for this cache slot.
 bool route_needs_refresh(const AircraftEnrichment *entry, const char *callsign,
-                         bool adbox_on) {
-    if (!adbox_on) return false;
+                         bool adbox_on, bool route_eligible) {
+    if (!adbox_on || !route_eligible) return false;
     if (!entry->route_checked) return true;
     char now_cs[16];
     normalize_callsign(callsign, now_cs, sizeof(now_cs));
@@ -621,7 +622,8 @@ bool decode_photo_rgb565(const uint8_t *bytes, size_t len,
     return true;
 }
 
-void run_enrichment(std::string icao, std::string registration, std::string callsign) {
+void run_enrichment(std::string icao, std::string registration, std::string callsign,
+                    std::string category, std::string type_code, bool is_military) {
     AircraftEnrichment *entry = nullptr;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -716,7 +718,9 @@ void run_enrichment(std::string icao, std::string registration, std::string call
         adbox_prov = g_config.aerodatabox_provider;
         if (adbox_on) strlcpy(adbox_key, g_config.aerodatabox_key, sizeof(adbox_key));
     }
-    if (adbox_on) {
+    const bool want_route = adbox_on && enrichment_route_eligible(
+        callsign.c_str(), category.c_str(), type_code.c_str(), is_military);
+    if (want_route) {
         char origin[8] = {}, dest[8] = {};
         bool ok = fetch_adbox_route(adbox_prov, adbox_key, icao.c_str(), callsign.c_str(),
                                     registration.c_str(),
@@ -730,8 +734,12 @@ void run_enrichment(std::string icao, std::string registration, std::string call
         notify_callback(entry);
     } else {
         std::lock_guard<std::mutex> lock(_mutex);
-        // Skipped — stamp so we don't spin until TTL / callsign change / cache clear.
+        // Off, ineligible (small GA/HELI/MIL), or no key — stamp so we don't
+        // spin until TTL / callsign change / cache clear.
         mark_route_result(entry, callsign.c_str(), "", "", false);
+        if (adbox_on && !want_route)
+            platform_log("[Enrich] route skipped (not commercial/large) for %s\n",
+                         icao.c_str());
     }
 
     {
@@ -745,7 +753,8 @@ void run_enrichment(std::string icao, std::string registration, std::string call
 
 // Re-query AeroDataBox only (keep photo / adsbdb fields). Used when the
 // enrichment cache is warm but O/D is stale (TTL) or the callsign changed.
-void run_route_refresh(std::string icao, std::string registration, std::string callsign) {
+void run_route_refresh(std::string icao, std::string registration, std::string callsign,
+                       std::string category, std::string type_code, bool is_military) {
     AircraftEnrichment *entry = nullptr;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -760,7 +769,9 @@ void run_route_refresh(std::string icao, std::string registration, std::string c
         strlcpy(adbox_key, g_config.aerodatabox_key, sizeof(adbox_key));
     }
 
-    if (adbox_on) {
+    const bool want_route = adbox_on && enrichment_route_eligible(
+        callsign.c_str(), category.c_str(), type_code.c_str(), is_military);
+    if (want_route) {
         char origin[8] = {}, dest[8] = {};
         bool ok = fetch_adbox_route(adbox_prov, adbox_key, icao.c_str(), callsign.c_str(),
                                     registration.c_str(),
@@ -773,6 +784,9 @@ void run_route_refresh(std::string icao, std::string registration, std::string c
     } else {
         std::lock_guard<std::mutex> lock(_mutex);
         mark_route_result(entry, callsign.c_str(), "", "", false);
+        if (adbox_on)
+            platform_log("[Enrich] route refresh skipped (not commercial/large) for %s\n",
+                         icao.c_str());
     }
 
     {
@@ -783,6 +797,22 @@ void run_route_refresh(std::string icao, std::string registration, std::string c
 }
 
 } // namespace
+
+bool enrichment_route_eligible(const char *callsign, const char *category,
+                               const char *type_code, bool is_military) {
+    // Skip military (hex-range flag) and helicopters entirely.
+    if (is_military) return false;
+    if (category && category[0] == 'A' && category[1] == '7') return false;
+    if (type_code && type_code[0] && is_heli_type(type_code)) return false;
+
+    // Commercial / large fixed-wing only: airline callsign OR ADS-B emitter
+    // category A3–A6 (Large / High-vortex / Heavy / High-perf). A1/A2 are
+    // light/small GA; A0 and B/C (glider/UAV/etc.) are not worth a query.
+    if (callsign && callsign[0] && is_airline_callsign(callsign)) return true;
+    if (category && category[0] == 'A' && category[1] >= '3' && category[1] <= '6')
+        return true;
+    return false;
+}
 
 AircraftEnrichment *enrichment_get_cached(const char *icao_hex) {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -800,15 +830,19 @@ void enrichment_poll() {
 
 void enrichment_fetch(const char *icao_hex, const char *registration,
                       const char *callsign,
+                      const char *category, const char *type_code, bool is_military,
                       void (*callback)(AircraftEnrichment *data)) {
     if (!icao_hex || !icao_hex[0]) return;
 
     const bool adbox_on = adbox_allowed();
+    const bool eligible = enrichment_route_eligible(callsign, category, type_code, is_military);
     bool kick_route_only = false;
     bool kick_full = false;
     std::string icao;
     std::string reg;
     std::string cs;
+    std::string cat;
+    std::string typ;
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -818,7 +852,7 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
             // Warm cache: serve photo/meta immediately. If O/D is missing,
             // stale (TTL), or the callsign changed, refresh route only —
             // avoids re-hitting adsbdb/planespotters.
-            if (route_needs_refresh(&_cache[i], callsign, adbox_on)) {
+            if (route_needs_refresh(&_cache[i], callsign, adbox_on, eligible)) {
                 _pending_callback = callback;
                 notify_callback(&_cache[i]);
                 if (_busy) return; // show stale O/D; another fetch owns the slot
@@ -828,6 +862,8 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
                 icao = icao_hex;
                 reg = registration ? registration : "";
                 cs = callsign ? callsign : "";
+                cat = category ? category : "";
+                typ = type_code ? type_code : "";
                 break;
             }
 
@@ -848,15 +884,21 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
             icao = icao_hex;
             reg = registration ? registration : "";
             cs = callsign ? callsign : "";
+            cat = category ? category : "";
+            typ = type_code ? type_code : "";
         }
     }
 
     if (kick_route_only) {
-        std::thread([icao, reg, cs]() { run_route_refresh(icao, reg, cs); }).detach();
+        std::thread([icao, reg, cs, cat, typ, is_military]() {
+            run_route_refresh(icao, reg, cs, cat, typ, is_military);
+        }).detach();
         return;
     }
     if (kick_full) {
-        std::thread([icao, reg, cs]() { run_enrichment(icao, reg, cs); }).detach();
+        std::thread([icao, reg, cs, cat, typ, is_military]() {
+            run_enrichment(icao, reg, cs, cat, typ, is_military);
+        }).detach();
     }
 }
 
