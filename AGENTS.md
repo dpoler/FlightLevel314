@@ -8,7 +8,9 @@ port; the ESP32 / JC1060 PlatformIO target is **not** built here.
 **Deeper project knowledge** (history, backlog, design decisions — including
 archived ESP32 notes): see [`docs/project-knowledge.md`](docs/project-knowledge.md).
 Treat it as point-in-time — verify against current code before relying on
-specific "done" claims or file:line references.
+specific "done" claims or file:line references. Private / not-for-GitHub
+scratch (API quota ideas, etc.): `docs/local-notes.md` if present — it is
+**gitignored**; do not commit it or copy its contents into tracked docs.
 
 ### Toolchain
 - Pi SDL simulator needs `cmake`, `libsdl2-dev`, `libcurl4-openssl-dev`.
