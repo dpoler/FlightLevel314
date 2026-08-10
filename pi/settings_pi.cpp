@@ -267,8 +267,11 @@ static void on_traffic_provider_changed(lv_event_t *e) {
     if (sel == _cfg.traffic_provider) return;
     _cfg.traffic_provider = sel;
     g_config.traffic_provider = sel;
+    // Persist immediately — live preview alone left disk on adsb.lol, so a
+    // Cancel or reboot without Save flipped the source back.
+    storage_save_config(g_config);
     // Kick a fetch so Map/Radar reflect the new aggregator without waiting
-    // for the next 20s poll (or for Save).
+    // for the next 20s poll.
     fetcher_request_immediate_fetch();
 }
 
@@ -381,17 +384,14 @@ static void apply_cfg_to_fields() {
 
 static void cancel_and_close(lv_event_t *e) {
     (void)e;
-    // Revert anything previewed live while the panel was open (brightness,
-    // traffic/ADB provider). Disk is untouched for draft fields; brightness
-    // may have been preview-only (no mid-edit writes).
-    const int live_traffic = g_config.traffic_provider;
+    // Revert draft previews (brightness, ADB gateway). Traffic source is
+    // committed on change — leave it alone so Cancel doesn't undo a reboot-
+    // durable pick.
     g_config.display_brightness_pct = _cfg_at_open.display_brightness_pct;
-    g_config.traffic_provider = _cfg_at_open.traffic_provider;
     g_config.aerodatabox_provider = _cfg_at_open.aerodatabox_provider;
     backlight_set_percent(g_config.display_brightness_pct);
-    if (live_traffic != g_config.traffic_provider)
-        fetcher_request_immediate_fetch();
     _cfg = _cfg_at_open;
+    _cfg.traffic_provider = g_config.traffic_provider;
     settings_hide();
 }
 
