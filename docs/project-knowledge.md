@@ -746,6 +746,13 @@ crowd data was unreliable (same SDM staleness as adsb.lol).
 approach (AeroDataBox / enrichment on Pi — not the old VRS tables). airframes.io
 ACARS remains a separate **deferred** idea (§7.1b) if a feeder ever exists.
 
+**2026-08-10:** O/D accuracy pass (still schedule-based, no extra lookup
+keys): pick best flight among AeroDataBox results by status (prefer EnRoute/
+Approaching/Departed; demote Arrived/Canceled) and departure/arrival time vs
+now; 30‑minute route TTL + invalidate when callsign changes (route-only
+refresh, photo/adsbdb cache kept). Still not live OOOI — GA/codeshare limits
+remain.
+
 ---
 
 ## 9. Map vs Radar visibility design (deliberate, not a bug)
