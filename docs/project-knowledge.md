@@ -62,6 +62,7 @@ PAT/SSH setup unless he asks; push from Mac instead.
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Device provisioning for API keys / secrets (how they get onto the Pi)
+- Map/Radar bullseye declutter (no Map rings; quieter Radar)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -553,6 +554,13 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   approach (SSH/scp recipe, first-boot wizard over SSH, companion script,
   USB stick drop, etc.). Scope: AirportDB, AeroDataBox, and any future
   keys — not just airportdb.
+
+- **Map/Radar bullseye declutter (Dan, 2026-08-10)**: remove the bullseye
+  from **Map** entirely (range rings clutter the basemap). On **Radar**,
+  keep a bullseye but make it less busy — e.g. no airport/runway drawing
+  (that's Map's job). Touches `map_view` / `radar_view` draw paths and may
+  nudge §9 Map-vs-Radar visual distinction (Radar stays the circular
+  scope; Map becomes geography + traffic only).
 
 - **Pi-exclusive: real maps/sector charts using the extra resource budget**:
   raster/vector basemap tiles, FAA VFR sectionals. `tile_cache.cpp` exists in
