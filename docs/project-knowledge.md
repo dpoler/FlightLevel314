@@ -62,6 +62,7 @@ PAT/SSH setup unless he asks; push from Mac instead.
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Device provisioning for API keys / secrets (how they get onto the Pi)
+- Map overnight hang A/B: `LV_DRAW_SW_DRAW_UNIT_CNT=1` trial (see §6)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -375,6 +376,20 @@ known-issue), but the Pi has no such constraint — real aircraft photos in the
 detail card. See backlog §7 for full scope.
 
 ### Notable bugs found and fixed during the port (worth remembering)
+- **Pi Map overnight hang (UI dead, fetch alive, kill -9)** — *open, A/B*:
+  2026-08-10 ~07:10 after ~10.5h uptime. Touch dead, Map frozen on last
+  frame, status timer stuck; `Fetch (adsb.fi): OK` kept logging.
+  `journalctl` had no basemap/error clue; dmesg quiet. gdb:
+  main/`lv_timer_handler` → `lv_draw_dispatch_wait_for_request`; one SW
+  draw unit inside `lv_image_decoder_open`; other units blocked on
+  `lv_mutex_lock` in the same open; fetch thread still in
+  `pi_wait_for_next_fetch`. **Not** the DRM `drm_flush_wait` hang (no
+  DRM wait on the stuck stacks). Suspect: `LV_DRAW_SW_DRAW_UNIT_CNT=3`
+  + full-screen basemap via `lv_draw_image` / image decoder. Trial branch
+  sets `CNT=1` in `pi/lv_conf.h` for overnight Map+basemap soak. If hangs
+  stop: keep CNT=1 short-term, then decoder-bypass blit for
+  basemap/weather (+ optional UI watchdog that `abort()`s so systemd
+  restarts without SSH). If hangs continue: reopen (not this theory).
 - **Pi DRM hard freeze (UI painted once, then touch/timer dead, kill -9)**:
   LVGL v9.5.0 `lv_linux_drm.c` can hang the UI thread in `drm_flush_wait()`
   forever — `poll(..., -1)` with no timeout, and a failed
@@ -557,6 +572,14 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   approach (SSH/scp recipe, first-boot wizard over SSH, companion script,
   USB stick drop, etc.). Scope: AirportDB, AeroDataBox, and any future
   keys — not just airportdb.
+
+- **Map overnight hang / SW draw image-decoder A/B (Dan, 2026-08-10)**: UI
+  dead after ~10.5h on Map+basemap; fetch OK; kill -9. gdb showed
+  `lv_image_decoder_open` + `lv_draw_dispatch_wait_for_request` (not DRM).
+  Trial: `LV_DRAW_SW_DRAW_UNIT_CNT=1` in `pi/lv_conf.h`. Soak overnight on
+  Map with basemap. Follow-ups if confirmed: decoder-bypass blit for
+  basemap/weather; optional UI watchdog `abort()` for systemd restart.
+  Details in §6 notable bugs.
 
 - **Map/Radar bullseye declutter**: ~~remove Map range rings; quiet Radar
   (no airport/runway drawing; VIEW "Other Airports" Map-only)~~ —
