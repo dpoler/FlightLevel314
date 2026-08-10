@@ -86,7 +86,7 @@ int main() {
     // fetcher_request_immediate_fetch in fetcher_stats_linux.cpp).
     fetcher_init(&aircraft_list);
 
-    // Airline code→name table (dpoler/AirlinesCSV). ESP32 loads this once
+    // Airline code→name table (OpenTravelData). ESP32 loaded this once
     // inside fetcher_init()'s boot task; Pi has no equivalent, so kick it
     // here on a background thread — blocking curl on the UI thread would
     // stall first paint, and detail_card airline_lookup() simply returns
