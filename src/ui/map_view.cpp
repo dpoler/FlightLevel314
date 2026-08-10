@@ -483,32 +483,6 @@ static void gnd_click_cb(lv_event_t *e) {
     }
 }
 
-static void draw_range_rings(lv_layer_t *layer) {
-    lv_draw_arc_dsc_t arc_dsc;
-    lv_draw_arc_dsc_init(&arc_dsc);
-    arc_dsc.color = lv_color_hex(0x1a2a3a);
-    arc_dsc.width = 1;
-    arc_dsc.start_angle = 0;
-    arc_dsc.end_angle = 360;
-
-    float radius_nm = range_get_nm();
-    // Same effective-height/recentered-down math as to_screen() (geo.h) --
-    // the rings have to line up with wherever aircraft actually plot, so
-    // this must use the same _proj.screen_h/top_margin the projection uses
-    // (both set once from the measured MAP_PROJ_H/MAP_TOP_MARGIN constants
-    // at init -- fixed values now, not recomputed per frame).
-    float scale = (float)(_proj.screen_h - _proj.top_margin) / (radius_nm * 2.0f);
-
-    float ring_interval = radius_nm <= 10 ? 2.0f : (radius_nm <= 25 ? 5.0f : 10.0f);
-    for (float r = ring_interval; r <= radius_nm; r += ring_interval) {
-        int pixel_r = (int)(r * scale);
-        arc_dsc.center.x = CANVAS_W / 2 + _proj.offset_x;
-        arc_dsc.center.y = _proj.screen_h / 2 + _proj.top_margin / 2 + _proj.offset_y;
-        arc_dsc.radius = pixel_r;
-        lv_draw_arc(layer, &arc_dsc);
-    }
-}
-
 // Shared with draw_airport_glyph() further down, and with
 // draw_active_location_marker() just below -- moved up here so both can use
 // it (the marker used to hardcode its own brighter, full-opacity blue,
@@ -1212,7 +1186,8 @@ static void canvas_draw_cb(lv_event_t *e) {
 #elif HAS_STATIC_MAP
     draw_static_background(layer);
 #endif
-    draw_range_rings(layer);
+    // Range rings / bullseye removed — Map is geography + traffic; Radar
+    // owns the circular scope look.
     // Secondary locations -- other airports + the active location's own
     // marker. Off gives the "just dots" look (VIEW menu, view_menu.cpp).
     if (secondary_locations_shown()) {

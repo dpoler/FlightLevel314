@@ -62,7 +62,6 @@ PAT/SSH setup unless he asks; push from Mac instead.
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Device provisioning for API keys / secrets (how they get onto the Pi)
-- Map/Radar bullseye declutter (no Map rings; quieter Radar)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -74,7 +73,8 @@ edit/rename saved locations; LIST GND refresh; Settings Cancel/Save;
 brightness; VIEW two-col.
 Recently closed (2026-08-10): airline names from OpenTravelData (dropped
 AirlinesCSV; ~900 ICAO3 codes, global); AeroDataBox O/D accuracy + skip
-small GA/HELI/MIL.
+small GA/HELI/MIL; Map/Radar bullseye declutter (Map: no rings;
+Radar: rings+sweep only, no airport/runway drawing).
 
 ### Settings draft semantics (TRAFFIC SOURCE)
 TRAFFIC SOURCE live-previews on change but persists only on **Save**;
@@ -558,12 +558,9 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   USB stick drop, etc.). Scope: AirportDB, AeroDataBox, and any future
   keys — not just airportdb.
 
-- **Map/Radar bullseye declutter (Dan, 2026-08-10)**: remove the bullseye
-  from **Map** entirely (range rings clutter the basemap). On **Radar**,
-  keep a bullseye but make it less busy — e.g. no airport/runway drawing
-  (that's Map's job). Touches `map_view` / `radar_view` draw paths and may
-  nudge §9 Map-vs-Radar visual distinction (Radar stays the circular
-  scope; Map becomes geography + traffic only).
+- **Map/Radar bullseye declutter**: ~~remove Map range rings; quiet Radar
+  (no airport/runway drawing; VIEW "Other Airports" Map-only)~~ —
+  done 2026-08-10. Map = geography + traffic; Radar = rings + sweep + blips.
 
 - **Pi-exclusive: real maps/sector charts using the extra resource budget**:
   raster/vector basemap tiles, FAA VFR sectionals. `tile_cache.cpp` exists in
@@ -761,17 +758,18 @@ remain. Follow-up same day: **skip O/D API** for MIL, HELI, and small GA
 
 ## 9. Map vs Radar visibility design (deliberate, not a bug)
 
-Map draws and lets you tap aircraft beyond the bullseye range ring, all the way
+Map draws and lets you tap aircraft beyond the range radius, all the way
 to the rectangular canvas edges — intentional, explicitly confirmed by the user
 after an earlier "fix" wrongly corrected it away. This is what differentiates
-Map (uses the full screen, looks like a map) from Radar (clips strictly to the
-circular bullseye ring, to look like a radar). `MapProjection::to_screen()`
-only checks the rectangular canvas bound; `radar_view.cpp`'s
-`to_radar_screen()` explicitly enforces a circular `dist_nm > radius_nm` cutoff.
-**Do not add a radius cutoff to Map's draw/tap-hit-test, and do not loosen
-Radar's circular clip.** Any "is this visible" question should ask the specific
-active view, not assume one universal rule (see `map_view_aircraft_visible()`
-as the established pattern for this).
+Map (uses the full screen, geography + traffic; no bullseye rings) from Radar
+(clips strictly to the circular bullseye ring, to look like a radar).
+`MapProjection::to_screen()` only checks the rectangular canvas bound;
+`radar_view.cpp`'s `to_radar_screen()` explicitly enforces a circular
+`dist_nm > radius_nm` cutoff. **Do not add a radius cutoff to Map's
+draw/tap-hit-test, and do not loosen Radar's circular clip.** Any "is this
+visible" question should ask the specific active view, not assume one
+universal rule (see `map_view_aircraft_visible()` as the established pattern
+for this). Airports/runways are Map-only; Radar stays rings + sweep + blips.
 
 ---
 
