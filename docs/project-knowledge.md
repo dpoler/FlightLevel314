@@ -71,8 +71,13 @@ Recently closed (2026-08-09): Airport Mode Phase 3 (INFO METAR/ATIS);
 Pi-only cleanup (ESP32/jc1060 sources removed); GND default hidden;
 edit/rename saved locations; LIST GND refresh; Settings Cancel/Save;
 brightness; VIEW two-col.
-Recently closed (2026-08-10): TRAFFIC SOURCE (adsb.fi) now persists on
-change — previously live-only until Save, so Cancel/reboot flipped to lol.
+
+### Settings draft semantics (TRAFFIC SOURCE)
+TRAFFIC SOURCE live-previews on change but persists only on **Save**;
+**Cancel** restores the prior provider (same as brightness / ADB gateway).
+Settings cannot dismiss without Save or Cancel, so that is intentional —
+not auto-save-on-change. (Briefly flipped to auto-persist 2026-08-10,
+then reverted same day after Dan preferred draft-until-Save.)
 
 ### Dan / workflow
 - Name: Dan. Prefers working directly in code; builds himself unless asked.
