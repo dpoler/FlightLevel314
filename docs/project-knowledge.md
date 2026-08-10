@@ -751,7 +751,8 @@ keys): pick best flight among AeroDataBox results by status (prefer EnRoute/
 Approaching/Departed; demote Arrived/Canceled) and departure/arrival time vs
 now; 30‑minute route TTL + invalidate when callsign changes (route-only
 refresh, photo/adsbdb cache kept). Still not live OOOI — GA/codeshare limits
-remain.
+remain. Follow-up same day: **skip O/D API** for MIL, HELI, and small GA
+(A0–A2 / B/C); only query airline callsign or emitter category A3–A6.
 
 ---
 

@@ -884,7 +884,9 @@ void detail_card_show(const Aircraft *ac) {
     // Enrichment (adsbdb + planespotters; on Pi also photo decode + optional
     // AeroDataBox origin/destination). ESP32 only gets text fields /
     // photographer credit (image path is broken).
-    enrichment_fetch(ac->icao_hex, ac->registration, ac->callsign, on_enrichment_ready);
+    enrichment_fetch(ac->icao_hex, ac->registration, ac->callsign,
+                     ac->category, ac->type_code, ac->is_military,
+                     on_enrichment_ready);
 }
 
 void detail_card_hide() {
