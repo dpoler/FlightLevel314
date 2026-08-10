@@ -573,6 +573,14 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   USB stick drop, etc.). Scope: AirportDB, AeroDataBox, and any future
   keys — not just airportdb.
 
+- **Map overnight hang / SW draw image-decoder A/B (Dan, 2026-08-10)**: UI
+  dead after ~10.5h on Map+basemap; fetch OK; kill -9. gdb showed
+  `lv_image_decoder_open` + `lv_draw_dispatch_wait_for_request` (not DRM).
+  Trial: `LV_DRAW_SW_DRAW_UNIT_CNT=1` in `pi/lv_conf.h`. Soak overnight on
+  Map with basemap. Follow-ups if confirmed: decoder-bypass blit for
+  basemap/weather; optional UI watchdog `abort()` for systemd restart.
+  Details in §6 notable bugs.
+
 - **Map/Radar bullseye declutter**: ~~remove Map range rings; quiet Radar
   (no airport/runway drawing; VIEW "Other Airports" Map-only)~~ —
   done 2026-08-10. Map = geography + traffic; Radar = rings + sweep + blips.
