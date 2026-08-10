@@ -72,6 +72,9 @@ Recently closed (2026-08-09): Airport Mode Phase 3 (INFO METAR/ATIS);
 Pi-only cleanup (ESP32/jc1060 sources removed); GND default hidden;
 edit/rename saved locations; LIST GND refresh; Settings Cancel/Save;
 brightness; VIEW two-col.
+Recently closed (2026-08-10): airline names from OpenTravelData (dropped
+AirlinesCSV; ~900 ICAO3 codes, global); AeroDataBox O/D accuracy + skip
+small GA/HELI/MIL.
 
 ### Settings draft semantics (TRAFFIC SOURCE)
 TRAFFIC SOURCE live-previews on change but persists only on **Save**;
