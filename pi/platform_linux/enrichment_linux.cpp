@@ -9,6 +9,10 @@
 // cheap; ESP32's poll-from-existing-task constraint does not apply). UI
 // callbacks are deferred through an LVGL timer, same as the ESP32 side.
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "../../src/data/enrichment.h"
 #include "../../src/data/storage.h"
 #include "../../src/platform/platform.h"
@@ -16,6 +20,7 @@
 
 #include <ArduinoJson.h>
 #include <cctype>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -33,6 +38,9 @@
 // Mild shrink from thumbnail_large (~500x280) with bilinear.
 #define PHOTO_MAX_W 400
 #define PHOTO_MAX_H 220
+// Re-query AeroDataBox O/D after this age (same hex). Callsign change
+// also invalidates. Does not add calls beyond a fresh detail-card open.
+#define ROUTE_TTL_MS (30u * 60u * 1000u)
 
 namespace {
 
@@ -129,6 +137,39 @@ std::string alnum_upper(const char *s) {
     return clean;
 }
 
+void normalize_callsign(const char *callsign, char *out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    std::string cs = alnum_upper(trim_ws(callsign).c_str());
+    strlcpy(out, cs.c_str(), out_sz);
+}
+
+void mark_route_result(AircraftEnrichment *entry, const char *callsign,
+                       const char *origin, const char *dest, bool have_route) {
+    if (have_route) {
+        strlcpy(entry->origin_icao, origin, sizeof(entry->origin_icao));
+        strlcpy(entry->dest_icao, dest, sizeof(entry->dest_icao));
+    } else {
+        entry->origin_icao[0] = '\0';
+        entry->dest_icao[0] = '\0';
+    }
+    entry->route_checked = true;
+    entry->route_checked_ms = platform_millis();
+    normalize_callsign(callsign, entry->route_callsign, sizeof(entry->route_callsign));
+}
+
+// True when we should spend another AeroDataBox lookup for this cache slot.
+bool route_needs_refresh(const AircraftEnrichment *entry, const char *callsign,
+                         bool adbox_on) {
+    if (!adbox_on) return false;
+    if (!entry->route_checked) return true;
+    char now_cs[16];
+    normalize_callsign(callsign, now_cs, sizeof(now_cs));
+    if (strcmp(now_cs, entry->route_callsign) != 0) return true;
+    uint32_t age = platform_millis() - entry->route_checked_ms;
+    return age > ROUTE_TTL_MS;
+}
+
 void today_utc_ymd(char *out, size_t out_sz) {
     time_t now = time(nullptr);
     struct tm tm_utc {};
@@ -193,33 +234,140 @@ bool adbox_allowed() {
 bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
                        char *dest, size_t dest_sz) {
     // Response is a JSON array of FlightContract, or occasionally a single object.
+    // Pick the best flight for "what is this aircraft doing now" — not merely
+    // the first row that has airports (that often picks a completed/next leg).
     JsonArrayConst arr = doc.as<JsonArrayConst>();
-    JsonObjectConst flight;
+
+    auto copy_airports = [&](JsonObjectConst flight) -> bool {
+        if (flight.isNull()) return false;
+        const char *o = flight["departure"]["airport"]["icao"] | "";
+        const char *d = flight["arrival"]["airport"]["icao"] | "";
+        if (!o[0] && !d[0]) {
+            o = flight["departure"]["airport"]["iata"] | "";
+            d = flight["arrival"]["airport"]["iata"] | "";
+        }
+        if (!o[0] && !d[0]) return false;
+        strlcpy(origin, o, origin_sz);
+        strlcpy(dest, d, dest_sz);
+        return true;
+    };
+
+    // Prefer revised/runway/predicted over bare schedule.
+    auto movement_utc = [](JsonObjectConst mov) -> time_t {
+        if (mov.isNull()) return 0;
+        const char *keys[] = {"runwayTime", "revisedTime", "predictedTime", "scheduledTime"};
+        for (const char *k : keys) {
+            const char *s = mov[k]["utc"] | "";
+            if (!s[0]) continue;
+            // AeroDataBox: "2026-08-10T15:30:00Z" or with fractional seconds.
+            struct tm tm_utc {};
+            const char *parsed = strptime(s, "%Y-%m-%dT%H:%M:%S", &tm_utc);
+            if (!parsed) continue;
+            tm_utc.tm_isdst = 0;
+            return timegm(&tm_utc);
+        }
+        return 0;
+    };
+
+    // Higher = more likely the live / current operation.
+    auto status_rank = [](const char *status) -> int {
+        if (!status || !status[0]) return 10;
+        if (strcmp(status, "EnRoute") == 0) return 100;
+        if (strcmp(status, "Approaching") == 0) return 95;
+        if (strcmp(status, "Departed") == 0) return 90;
+        if (strcmp(status, "Boarding") == 0) return 70;
+        if (strcmp(status, "GateClosed") == 0) return 68;
+        if (strcmp(status, "Delayed") == 0) return 65;
+        if (strcmp(status, "CheckIn") == 0) return 60;
+        if (strcmp(status, "Expected") == 0) return 55;
+        if (strcmp(status, "Unknown") == 0) return 10;
+        if (strcmp(status, "Arrived") == 0) return 5;
+        if (strcmp(status, "Diverted") == 0) return 3;
+        if (strcmp(status, "Canceled") == 0) return 0;
+        if (strcmp(status, "CanceledUncertain") == 0) return 0;
+        return 10;
+    };
+
+    time_t now = time(nullptr);
+
+    struct Candidate {
+        JsonObjectConst flight;
+        int status;
+        int airport_bits; // 2 = both, 1 = one, 0 = none
+        int64_t time_score;
+        bool canceled;
+    };
+
+    auto score_flight = [&](JsonObjectConst f) -> Candidate {
+        Candidate c{};
+        c.flight = f;
+        const char *st = f["status"] | "";
+        c.status = status_rank(st);
+        c.canceled = (strcmp(st, "Canceled") == 0 || strcmp(st, "CanceledUncertain") == 0);
+        const char *o = f["departure"]["airport"]["icao"] | "";
+        const char *d = f["arrival"]["airport"]["icao"] | "";
+        if (!o[0] && !d[0]) {
+            o = f["departure"]["airport"]["iata"] | "";
+            d = f["arrival"]["airport"]["iata"] | "";
+        }
+        c.airport_bits = (o[0] ? 1 : 0) + (d[0] ? 1 : 0);
+
+        time_t dep = movement_utc(f["departure"].as<JsonObjectConst>());
+        time_t arr = movement_utc(f["arrival"].as<JsonObjectConst>());
+        // In [dep-30m, arr+30m] → large positive score (closer to midpoint wins).
+        // Else → negative distance to nearest endpoint (closer is less negative).
+        const time_t pad = 30 * 60;
+        if (dep > 0 && arr > 0 && now >= dep - pad && now <= arr + pad) {
+            time_t mid = dep + (arr - dep) / 2;
+            c.time_score = 1000000000LL - (int64_t)llabs((long long)(now - mid));
+        } else if (dep > 0 || arr > 0) {
+            int64_t best = INT64_MAX;
+            if (dep > 0) {
+                int64_t dd = (int64_t)llabs((long long)(now - dep));
+                if (dd < best) best = dd;
+            }
+            if (arr > 0) {
+                int64_t da = (int64_t)llabs((long long)(now - arr));
+                if (da < best) best = da;
+            }
+            c.time_score = -best;
+        } else {
+            c.time_score = 0;
+        }
+        return c;
+    };
+
+    auto better = [](const Candidate &a, const Candidate &b) -> bool {
+        // Prefer non-canceled when anything else exists.
+        if (a.canceled != b.canceled) return !a.canceled;
+        if (a.airport_bits != b.airport_bits) return a.airport_bits > b.airport_bits;
+        if (a.status != b.status) return a.status > b.status;
+        if (a.time_score != b.time_score) return a.time_score > b.time_score;
+        return false;
+    };
+
+    Candidate best{};
+    bool have = false;
+
     if (!arr.isNull()) {
         if (arr.size() == 0) return false;
-        // Prefer a flight that has both airports when several are returned.
         for (JsonObjectConst f : arr) {
-            const char *o = f["departure"]["airport"]["icao"] | "";
-            const char *d = f["arrival"]["airport"]["icao"] | "";
-            if (o[0] && d[0]) { flight = f; break; }
-            if (flight.isNull() && (o[0] || d[0])) flight = f;
+            Candidate c = score_flight(f);
+            if (c.airport_bits == 0) continue;
+            if (!have || better(c, best)) {
+                best = c;
+                have = true;
+            }
         }
-        if (flight.isNull()) flight = arr[0].as<JsonObjectConst>();
-    } else {
-        flight = doc.as<JsonObjectConst>();
+        if (!have) {
+            // No airports on any row — fall back to first object (caller fails if empty).
+            return copy_airports(arr[0].as<JsonObjectConst>());
+        }
+        return copy_airports(best.flight);
     }
-    if (flight.isNull()) return false;
 
-    const char *o = flight["departure"]["airport"]["icao"] | "";
-    const char *d = flight["arrival"]["airport"]["icao"] | "";
-    if (!o[0] && !d[0]) {
-        o = flight["departure"]["airport"]["iata"] | "";
-        d = flight["arrival"]["airport"]["iata"] | "";
-    }
-    if (!o[0] && !d[0]) return false;
-    strlcpy(origin, o, origin_sz);
-    strlcpy(dest, d, dest_sz);
-    return true;
+    JsonObjectConst single = doc.as<JsonObjectConst>();
+    return copy_airports(single);
 }
 
 // Live nearest flight, then same search for today's local date. searchBy uses
@@ -570,29 +718,65 @@ void run_enrichment(std::string icao, std::string registration, std::string call
     }
     if (adbox_on) {
         char origin[8] = {}, dest[8] = {};
-        if (fetch_adbox_route(adbox_prov, adbox_key, icao.c_str(), callsign.c_str(),
-                              registration.c_str(),
-                              origin, sizeof(origin), dest, sizeof(dest))) {
+        bool ok = fetch_adbox_route(adbox_prov, adbox_key, icao.c_str(), callsign.c_str(),
+                                    registration.c_str(),
+                                    origin, sizeof(origin), dest, sizeof(dest));
+        {
             std::lock_guard<std::mutex> lock(_mutex);
-            strlcpy(entry->origin_icao, origin, sizeof(entry->origin_icao));
-            strlcpy(entry->dest_icao, dest, sizeof(entry->dest_icao));
-            entry->route_checked = true;
-            platform_log("[Enrich] route %s -> %s for %s\n", origin, dest, icao.c_str());
-        } else {
-            std::lock_guard<std::mutex> lock(_mutex);
-            entry->route_checked = true;
-            platform_log("[Enrich] AeroDataBox no route for %s\n", icao.c_str());
+            mark_route_result(entry, callsign.c_str(), origin, dest, ok);
+            if (ok) platform_log("[Enrich] route %s -> %s for %s\n", origin, dest, icao.c_str());
+            else platform_log("[Enrich] AeroDataBox no route for %s\n", icao.c_str());
         }
         notify_callback(entry);
     } else {
         std::lock_guard<std::mutex> lock(_mutex);
-        entry->route_checked = true; // skipped — don't re-hit until cache cleared
+        // Skipped — stamp so we don't spin until TTL / callsign change / cache clear.
+        mark_route_result(entry, callsign.c_str(), "", "", false);
     }
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
         entry->loaded = true;
         entry->loading = false;
+        _busy = false;
+    }
+    notify_callback(entry);
+}
+
+// Re-query AeroDataBox only (keep photo / adsbdb fields). Used when the
+// enrichment cache is warm but O/D is stale (TTL) or the callsign changed.
+void run_route_refresh(std::string icao, std::string registration, std::string callsign) {
+    AircraftEnrichment *entry = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        entry = get_or_create_cache_entry(icao.c_str());
+    }
+
+    char adbox_key[sizeof(g_config.aerodatabox_key)] = {};
+    int adbox_prov = 0;
+    bool adbox_on = adbox_allowed();
+    if (adbox_on) {
+        adbox_prov = g_config.aerodatabox_provider;
+        strlcpy(adbox_key, g_config.aerodatabox_key, sizeof(adbox_key));
+    }
+
+    if (adbox_on) {
+        char origin[8] = {}, dest[8] = {};
+        bool ok = fetch_adbox_route(adbox_prov, adbox_key, icao.c_str(), callsign.c_str(),
+                                    registration.c_str(),
+                                    origin, sizeof(origin), dest, sizeof(dest));
+        std::lock_guard<std::mutex> lock(_mutex);
+        mark_route_result(entry, callsign.c_str(), origin, dest, ok);
+        platform_log("[Enrich] route refresh %s -> %s for %s (%s)\n",
+                     ok ? origin : "-", ok ? dest : "-", icao.c_str(),
+                     ok ? "ok" : "none");
+    } else {
+        std::lock_guard<std::mutex> lock(_mutex);
+        mark_route_result(entry, callsign.c_str(), "", "", false);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
         _busy = false;
     }
     notify_callback(entry);
@@ -620,33 +804,60 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
     if (!icao_hex || !icao_hex[0]) return;
 
     const bool adbox_on = adbox_allowed();
+    bool kick_route_only = false;
+    bool kick_full = false;
+    std::string icao;
+    std::string reg;
+    std::string cs;
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
         for (int i = 0; i < _cache_count; i++) {
             if (strcmp(_cache_keys[i], icao_hex) != 0 || !_cache[i].loaded) continue;
-            // Cache hit — but if AeroDataBox is on and we never checked route
-            // (e.g. service was enabled after a prior enrich), refresh.
-            if (adbox_on && !_cache[i].route_checked) {
-                break; // fall through to full re-fetch
+
+            // Warm cache: serve photo/meta immediately. If O/D is missing,
+            // stale (TTL), or the callsign changed, refresh route only —
+            // avoids re-hitting adsbdb/planespotters.
+            if (route_needs_refresh(&_cache[i], callsign, adbox_on)) {
+                _pending_callback = callback;
+                notify_callback(&_cache[i]);
+                if (_busy) return; // show stale O/D; another fetch owns the slot
+                _busy = true;
+                _deferred_ready = false;
+                kick_route_only = true;
+                icao = icao_hex;
+                reg = registration ? registration : "";
+                cs = callsign ? callsign : "";
+                break;
             }
+
             _pending_callback = callback;
             notify_callback(&_cache[i]);
             return;
         }
-        if (_busy) {
-            platform_log("enrich: skipped (fetch already in progress)\n");
-            return;
+
+        if (!kick_route_only) {
+            if (_busy) {
+                platform_log("enrich: skipped (fetch already in progress)\n");
+                return;
+            }
+            _busy = true;
+            _pending_callback = callback;
+            _deferred_ready = false;
+            kick_full = true;
+            icao = icao_hex;
+            reg = registration ? registration : "";
+            cs = callsign ? callsign : "";
         }
-        _busy = true;
-        _pending_callback = callback;
-        _deferred_ready = false;
     }
 
-    std::string icao(icao_hex);
-    std::string reg(registration ? registration : "");
-    std::string cs(callsign ? callsign : "");
-    std::thread([icao, reg, cs]() { run_enrichment(icao, reg, cs); }).detach();
+    if (kick_route_only) {
+        std::thread([icao, reg, cs]() { run_route_refresh(icao, reg, cs); }).detach();
+        return;
+    }
+    if (kick_full) {
+        std::thread([icao, reg, cs]() { run_enrichment(icao, reg, cs); }).detach();
+    }
 }
 
 void enrichment_clear_cache() {

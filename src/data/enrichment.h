@@ -16,6 +16,10 @@ struct AircraftEnrichment {
     char origin_icao[8];
     char dest_icao[8];
     bool route_checked; // true once AeroDataBox was attempted (or skipped as off)
+    // Callsign used for the last route lookup (alnum upper). Empty if none.
+    char route_callsign[16];
+    // platform_millis() when route_checked was set (for short O/D TTL).
+    uint32_t route_checked_ms;
     bool loaded;
     bool loading;
 
