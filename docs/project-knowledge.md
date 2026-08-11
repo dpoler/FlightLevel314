@@ -63,7 +63,6 @@ See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Device provisioning for API keys / secrets (how they get onto the Pi)
 - Enrichment O/D: hide implausible low-altitude routes at airport views
-- VIEW: “Rebuild this map” (current mosaic only; not full cache clear)
 - Map overnight hang A/B (`DRAW_UNIT_CNT=1` trial branch)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
@@ -78,6 +77,7 @@ Recently closed (2026-08-10): airline names from OpenTravelData (dropped
 AirlinesCSV; ~900 ICAO3 codes, global); AeroDataBox O/D accuracy + skip
 small GA/HELI/MIL; Map/Radar bullseye declutter (Map: no rings;
 Radar: rings+sweep only, no airport/runway drawing).
+Recently closed (2026-08-11): VIEW **Rebuild map** (current mosaic only).
 
 ### Settings draft semantics (TRAFFIC SOURCE)
 TRAFFIC SOURCE live-previews on change but persists only on **Save**;
@@ -582,15 +582,12 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   gate in detail_card (or enrichment read path) — no extra API. Full note
   under origin/destination history above §9.
 
-- **VIEW — “Rebuild this map” (current mosaic only) (Dan, 2026-08-10)**:
-  Settings already has a heavy **Clear map cache** (all on-disk mosaics +
-  in-memory front/inbox). Want a lighter Map-only action — ideally under
-  the VIEW menu — that drops/rebuilds **only the current**
-  `(style, lat, lon, range, geometry)` basemap: delete that cache file,
-  clear the in-memory slot for it, and re-request. Use case: one blank
-  missing tile in an otherwise-good mosaic (seen on the overnight freeze
-  frame; hole suspected unrelated to the hang, but no good way to fix
-  just that map without nuking the whole cache). Do not start unless asked.
+- **VIEW — “Rebuild this map” (current mosaic only)**: ~~Settings already
+  has a heavy Clear map cache; want VIEW action for current mosaic only~~
+  — **done 2026-08-11**: VIEW → Basemap → **Rebuild map** calls
+  `basemap_rebuild_current()` (delete that cache file, drop in-memory
+  front/inbox, refetch). Worker follow-up when gen bumps mid-fetch so a
+  rebuild while busy still runs.
 
 - **Map overnight hang / SW draw image-decoder A/B (Dan, 2026-08-10)**:
   see §6. Trial `LV_DRAW_SW_DRAW_UNIT_CNT=1` on
