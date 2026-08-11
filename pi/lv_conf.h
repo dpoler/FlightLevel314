@@ -53,13 +53,20 @@
  * was 1, so the SW rasterizer ran entirely on the main thread -- matching
  * the ~4.5-6ms/draw-call cost measured on real DRM. pthread + CNT>1 fans
  * draw tasks across worker cores (leave headroom for the UI main thread
- * and the detached fetch thread). Currently trying CNT=3 after CNT=2
- * looked smooth with text_local fixes; don't jump straight to 4.
+ * and the detached fetch thread). CNT=3 was in use after CNT=2 looked
+ * smooth with text_local fixes.
+ *
+ * 2026-08-10 overnight hang (Map + basemap): UI dead, fetch alive, kill -9
+ * required. gdb: main in lv_draw_dispatch_wait_for_request; one SW draw
+ * unit inside lv_image_decoder_open; other units blocked on that decoder
+ * mutex. Not the DRM flush hang. Trial: CNT=1 to see if overnight hangs
+ * stop (isolates parallel image-draw / decoder). If yes, prefer a
+ * decoder-bypass blit for basemap/weather over leaving CNT=1 forever.
  * Stack bumped to 32KB because LVGL's internal ThorVG path is enabled
  * when CNT > 1 (lv_draw_sw.c) -- LVGL's own note recommends >=32KB then. */
 #define LV_USE_OS LV_OS_PTHREAD
 #define LV_DRAW_THREAD_STACK_SIZE (32 * 1024)
-#define LV_DRAW_SW_DRAW_UNIT_CNT 3
+#define LV_DRAW_SW_DRAW_UNIT_CNT 1
 
 /* Image decoders */
 #define LV_USE_LODEPNG 1
