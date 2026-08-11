@@ -848,6 +848,8 @@ void worker_main(uint32_t gen) {
         }
     }
 
+    uint32_t latest = 0;
+    bool need_followup = false;
     {
         std::lock_guard<std::mutex> lock(g_mu);
         if (ok && gen == g_req_gen) {
@@ -861,7 +863,19 @@ void worker_main(uint32_t gen) {
             g_prog_visible = false;
             g_prog_pct = 0;
         }
+        latest = g_req_gen;
         g_worker_busy = false;
+        // A newer basemap_request / rebuild_current bumped gen while we
+        // ran (and returned early because we were busy). Chain a follow-up
+        // so that work isn't dropped — same idea as the old wrapper thread
+        // in basemap_request, but lives here so rebuild/cache-clear also win.
+        if (latest != gen) {
+            g_worker_busy = true;
+            need_followup = true;
+        }
+    }
+    if (need_followup) {
+        std::thread(worker_main, latest).detach();
     }
 }
 
@@ -924,22 +938,7 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     if (g_worker_busy) return;
     g_worker_busy = true;
     uint32_t gen = g_req_gen;
-    std::thread([gen]() {
-        worker_main(gen);
-        uint32_t latest = 0;
-        bool need = false;
-        {
-            std::lock_guard<std::mutex> lock(g_mu);
-            latest = g_req_gen;
-            if (latest != gen && !g_worker_busy) {
-                g_worker_busy = true;
-                need = true;
-            }
-        }
-        if (need) {
-            std::thread(worker_main, latest).detach();
-        }
-    }).detach();
+    std::thread(worker_main, gen).detach();
 }
 
 bool basemap_poll_swap(void) {
@@ -1066,4 +1065,46 @@ int basemap_cache_clear(void) {
     platform_log("Basemap: cache clear — removed %d file(s) from %s\n",
                  removed, dir.c_str());
     return removed;
+}
+
+bool basemap_rebuild_current(void) {
+    float lat = 0, lon = 0, radius_nm = 0;
+    int w = 0, h = 0, cy = 0, br = 0, style = 0;
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        if (g_req_w <= 0 || g_req_h <= 0 || g_req_br <= 0) {
+            platform_log("Basemap: rebuild current — no active map request\n");
+            return false;
+        }
+        lat = g_req_lat;
+        lon = g_req_lon;
+        radius_nm = g_req_radius;
+        w = g_req_w;
+        h = g_req_h;
+        cy = g_req_cy;
+        br = g_req_br;
+        style = g_req_style;
+        path = cache_path(style, lat, lon, radius_nm, w, h, cy, br);
+
+        // Drop the drawn buffer so the hole isn't sticky while we refetch.
+        g_front = BasemapSlot{};
+        g_inbox = BasemapSlot{};
+        g_inbox_ready = false;
+        g_unavailable = false;
+        g_prog_visible = false;
+        g_prog_pct = 0;
+        g_req_gen++; // discard any in-flight publish for the old buffer
+    }
+
+    if (unlink(path.c_str()) == 0) {
+        platform_log("Basemap: rebuild current — removed %s\n", path.c_str());
+    } else {
+        platform_log("Basemap: rebuild current — no cache file (will refetch) %s\n",
+                     path.c_str());
+    }
+
+    // basemap_request sees front invalid and starts (or queues) a worker.
+    basemap_request(lat, lon, radius_nm, w, h, cy, br);
+    return true;
 }

@@ -8,6 +8,9 @@
 #include "display_prefs.h"
 #include "../pins_config.h"
 #include "../data/storage.h"
+#if !defined(ARDUINO)
+#include "basemap.h"
+#endif
 
 // Single-column (Radar / ESP32): Trails → Tags → Locations → Alerts.
 #define PANEL_W_1COL 300
@@ -353,8 +356,31 @@ static void open_overlay() {
             storage_save_config(g_config);
         }, LV_EVENT_PRESS_LOST, nullptr);
 
-        section_header(_panel, "WEATHER", rx, 160);
-        toggle_row(_panel, "Show weather", rx, 188, col_w, map_weather_shown(), [](lv_event_t *e) {
+        // Surgical refresh of the current mosaic only (one blank tile, etc.)
+        // — not Settings' full "Clear map cache".
+        lv_obj_t *rebuild_btn = lv_obj_create(_panel);
+        lv_obj_set_size(rebuild_btn, col_w, 32);
+        lv_obj_set_pos(rebuild_btn, rx, 148);
+        lv_obj_set_style_bg_color(rebuild_btn, COLOR_ROW, 0);
+        lv_obj_set_style_border_color(rebuild_btn, COLOR_ACCENT, 0);
+        lv_obj_set_style_border_width(rebuild_btn, 1, 0);
+        lv_obj_set_style_radius(rebuild_btn, 6, 0);
+        lv_obj_set_style_pad_all(rebuild_btn, 0, 0);
+        lv_obj_clear_flag(rebuild_btn, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_event_cb(rebuild_btn, [](lv_event_t *e) {
+            (void)e;
+            if (basemap_rebuild_current()) {
+                map_view_update();
+                close_overlay(); // show "Updating map..." / progress in status bar
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *rebuild_lbl = lv_label_create(rebuild_btn);
+        lv_label_set_text(rebuild_lbl, "Rebuild map");
+        lv_obj_set_style_text_color(rebuild_lbl, COLOR_ACCENT, 0);
+        lv_obj_center(rebuild_lbl);
+
+        section_header(_panel, "WEATHER", rx, 190);
+        toggle_row(_panel, "Show weather", rx, 218, col_w, map_weather_shown(), [](lv_event_t *e) {
             if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != map_weather_shown())
                 map_weather_toggle();
             map_view_on_show(); // kick fetch when enabling
@@ -365,17 +391,17 @@ static void open_overlay() {
         lv_label_set_text(wx_opa_lbl, "Opacity");
         lv_obj_set_style_text_font(wx_opa_lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(wx_opa_lbl, COLOR_DIM, 0);
-        lv_obj_set_pos(wx_opa_lbl, rx, 222);
+        lv_obj_set_pos(wx_opa_lbl, rx, 252);
 
         _wx_opa_label = lv_label_create(_panel);
         lv_label_set_text_fmt(_wx_opa_label, "%d%%", map_weather_opa());
         lv_obj_set_style_text_color(_wx_opa_label, lv_color_white(), 0);
         lv_obj_set_style_text_font(_wx_opa_label, &lv_font_montserrat_14, 0);
-        lv_obj_set_pos(_wx_opa_label, rx + col_w - 50, 222);
+        lv_obj_set_pos(_wx_opa_label, rx + col_w - 50, 252);
 
         _wx_opa_slider = lv_slider_create(_panel);
         lv_obj_set_size(_wx_opa_slider, col_w, 10);
-        lv_obj_set_pos(_wx_opa_slider, rx, 246);
+        lv_obj_set_pos(_wx_opa_slider, rx, 276);
         lv_slider_set_range(_wx_opa_slider, 10, 100);
         lv_slider_set_value(_wx_opa_slider, map_weather_opa(), LV_ANIM_OFF);
         lv_obj_set_style_bg_color(_wx_opa_slider, lv_color_hex(0x333366), 0);
