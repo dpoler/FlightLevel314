@@ -63,6 +63,7 @@ See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Device provisioning for API keys / secrets (how they get onto the Pi)
 - Enrichment O/D: hide implausible low-altitude routes at airport views
+- Satellite basemap style (Esri or Mapbox; API key OK)
 - VIEW: “Rebuild this map” (current mosaic only; not full cache clear)
 - Map overnight hang A/B (`DRAW_UNIT_CNT=1` trial branch)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
@@ -595,6 +596,21 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
 - **Map overnight hang / SW draw image-decoder A/B (Dan, 2026-08-10)**:
   see §6. Trial `LV_DRAW_SW_DRAW_UNIT_CNT=1` on
   `cursor/draw-unit-cnt1-e1e8`. Soak Map+basemap overnight.
+
+- **Satellite basemap style (Dan, 2026-08-12)**: add a VIEW basemap option
+  for satellite/aerial under traffic (same XYZ → mosaic → opacity pipeline).
+  Provider survey (free + API key OK, reasonable limits for baked mosaics
+  + ~30d disk cache, ≤300 tiles/rebuild):
+  - **Prefer Esri World Imagery** via ArcGIS Location Platform (~2M free
+    tiles/mo) or **Mapbox Satellite** (~750k free raster tiles/mo). Both
+    global XYZ + token; attribution required. Do **not** rely on legacy
+    keyless `server.arcgisonline.com` World_Imagery long-term.
+  - MapTiler Satellite: easier signup, but free = non‑commercial + logo
+    and only ~100k requests/mo (tight if Rebuild is thrashed).
+  - USGS NAIP / TNM: free US-only, WMS/ImageServer — more work than XYZ.
+  - Skip Google/Bing/Azure for now.
+  Key in `config.json` (same secrets story as `adbox_key` / provisioning
+  backlog). Do not start unless asked.
 
 - **Map/Radar bullseye declutter**: ~~remove Map range rings; quiet Radar
   (no airport/runway drawing; VIEW "Other Airports" Map-only)~~ —
