@@ -2,6 +2,11 @@
 // warped into MapProjection space on top of the basemap. Disk-cached
 // ARGB8888 so clear sky stays transparent. Same inbox/poll threading
 // model as basemap.cpp — never touch LVGL from the worker.
+//
+// Intensity: RainViewer Universal Blue paints weak reflectivity (clutter /
+// very light returns) as large pale cyan/blue. We fetch unsmoothed tiles
+// and drop pixels whose nearest palette color is below ~20 dBZ so the
+// overlay reads as real precip rather than "maybe weather" haze.
 
 #include "weather.h"
 
@@ -37,6 +42,189 @@ constexpr int RV_Z_MIN = 2;
 constexpr int CACHE_TTL_SEC = 480; // ~8 min; frames refresh ~10 min
 constexpr int MAX_PARALLEL = 6;
 constexpr const char *MAPS_URL = "https://api.rainviewer.com/public/weather-maps.json";
+
+// RainViewer Universal Blue (API color=2) rain+snow RGB → dBZ. Used to
+// drop weak returns (clutter / very light) after warp. Derived from
+// https://www.rainviewer.com/api/color-schemes.html column for scheme 2.
+struct RvColor { uint8_t r, g, b; int8_t dbz; };
+static const RvColor k_rv_palette[] = {
+    { 99,  97,  89, -10}, // rain
+    {102,  99,  90,  -9}, // rain
+    {206, 255, 255,  -9}, // snow
+    {105, 102,  92,  -8}, // rain
+    {205, 255, 255,  -8}, // snow
+    {108, 104,  93,  -7}, // rain
+    {204, 255, 255,  -7}, // snow
+    {111, 107,  95,  -6}, // rain
+    {203, 255, 255,  -6}, // snow
+    {114, 110,  97,  -5}, // rain
+    {117, 112,  98,  -4}, // rain
+    {202, 255, 255,  -4}, // snow
+    {120, 115, 100,  -3}, // rain
+    {201, 255, 255,  -3}, // snow
+    {124, 117, 101,  -2}, // rain
+    {200, 255, 255,  -2}, // snow
+    {127, 120, 103,  -1}, // rain
+    {199, 255, 255,  -1}, // snow
+    {130, 123, 105,   0}, // rain
+    {133, 125, 106,   1}, // rain
+    {198, 255, 255,   1}, // snow
+    {136, 128, 108,   2}, // rain
+    {197, 255, 255,   2}, // snow
+    {139, 130, 109,   3}, // rain
+    {196, 255, 255,   3}, // snow
+    {142, 133, 111,   4}, // rain
+    {195, 255, 255,   4}, // snow
+    {146, 136, 113,   5}, // rain
+    {158, 147, 117,   6}, // rain
+    {194, 255, 255,   6}, // snow
+    {170, 158, 121,   7}, // rain
+    {193, 255, 255,   7}, // snow
+    {182, 169, 126,   8}, // rain
+    {192, 255, 255,   8}, // snow
+    {194, 180, 130,   9}, // rain
+    {191, 255, 255,   9}, // snow
+    {206, 192, 135,  10}, // rain
+    {210, 196, 139,  11}, // rain
+    {184, 248, 255,  11}, // snow
+    {214, 200, 143,  12}, // rain
+    {178, 242, 255,  12}, // snow
+    {218, 204, 147,  13}, // rain
+    {171, 235, 255,  13}, // snow
+    {222, 208, 151,  14}, // rain
+    {165, 229, 255,  14}, // snow
+    {136, 221, 238,  15}, // rain
+    {159, 223, 255,  15}, // snow
+    {108, 209, 235,  16}, // rain
+    {152, 216, 255,  16}, // snow
+    { 81, 197, 232,  17}, // rain
+    {146, 210, 255,  17}, // snow
+    { 54, 186, 229,  18}, // rain
+    {139, 203, 255,  18}, // snow
+    { 27, 174, 226,  19}, // rain
+    {133, 197, 255,  19}, // snow
+    {  0, 163, 224,  20}, // rain
+    {127, 191, 255,  20}, // snow
+    {  0, 154, 213,  21}, // rain
+    {120, 184, 255,  21}, // snow
+    {  0, 145, 202,  22}, // rain
+    {114, 178, 255,  22}, // snow
+    {  0, 136, 191,  23}, // rain
+    {107, 171, 255,  23}, // snow
+    {  0, 127, 180,  24}, // rain
+    {101, 165, 255,  24}, // snow
+    {  0, 119, 170,  25}, // rain
+    { 95, 159, 255,  25}, // snow
+    {  0, 112, 163,  26}, // rain
+    { 91, 155, 255,  26}, // snow
+    {  0, 105, 156,  27}, // rain
+    { 88, 152, 255,  27}, // snow
+    {  0,  98, 149,  28}, // rain
+    { 85, 149, 255,  28}, // snow
+    {  0,  91, 142,  29}, // rain
+    { 82, 146, 255,  29}, // snow
+    {  0,  85, 136,  30}, // rain
+    { 79, 143, 255,  30}, // snow
+    {  0,  81, 128,  31}, // rain
+    { 75, 139, 255,  31}, // snow
+    {  0,  78, 120,  32}, // rain
+    { 72, 136, 255,  32}, // snow
+    {  0,  74, 112,  33}, // rain
+    { 69, 133, 255,  33}, // snow
+    {  0,  71, 104,  34}, // rain
+    { 66, 130, 255,  34}, // snow
+    {255, 238,   0,  35}, // rain
+    { 63, 127, 255,  35}, // snow
+    {255, 224,   0,  36}, // rain
+    { 59, 123, 255,  36}, // snow
+    {255, 210,   0,  37}, // rain
+    { 56, 120, 255,  37}, // snow
+    {255, 197,   0,  38}, // rain
+    { 53, 117, 255,  38}, // snow
+    {255, 183,   0,  39}, // rain
+    { 50, 114, 255,  39}, // snow
+    {255, 170,   0,  40}, // rain
+    { 47, 111, 255,  40}, // snow
+    {255, 159,   0,  41}, // rain
+    { 43, 107, 255,  41}, // snow
+    {255, 149,   0,  42}, // rain
+    { 40, 104, 255,  42}, // snow
+    {255, 139,   0,  43}, // rain
+    { 37, 101, 255,  43}, // snow
+    {255, 129,   0,  44}, // rain
+    { 34,  98, 255,  44}, // snow
+    {255,  68,   0,  45}, // rain
+    { 31,  95, 255,  45}, // snow
+    {242,  54,   0,  46}, // rain
+    { 27,  91, 255,  46}, // snow
+    {230,  40,   0,  47}, // rain
+    { 24,  88, 255,  47}, // snow
+    {217,  27,   0,  48}, // rain
+    { 21,  85, 255,  48}, // snow
+    {205,  13,   0,  49}, // rain
+    { 18,  82, 255,  49}, // snow
+    {193,   0,   0,  50}, // rain
+    { 15,  79, 255,  50}, // snow
+    {168,   0,   0,  51}, // rain
+    { 12,  75, 255,  51}, // snow
+    {143,   0,   0,  52}, // rain
+    {  9,  72, 255,  52}, // snow
+    {118,   0,   0,  53}, // rain
+    {  6,  69, 255,  53}, // snow
+    { 93,   0,   0,  54}, // rain
+    {  2,  66, 255,  54}, // snow
+    {255, 170, 255,  55}, // rain
+    {  0,  63, 255,  55}, // snow
+    {255, 159, 255,  56}, // rain
+    {  0,  59, 255,  56}, // snow
+    {255, 149, 255,  57}, // rain
+    {  0,  56, 255,  57}, // snow
+    {255, 139, 255,  58}, // rain
+    {  0,  53, 255,  58}, // snow
+    {255, 129, 255,  59}, // rain
+    {  0,  50, 255,  59}, // snow
+    {255, 119, 255,  60}, // rain
+    {  0,  47, 255,  60}, // snow
+    {255, 108, 255,  61}, // rain
+    {  0,  43, 255,  61}, // snow
+    {255,  98, 255,  62}, // rain
+    {  0,  40, 255,  62}, // snow
+    {255,  88, 255,  63}, // rain
+    {  0,  37, 255,  63}, // snow
+    {255,  78, 255,  64}, // rain
+    {  0,  34, 255,  64}, // snow
+    {255, 255, 255,  65}, // rain
+    {  0,  31, 255,  65}, // snow
+};
+static constexpr int k_rv_palette_n = (int)(sizeof(k_rv_palette) / sizeof(k_rv_palette[0]));
+// Hide nearest palette dBZ below this (NOAA: <20 ≈ clutter / very light).
+static constexpr int k_rv_dbz_floor = 20;
+
+static int nearest_rv_dbz(uint8_t r, uint8_t g, uint8_t b) {
+    int best_d = 1 << 30;
+    int best_dbz = -32;
+    for (int i = 0; i < k_rv_palette_n; i++) {
+        int dr = (int)r - (int)k_rv_palette[i].r;
+        int dg = (int)g - (int)k_rv_palette[i].g;
+        int db = (int)b - (int)k_rv_palette[i].b;
+        int d = dr * dr + dg * dg + db * db;
+        if (d < best_d) { best_d = d; best_dbz = k_rv_palette[i].dbz; }
+    }
+    return best_dbz;
+}
+
+// Zero alpha for pixels whose nearest Universal Blue color is below floor.
+static void apply_intensity_floor_bgra(std::vector<uint8_t> &argb) {
+    for (size_t i = 0; i + 3 < argb.size(); i += 4) {
+        uint8_t a = argb[i + 3];
+        if (a == 0) continue;
+        uint8_t b = argb[i + 0], g = argb[i + 1], r = argb[i + 2];
+        if (nearest_rv_dbz(r, g, b) < k_rv_dbz_floor) {
+            argb[i + 0] = argb[i + 1] = argb[i + 2] = argb[i + 3] = 0;
+        }
+    }
+}
+
 
 struct WeatherSlot {
     std::vector<uint8_t> argb; // LVGL ARGB8888: B,G,R,A per pixel
@@ -330,7 +518,7 @@ void ensure_dir(const std::string &path) {
 std::string cache_path(float lat, float lon, float radius_nm,
                        int w, int h, int cy, int br) {
     char name[220];
-    snprintf(name, sizeof(name), "%s/wx_eq1_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.argb",
+    snprintf(name, sizeof(name), "%s/wx_eq2_f20_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.argb",
              cache_dir().c_str(), lat, lon, radius_nm, w, h, cy, br);
     return name;
 }
@@ -499,8 +687,9 @@ bool build_weather(WeatherSlot &slot, uint32_t gen) {
             if (wtx < 0) wtx += n;
             TileFetch job;
             char url[420];
-            // color=2 (universal), smooth=1, snow=1
-            snprintf(url, sizeof(url), "%s%s/256/%d/%d/%d/2/1_1.png",
+            // color=2 (Universal Blue), smooth=0 (less smear), snow=1
+            // Weak returns filtered client-side (k_rv_dbz_floor) after warp.
+            snprintf(url, sizeof(url), "%s%s/256/%d/%d/%d/2/0_1.png",
                      host.c_str(), frame_path.c_str(), z, wtx, ty);
             job.url = url;
             job.dst_x = (tx - tx0) * TILE_PX;
@@ -543,6 +732,8 @@ bool build_weather(WeatherSlot &slot, uint32_t gen) {
             slot.argb[off + 3] = a;
         }
     }
+
+    apply_intensity_floor_bgra(slot.argb);
 
     slot.built_at = time(nullptr);
     slot.bind_dsc();
