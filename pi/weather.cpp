@@ -5,7 +5,7 @@
 //
 // Intensity: RainViewer Universal Blue paints weak reflectivity (clutter /
 // very light returns) as large pale cyan/blue. We fetch unsmoothed tiles
-// and drop pixels whose nearest palette color is below ~20 dBZ so the
+// and drop pixels whose nearest palette color is below ~25 dBZ so the
 // overlay reads as real precip rather than "maybe weather" haze.
 
 #include "weather.h"
@@ -197,8 +197,9 @@ static const RvColor k_rv_palette[] = {
     {  0,  31, 255,  65}, // snow
 };
 static constexpr int k_rv_palette_n = (int)(sizeof(k_rv_palette) / sizeof(k_rv_palette[0]));
-// Hide nearest palette dBZ below this (NOAA: <20 ≈ clutter / very light).
-static constexpr int k_rv_dbz_floor = 20;
+// Hide nearest palette dBZ below this (NOAA: <20 ≈ clutter / very light;
+// 25 ≈ closer to "light precip" apps show).
+static constexpr int k_rv_dbz_floor = 25;
 
 static int nearest_rv_dbz(uint8_t r, uint8_t g, uint8_t b) {
     int best_d = 1 << 30;
@@ -518,7 +519,7 @@ void ensure_dir(const std::string &path) {
 std::string cache_path(float lat, float lon, float radius_nm,
                        int w, int h, int cy, int br) {
     char name[220];
-    snprintf(name, sizeof(name), "%s/wx_eq2_f20_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.argb",
+    snprintf(name, sizeof(name), "%s/wx_eq2_f25_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.argb",
              cache_dir().c_str(), lat, lon, radius_nm, w, h, cy, br);
     return name;
 }
