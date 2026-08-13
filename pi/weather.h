@@ -2,7 +2,7 @@
 
 // Pi-only RainViewer precip radar overlay under Map (on top of basemap).
 // Free personal/educational API — no key. See https://www.rainviewer.com/api.html
-// Client-side intensity floor (~20 dBZ) drops weak Universal Blue clutter.
+// Client-side intensity floor (~25 dBZ) drops weak Universal Blue clutter.
 
 #include "lvgl.h"
 #include <stdint.h>
