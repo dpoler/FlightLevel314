@@ -17,6 +17,13 @@
 #define LV_USE_LOG 1
 #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
 
+/* Default LV_ASSERT_HANDLER is `while(1);` — that pinned a SW draw unit at
+ * 100% CPU overnight (Invalid draw buffer in lv_image_decoder_open) with the
+ * UI frozen and only kill -9 recovering. Prefer process exit so systemd can
+ * restart the kiosk; the decoder open path is also soft-patched separately. */
+#define LV_ASSERT_HANDLER_INCLUDE <stdlib.h>
+#define LV_ASSERT_HANDLER abort();
+
 /* Fonts -- kept in sync with the ESP32 side's lv_conf.h so shared
  * src/ui code has the same widgets/fonts available on both targets. */
 #define LV_FONT_MONTSERRAT_10 1

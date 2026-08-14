@@ -229,7 +229,9 @@ static void apply_intensity_floor_bgra(std::vector<uint8_t> &argb) {
 
 struct WeatherSlot {
     std::vector<uint8_t> argb; // LVGL ARGB8888: B,G,R,A per pixel
-    lv_image_dsc_t dsc{};
+    // Full draw buf — see basemap.cpp bind_buf() note (Invalid draw buffer
+    // assert → while(1) overnight hang).
+    lv_draw_buf_t buf{};
     float lat = 0, lon = 0, radius_nm = 0;
     int w = 0, h = 0;
     int geo_cy = 0;
@@ -237,14 +239,13 @@ struct WeatherSlot {
     time_t built_at = 0;
     bool valid = false;
 
-    void bind_dsc() {
-        memset(&dsc, 0, sizeof(dsc));
-        dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
-        dsc.header.w = w;
-        dsc.header.h = h;
-        dsc.header.stride = w * 4;
-        dsc.data_size = (uint32_t)argb.size();
-        dsc.data = argb.data();
+    void bind_buf() {
+        memset(&buf, 0, sizeof(buf));
+        if (argb.empty() || w <= 0 || h <= 0) return;
+        lv_result_t r = lv_draw_buf_init(&buf, (uint32_t)w, (uint32_t)h,
+                                         LV_COLOR_FORMAT_ARGB8888, (uint32_t)w * 4,
+                                         argb.data(), (uint32_t)argb.size());
+        if (r != LV_RESULT_OK) memset(&buf, 0, sizeof(buf));
     }
 };
 
@@ -737,7 +738,7 @@ bool build_weather(WeatherSlot &slot, uint32_t gen) {
     apply_intensity_floor_bgra(slot.argb);
 
     slot.built_at = time(nullptr);
-    slot.bind_dsc();
+    slot.bind_buf();
     slot.valid = true;
     return true;
 }
@@ -760,7 +761,7 @@ void worker_main(uint32_t gen) {
                                   local.w, local.h, local.geo_cy, local.bullseye_r);
     bool ok = false;
     if (load_cache(path, local)) {
-        local.bind_dsc();
+        local.bind_buf();
         local.valid = true;
         ok = true;
         platform_log("Weather: cache hit %s\n", path.c_str());
@@ -775,7 +776,7 @@ void worker_main(uint32_t gen) {
         std::lock_guard<std::mutex> lock(g_mu);
         if (ok && gen == g_req_gen) {
             g_inbox = std::move(local);
-            g_inbox.bind_dsc();
+            g_inbox.bind_buf();
             g_inbox_ready = true;
             platform_log("Weather: ready %dx%d\n", g_inbox.w, g_inbox.h);
         } else if (gen != g_req_gen) {
@@ -862,7 +863,7 @@ bool weather_poll_swap(void) {
         return false;
     }
     g_front = std::move(g_inbox);
-    g_front.bind_dsc();
+    g_front.bind_buf();
     g_inbox_ready = false;
     return g_front.valid;
 }
@@ -875,7 +876,7 @@ void weather_draw(lv_layer_t *layer) {
     }
     if (g_front.argb.empty()) return;
 
-    g_front.bind_dsc();
+    g_front.bind_buf();
 
     int pct = map_weather_opa();
     if (pct < 10) pct = 10;
@@ -883,7 +884,7 @@ void weather_draw(lv_layer_t *layer) {
 
     lv_draw_image_dsc_t img;
     lv_draw_image_dsc_init(&img);
-    img.src = &g_front.dsc;
+    img.src = &g_front.buf;
     img.opa = (lv_opa_t)((pct * 255) / 100);
     lv_area_t a = {0, 0, (lv_coord_t)(g_front.w - 1), (lv_coord_t)(g_front.h - 1)};
     lv_draw_image(layer, &img, &a);

@@ -39,9 +39,8 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(lvgl)
 
-# Harden LVGL's DRM driver against UI-thread freezes (infinite poll on a
-# dangling page-flip req). Idempotent — safe across reconfigure. See
-# pi/patches/apply_lvgl_drm_patch.py and project-knowledge.
+# Harden LVGL against known UI freezes. Idempotent — safe across reconfigure.
+# See pi/patches/*.py and project-knowledge.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 execute_process(
     COMMAND "${Python3_EXECUTABLE}"
@@ -54,6 +53,18 @@ execute_process(
 message(STATUS "LVGL DRM patch: ${_lvgl_drm_patch_out}")
 if(NOT _lvgl_drm_patch_rc EQUAL 0)
     message(FATAL_ERROR "LVGL DRM hang patch failed (rc=${_lvgl_drm_patch_rc}): ${_lvgl_drm_patch_err}")
+endif()
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/patches/apply_lvgl_decoder_assert_patch.py"
+            "${lvgl_SOURCE_DIR}"
+    RESULT_VARIABLE _lvgl_dec_patch_rc
+    OUTPUT_VARIABLE _lvgl_dec_patch_out
+    ERROR_VARIABLE _lvgl_dec_patch_err
+)
+message(STATUS "LVGL decoder assert patch: ${_lvgl_dec_patch_out}")
+if(NOT _lvgl_dec_patch_rc EQUAL 0)
+    message(FATAL_ERROR "LVGL decoder assert patch failed (rc=${_lvgl_dec_patch_rc}): ${_lvgl_dec_patch_err}")
 endif()
 
 FetchContent_Declare(

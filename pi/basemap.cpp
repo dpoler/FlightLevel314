@@ -51,7 +51,10 @@ constexpr int SECTIONAL_Z_MAX = 12;
 
 struct BasemapSlot {
     std::vector<uint8_t> rgb565;
-    lv_image_dsc_t dsc{};
+    // Full draw buf (handlers + unaligned_data). Plain lv_image_dsc_t left
+    // those NULL; if LV_IMAGE_FLAGS_ALLOCATED was ever set, bin_decoder
+    // casts dsc→draw_buf and LVGL asserts into while(1).
+    lv_draw_buf_t buf{};
     float lat = 0, lon = 0, radius_nm = 0;
     int w = 0, h = 0;
     int geo_cy = 0;
@@ -59,14 +62,13 @@ struct BasemapSlot {
     int style = MAP_BASEMAP_STYLE_DARK;
     bool valid = false;
 
-    void bind_dsc() {
-        memset(&dsc, 0, sizeof(dsc));
-        dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-        dsc.header.w = w;
-        dsc.header.h = h;
-        dsc.header.stride = w * 2;
-        dsc.data_size = (uint32_t)rgb565.size();
-        dsc.data = rgb565.data();
+    void bind_buf() {
+        memset(&buf, 0, sizeof(buf));
+        if (rgb565.empty() || w <= 0 || h <= 0) return;
+        lv_result_t r = lv_draw_buf_init(&buf, (uint32_t)w, (uint32_t)h,
+                                         LV_COLOR_FORMAT_RGB565, (uint32_t)w * 2,
+                                         rgb565.data(), (uint32_t)rgb565.size());
+        if (r != LV_RESULT_OK) memset(&buf, 0, sizeof(buf));
     }
 };
 
@@ -806,7 +808,7 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     platform_log("Basemap: warp %ums (%dx%d)\n",
                  (unsigned)(platform_millis() - t_warp0), slot.w, slot.h);
 
-    slot.bind_dsc();
+    slot.bind_buf();
     slot.valid = true;
     return true;
 }
@@ -830,7 +832,7 @@ void worker_main(uint32_t gen) {
                                   local.w, local.h, local.geo_cy, local.bullseye_r);
     bool ok = false;
     if (load_cache(path, local)) {
-        local.bind_dsc();
+        local.bind_buf();
         local.valid = true;
         ok = true;
         // Cache hit: don't flash the "Updating map..." chrome.
@@ -852,7 +854,7 @@ void worker_main(uint32_t gen) {
         std::lock_guard<std::mutex> lock(g_mu);
         if (ok && gen == g_req_gen) {
             g_inbox = std::move(local);
-            g_inbox.bind_dsc();
+            g_inbox.bind_buf();
             g_inbox_ready = true;
             g_prog_visible = false;
             g_prog_pct = 0;
@@ -951,7 +953,7 @@ bool basemap_poll_swap(void) {
         return false;
     }
     g_front = std::move(g_inbox);
-    g_front.bind_dsc();
+    g_front.bind_buf();
     g_inbox_ready = false;
     return g_front.valid;
 }
@@ -992,7 +994,7 @@ void basemap_draw(lv_layer_t *layer) {
     }
     if (g_front.rgb565.empty()) return;
 
-    g_front.bind_dsc();
+    g_front.bind_buf();
 
     int pct = map_basemap_opa();
     if (pct < 10) pct = 10;
@@ -1000,7 +1002,7 @@ void basemap_draw(lv_layer_t *layer) {
 
     lv_draw_image_dsc_t img;
     lv_draw_image_dsc_init(&img);
-    img.src = &g_front.dsc;
+    img.src = &g_front.buf;
     img.opa = (lv_opa_t)((pct * 255) / 100);
     lv_area_t a = {0, 0, (lv_coord_t)(g_front.w - 1), (lv_coord_t)(g_front.h - 1)};
     lv_draw_image(layer, &img, &a);

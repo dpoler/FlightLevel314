@@ -65,7 +65,7 @@ See §7.1. Highest-signal open items:
 - Enrichment O/D: hide implausible low-altitude routes at airport views
 - Satellite basemap style (Esri or Mapbox; API key OK)
 - VIEW: “Rebuild this map” (current mosaic only; not full cache clear)
-- Map overnight hang A/B (`DRAW_UNIT_CNT=1` trial branch)
+- Map overnight hang — root cause: LV_ASSERT while(1) in image decoder (fix in progress)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -379,18 +379,19 @@ known-issue), but the Pi has no such constraint — real aircraft photos in the
 detail card. See backlog §7 for full scope.
 
 ### Notable bugs found and fixed during the port (worth remembering)
-- **Pi Map overnight hang (UI dead, fetch alive, kill -9)** — *open, A/B*:
-  2026-08-10 ~07:10 after ~10.5h uptime. Touch dead, Map frozen on last
-  frame, status timer stuck; `Fetch (adsb.fi): OK` kept logging; kill -9
-  required. gdb: main in `lv_draw_dispatch_wait_for_request`; one SW draw
-  unit inside `lv_image_decoder_open`; others blocked on that decoder
-  mutex. **Not** the DRM `drm_flush_wait` hang. Suspect:
-  `LV_DRAW_SW_DRAW_UNIT_CNT=3` + full-screen basemap via `lv_draw_image`.
-  Trial: `CNT=1` on branch `cursor/draw-unit-cnt1-e1e8` (PR #21) for
-  Map+basemap soak. Dan noted the frozen frame had **one blank tile
-  square** (missing/unfilled mosaic cell); map had been fine with that
-  hole present — **suspect unrelated** to the hang, but reinforces wanting
-  a surgical “rebuild this map” (see §7.1) vs Settings’ full cache clear.
+- **Pi Map overnight hang (UI dead, fetch alive, kill -9)** — *fixed 2026-08-14*:
+  Reproduced idle overnight on Map+basemap+weather (KDEN). One CPU pinned
+  ~100% for hours; fetch OK. gdb: hot LWP inside `lv_image_decoder_open` at
+  `b .` (self-branch) immediately after `lv_log_add` for line 166 — that is
+  `LV_ASSERT_MSG(..., "Invalid draw buffer")` with default
+  `LV_ASSERT_HANDLER` = `while(1);`, holding `img_decoder_open_lock` so other
+  draw units block and main sits in `lv_draw_dispatch_wait_for_request`.
+  **Not** the DRM `drm_flush_wait` hang. Fix: (1) soft-fail that check via
+  `pi/patches/apply_lvgl_decoder_assert_patch.py`; (2) basemap/weather bind
+  real `lv_draw_buf_t` via `lv_draw_buf_init` (handlers/unaligned_data set);
+  (3) `LV_ASSERT_HANDLER abort()` so any other assert restarts under systemd
+  instead of spinning. Earlier `DRAW_UNIT_CNT=1` A/B was a red herring for
+  this failure mode (assert still fires with CNT=1).
 - **Pi DRM hard freeze (UI painted once, then touch/timer dead, kill -9)**:
   LVGL v9.5.0 `lv_linux_drm.c` can hang the UI thread in `drm_flush_wait()`
   forever — `poll(..., -1)` with no timeout, and a failed
@@ -593,9 +594,10 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   frame; hole suspected unrelated to the hang, but no good way to fix
   just that map without nuking the whole cache). Do not start unless asked.
 
-- **Map overnight hang / SW draw image-decoder A/B (Dan, 2026-08-10)**:
-  see §6. Trial `LV_DRAW_SW_DRAW_UNIT_CNT=1` on
-  `cursor/draw-unit-cnt1-e1e8`. Soak Map+basemap overnight.
+- **Map overnight hang / SW draw image-decoder (Dan, 2026-08-10 / 08-14)**:
+  ~~open A/B `DRAW_UNIT_CNT=1`~~ — root-caused as LV_ASSERT `while(1)` on
+  Invalid draw buffer; soft-fail patch + `lv_draw_buf_init` bind + abort
+  handler. See §6.
 
 - **Satellite basemap style (Dan, 2026-08-12)**: add a VIEW basemap option
   for satellite/aerial under traffic (same XYZ → mosaic → opacity pipeline).
