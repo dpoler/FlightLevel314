@@ -1119,6 +1119,7 @@ static bool _static_maps_inited = false;
 static void init_static_maps() {
     for (int i = 0; i < STATIC_MAP_COUNT; i++) {
         memset(&_static_map_dscs[i], 0, sizeof(lv_image_dsc_t));
+        _static_map_dscs[i].header.magic = LV_IMAGE_HEADER_MAGIC;
         _static_map_dscs[i].header.cf = LV_COLOR_FORMAT_RGB565;
         _static_map_dscs[i].header.w = STATIC_MAP_W;
         _static_map_dscs[i].header.h = STATIC_MAP_H;
