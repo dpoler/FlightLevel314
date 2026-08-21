@@ -26,6 +26,9 @@ void error_log_add(const char *fmt, ...) {
     va_end(args);
     e.timestamp = millis();
 
+    // Also journal — Settings ring is easy to miss when SSHing.
+    platform_log_warn("ErrorLog: %s\n", e.msg);
+
     _write_idx = (_write_idx + 1) % ERROR_LOG_MAX;
     if (_count < ERROR_LOG_MAX) _count++;
     _total++;

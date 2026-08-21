@@ -67,7 +67,7 @@ void ensure_probed() {
 
     DIR *d = opendir(k_backlight_root);
     if (!d) {
-        platform_log("Backlight: no %s (HDMI/SDL?)\n", k_backlight_root);
+        platform_log_info("Backlight: no %s (HDMI/SDL?)\n", k_backlight_root);
         return;
     }
     while (dirent *ent = readdir(d)) {
@@ -75,13 +75,13 @@ void ensure_probed() {
         std::string dir = std::string(k_backlight_root) + "/" + ent->d_name;
         if (probe_device(dir)) {
             g_ok = true;
-            platform_log("Backlight: using %s (max=%d)\n", g_bright_path.c_str(), g_max);
+            platform_log_info("Backlight: using %s (max=%d)\n", g_bright_path.c_str(), g_max);
             break;
         }
     }
     closedir(d);
     if (!g_ok)
-        platform_log("Backlight: no writable device under %s\n", k_backlight_root);
+        platform_log_warn("Backlight: no writable device under %s\n", k_backlight_root);
 }
 
 } // namespace
@@ -102,7 +102,7 @@ bool backlight_set_percent(int percent) {
     if (raw < 1) raw = 1;
     if (raw > g_max) raw = g_max;
     if (!write_int_file(g_bright_path, raw)) {
-        platform_log("Backlight: write %s failed (permissions? add udev rule)\n",
+        platform_log_warn("Backlight: write %s failed (permissions? add udev rule)\n",
                      g_bright_path.c_str());
         g_ok = false; // force re-probe next time
         g_probed = false;

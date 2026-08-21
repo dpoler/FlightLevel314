@@ -15,12 +15,49 @@ uint32_t platform_millis() {
     return (uint32_t)duration_cast<milliseconds>(steady_clock::now() - start).count();
 }
 
-void platform_log(const char *fmt, ...) {
+namespace {
+platform_log_level_t g_log_min = PLATFORM_LOG_INFO;
+
+const char *level_tag(platform_log_level_t level) {
+    switch (level) {
+    case PLATFORM_LOG_DEBUG: return "D ";
+    case PLATFORM_LOG_INFO:  return "I ";
+    case PLATFORM_LOG_WARN:  return "W ";
+    case PLATFORM_LOG_ERROR: return "E ";
+    }
+    return "I ";
+}
+} // namespace
+
+void platform_log_set_min_level(platform_log_level_t level) {
+    g_log_min = level;
+}
+
+platform_log_level_t platform_log_get_min_level(void) {
+    return g_log_min;
+}
+
+void platform_log_at(platform_log_level_t level, const char *fmt, ...) {
+    if (level < g_log_min) return;
+    // WARN/ERROR → stderr so journald can mark priority; DEBUG/INFO → stdout.
+    FILE *out = (level >= PLATFORM_LOG_WARN) ? stderr : stdout;
+    fputs(level_tag(level), out);
     va_list args;
     va_start(args, fmt);
-    vprintf(fmt, args);
+    vfprintf(out, fmt, args);
     va_end(args);
-    fflush(stdout); // stdout is fully-buffered when not a TTY (journald, redirected files) -- flush so log lines show up promptly
+    fflush(out);
+}
+
+void platform_log(const char *fmt, ...) {
+    if (PLATFORM_LOG_INFO < g_log_min) return;
+    FILE *out = stdout;
+    fputs("I ", out);
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(out, fmt, args);
+    va_end(args);
+    fflush(out);
 }
 
 namespace {

@@ -25,7 +25,7 @@ static void blank_hw_cursor(lv_display_t *disp) {
     if (!dev || dev->fd < 0 || dev->crtc_id == 0) return;
     // handle=0 disables the cursor plane. Ignore EBUSY — next REFR_READY retries.
     if (drmModeSetCursor(dev->fd, dev->crtc_id, 0, 0, 0) != 0 && errno != EBUSY) {
-        platform_log("DRM: hide HW cursor failed (crtc=%u): %s\n",
+        platform_log_warn("DRM: hide HW cursor failed (crtc=%u): %s\n",
                      dev->crtc_id, strerror(errno));
     }
 }

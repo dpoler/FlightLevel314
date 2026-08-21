@@ -47,13 +47,13 @@ bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
-        platform_log("HTTP GET %s failed: curl=%d\n", url, (int)res);
+        platform_log_warn("HTTP GET %s failed: curl=%d\n", url, (int)res);
         return false;
     }
     if (http_status) *http_status = http_code;
 
     if (require_2xx && (http_code < 200 || http_code >= 300)) {
-        platform_log("HTTP GET %s failed: http=%ld\n", url, http_code);
+        platform_log_warn("HTTP GET %s failed: http=%ld\n", url, http_code);
         return false;
     }
 

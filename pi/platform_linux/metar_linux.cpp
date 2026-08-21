@@ -127,7 +127,7 @@ bool fetch_ids(const char *icao, float lat, float lon) {
     strlcpy(metar_raw, best_raw, sizeof(metar_raw));
     strlcpy(metar_station, best_id && best_id[0] ? best_id : icao, sizeof(metar_station));
     metar_status = METAR_OK;
-    platform_log("METAR: %s (ids)\n", metar_station);
+    platform_log_debug("METAR: %s (ids)\n", metar_station);
     return true;
 }
 
@@ -145,14 +145,14 @@ bool fetch_bbox(float lat, float lon) {
     size_t len = 0;
     if (!platform_http_get(url, buf.data(), buf.size(), &len)) {
         metar_status = METAR_ERROR;
-        platform_log("METAR: network failed\n");
+        platform_log_warn("METAR: network failed\n");
         return false;
     }
 
     JsonDocument doc;
     if (deserializeJson(doc, buf.data(), len) != DeserializationError::Ok) {
         metar_status = METAR_ERROR;
-        platform_log("METAR: JSON parse error\n");
+        platform_log_warn("METAR: JSON parse error\n");
         return false;
     }
 
@@ -163,14 +163,14 @@ bool fetch_bbox(float lat, float lon) {
         strlcpy(metar_raw, best_raw, sizeof(metar_raw));
         strlcpy(metar_station, best_id, sizeof(metar_station));
         metar_status = METAR_OK;
-        platform_log("METAR: %s (%.1fnm)\n", metar_station, (double)best_dist);
+        platform_log_debug("METAR: %s (%.1fnm)\n", metar_station, (double)best_dist);
         return true;
     }
 
     metar_raw[0] = '\0';
     metar_station[0] = '\0';
     metar_status = METAR_NO_STATION;
-    platform_log("METAR: no station within %.0fnm\n", (double)METAR_RANGE_NM);
+    platform_log_info("METAR: no station within %.0fnm\n", (double)METAR_RANGE_NM);
     return false;
 }
 
@@ -222,7 +222,7 @@ void metar_poll() {
         if (hit && (now - hit->fetched_ms) < METAR_REFRESH_MS) {
             apply_to_globals(hit);
             last_fetch_ms = hit->fetched_ms;
-            platform_log("METAR: cache hit %s\n", key);
+            platform_log_debug("METAR: cache hit %s\n", key);
             return; // still fresh — no network
         }
         // Cold switch: don't leave the previous airport's text up.

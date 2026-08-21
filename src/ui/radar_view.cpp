@@ -26,54 +26,6 @@ static uint32_t _last_sweep_ms = 0;
 // stops drawing any trail point older than its own cutoff.
 static uint32_t _trails_cleared_at = 0;
 
-#if !defined(ARDUINO)
-// Temporary per-phase profiling -- two rounds of pure draw-count cuts to
-// the sweep still reported jumpy, and the resulting numbers (sweep
-// avg=550-750ms vs. rings' steady ~27ms and blips' ~0-1ms *despite*
-// blips issuing far more draw calls at ~79 aircraft) don't fit a simple
-// "N draws x fixed per-call cost" model -- something about many
-// lv_draw_line calls all radiating from the same center point (heavily
-// overlapping bounding boxes near the origin) is disproportionately
-// expensive versus blips' well-separated, non-overlapping dots. Split
-// draw_sweep() itself into "trail" vs "bloom+hub" sub-phases to find out
-// which part of *that* is the real villain, instead of guessing again.
-// Logs avg/max per phase every ~2s of wall time (not every frame, would
-// flood journalctl) to stdout/journalctl -u flightlevel314. Delete this whole
-// #if block (and every profile_record()/profile_maybe_log() call site)
-// once the actual bottleneck is identified and fixed -- same "temporary,
-// clearly marked, removed once its job is done" pattern as the earlier
-// debug ruler.
-struct RadarProfilePhase {
-    const char *name;
-    uint32_t sum_ms = 0, max_ms = 0, count = 0;
-};
-static RadarProfilePhase _prof_rings{"rings"}, _prof_trail{"sweep.trail"},
-    _prof_bloom_hub{"sweep.bloomhub"}, _prof_blips{"blips"},
-    _prof_legend{"legend"}, _prof_total{"TOTAL"};
-static uint32_t _prof_last_log_ms = 0;
-
-static void profile_record(RadarProfilePhase &p, uint32_t dt) {
-    p.sum_ms += dt;
-    if (dt > p.max_ms) p.max_ms = dt;
-    p.count++;
-}
-
-static void profile_maybe_log() {
-    uint32_t now = millis();
-    if (now - _prof_last_log_ms < 2000) return;
-    _prof_last_log_ms = now;
-    RadarProfilePhase *phases[] = {&_prof_rings, &_prof_trail, &_prof_bloom_hub,
-                                    &_prof_blips, &_prof_legend, &_prof_total};
-    platform_log("[RadarProfile] ");
-    for (RadarProfilePhase *p : phases) {
-        uint32_t avg = p->count ? p->sum_ms / p->count : 0;
-        platform_log("%s avg=%ums max=%ums (n=%u) ", p->name, avg, p->max_ms, p->count);
-        p->sum_ms = 0; p->max_ms = 0; p->count = 0;
-    }
-    platform_log("\n");
-}
-#endif
-
 #define RADAR_W LCD_H_RES
 #define RADAR_H (LCD_V_RES - STATUS_BAR_HEIGHT)
 #define RADAR_CX (RADAR_W / 2)
@@ -259,7 +211,6 @@ static void draw_sweep(lv_layer_t *layer) {
     // eased (squared) opacity falloff instead of discrete linear steps.
     const float TAIL_DEG = 24.0f;
     const int TAIL_SEGMENTS = 8;
-    uint32_t t0 = millis();
     for (int i = TAIL_SEGMENTS; i >= 1; i--) {
         float t = (float)i / TAIL_SEGMENTS;   // 1.0 (far) .. ~0 (near sweep)
         float trail_rad = (_sweep_angle - t * TAIL_DEG) * M_PI / 180.0f;
@@ -272,8 +223,6 @@ static void draw_sweep(lv_layer_t *layer) {
         line.p2 = {(lv_value_precise_t)tx, (lv_value_precise_t)ty};
         lv_draw_line(layer, &line);
     }
-    uint32_t t1 = millis();
-    profile_record(_prof_trail, t1 - t0);
 
     // Bloomed leading edge -- wide/dim under narrow/bright, 2 draws
     // instead of the original 3 (dropped the widest/dimmest one).
@@ -281,7 +230,6 @@ static void draw_sweep(lv_layer_t *layer) {
     line.p2 = {(lv_value_precise_t)ex, (lv_value_precise_t)ey};
     line.opa = LV_OPA_30; line.width = 4; lv_draw_line(layer, &line);
     line.opa = LV_OPA_COVER; line.width = 2; lv_draw_line(layer, &line);
-    profile_record(_prof_bloom_hub, millis() - t1);
 }
 #else
 static void draw_sweep(lv_layer_t *layer) {
@@ -702,34 +650,15 @@ static void draw_filter_label(lv_layer_t *layer) {
 
 static void radar_draw_cb(lv_event_t *e) {
     lv_layer_t *layer = lv_event_get_layer(e);
-#if !defined(ARDUINO)
-    uint32_t t_frame_start = millis();
-    uint32_t t_start = t_frame_start, t;
-#endif
     draw_rings(layer);
     // Airports / runways intentionally not drawn on Radar — Map owns that.
     // Bullseye (rings + sweep + blips) stays the Radar look.
-#if !defined(ARDUINO)
-    t = millis(); profile_record(_prof_rings, t - t_start); t_start = t;
-#endif
-    draw_sweep(layer); // profiles its own trail/bloomhub sub-phases internally
-#if !defined(ARDUINO)
-    t_start = millis();
-#endif
+    draw_sweep(layer);
     draw_blips(layer);
-#if !defined(ARDUINO)
-    t = millis(); profile_record(_prof_blips, t - t_start); t_start = t;
-#endif
     // Legend on the map with no panel (matches map_view).
     draw_radar_icon_legend(layer);
     draw_radar_altitude_legend(layer);
     draw_filter_label(layer);
-#if !defined(ARDUINO)
-    t = millis();
-    profile_record(_prof_legend, t - t_start);
-    profile_record(_prof_total, t - t_frame_start);
-    profile_maybe_log();
-#endif
 }
 
 static void update_filter_visuals() {

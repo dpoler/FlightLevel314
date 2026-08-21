@@ -66,7 +66,7 @@ int curl_progress(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
         ota_progress = pct;
         if (pct / 10 != ctx->last_log / 10) {
             ctx->last_log = pct;
-            platform_log("[OTA] download %d%%\n", pct);
+            platform_log_debug("OTA: download %d%%\n", pct);
         }
     }
     return 0;
@@ -102,7 +102,7 @@ bool http_get_string(const std::string &url, std::string &out, long *http_status
 bool http_download_file(const std::string &url, const std::string &path) {
     FILE *fp = fopen(path.c_str(), "wb");
     if (!fp) {
-        platform_log("[OTA] cannot write %s\n", path.c_str());
+        platform_log_error("OTA: cannot write %s\n", path.c_str());
         return false;
     }
     CURL *curl = curl_easy_init();
@@ -129,7 +129,7 @@ bool http_download_file(const std::string &url, const std::string &path) {
     fclose(fp);
     if (rc != CURLE_OK || code != 200) {
         unlink(path.c_str());
-        platform_log("[OTA] download failed rc=%d http=%ld\n", (int)rc, code);
+        platform_log_warn("OTA: download failed rc=%d http=%ld\n", (int)rc, code);
         return false;
     }
     return true;
@@ -165,20 +165,20 @@ void do_check() {
     const char *url = "https://api.github.com/repos/" GITHUB_OWNER "/" GITHUB_REPO "/releases/latest";
     if (!http_get_string(url, body, &status)) {
         ota_status = OTA_ERROR;
-        platform_log("[OTA] check failed (http=%ld)\n", status);
+        platform_log_warn("OTA: check failed (http=%ld)\n", status);
         return;
     }
 
     JsonDocument doc;
     if (deserializeJson(doc, body)) {
         ota_status = OTA_ERROR;
-        platform_log("[OTA] check JSON parse failed\n");
+        platform_log_warn("OTA: check JSON parse failed\n");
         return;
     }
     const char *tag = doc["tag_name"] | "";
     if (!tag[0]) {
         ota_status = OTA_ERROR;
-        platform_log("[OTA] check: no tag_name\n");
+        platform_log_warn("OTA: check: no tag_name\n");
         return;
     }
     {
@@ -199,21 +199,21 @@ void do_check() {
 
     if (strcmp(tag, FIRMWARE_VERSION_STR) == 0) {
         ota_status = OTA_UP_TO_DATE;
-        platform_log("[OTA] up to date (running=%s)\n", FIRMWARE_VERSION_STR);
+        platform_log_info("OTA: up to date (running=%s)\n", FIRMWARE_VERSION_STR);
         return;
     }
 
     if (browser_url.empty()) {
         // Newer tag exists but no binary for this arch yet.
         ota_status = OTA_ERROR;
-        platform_log("[OTA] update %s available but no asset '%s' on the release\n",
+        platform_log_warn("OTA: update %s available but no asset '%s' on the release\n",
                      tag, want);
         return;
     }
 
     g_asset_url = browser_url;
     ota_status = OTA_AVAILABLE;
-    platform_log("[OTA] update available: %s (running %s) asset=%s\n",
+    platform_log_info("OTA: update available: %s (running %s) asset=%s\n",
                  tag, FIRMWARE_VERSION_STR, want);
 }
 
@@ -226,7 +226,7 @@ void do_update() {
     }
     if (url.empty()) {
         ota_status = OTA_ERROR;
-        platform_log("[OTA] update: no asset URL (run check first)\n");
+        platform_log_warn("OTA: update: no asset URL (run check first)\n");
         return;
     }
 
@@ -242,7 +242,7 @@ void do_update() {
         return;
     }
     if (chmod(tmp.c_str(), 0755) != 0) {
-        platform_log("[OTA] chmod failed on %s\n", tmp.c_str());
+        platform_log_error("OTA: chmod failed on %s\n", tmp.c_str());
         unlink(tmp.c_str());
         ota_status = OTA_ERROR;
         return;
@@ -251,13 +251,13 @@ void do_update() {
     // Keep previous binary as .bak; atomic replace via rename.
     unlink(bak.c_str());
     if (access(dest.c_str(), F_OK) == 0 && rename(dest.c_str(), bak.c_str()) != 0) {
-        platform_log("[OTA] cannot backup %s (permission?)\n", dest.c_str());
+        platform_log_error("OTA: cannot backup %s (permission?)\n", dest.c_str());
         unlink(tmp.c_str());
         ota_status = OTA_ERROR;
         return;
     }
     if (rename(tmp.c_str(), dest.c_str()) != 0) {
-        platform_log("[OTA] cannot install %s — restoring backup\n", dest.c_str());
+        platform_log_error("OTA: cannot install %s — restoring backup\n", dest.c_str());
         rename(bak.c_str(), dest.c_str());
         unlink(tmp.c_str());
         ota_status = OTA_ERROR;
@@ -266,7 +266,7 @@ void do_update() {
 
     ota_progress = 100;
     ota_status = OTA_DONE;
-    platform_log("[OTA] installed %s — exiting for systemd restart\n", dest.c_str());
+    platform_log_info("OTA: installed %s — exiting for systemd restart\n", dest.c_str());
     // Give journals a moment; systemd Restart=always relaunches.
     fflush(nullptr);
     _exit(0);

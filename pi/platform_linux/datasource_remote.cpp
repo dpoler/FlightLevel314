@@ -153,7 +153,7 @@ bool RemoteApiDataSource::fetch(AircraftList *list) {
 
     JsonDocument doc;
     if (deserializeJson(doc, buf.data(), len) != DeserializationError::Ok) {
-        platform_log("RemoteApiDataSource: JSON parse failed (%zuB)\n", len);
+        platform_log_warn("RemoteApiDataSource: JSON parse failed (%zuB)\n", len);
         return false;
     }
 
