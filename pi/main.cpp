@@ -58,8 +58,13 @@ static void fetch_loop() {
         bool ok = src.fetch(&aircraft_list);
         uint32_t elapsed = platform_millis() - t0;
         pi_fetcher_stats_update(ok, elapsed);
-        platform_log("Fetch (%s): %s, %d aircraft tracked (%ums)\n",
-                      src.name(), ok ? "OK" : "FAILED", aircraft_list.count, elapsed);
+        if (ok) {
+            platform_log_debug("Fetch (%s): OK, %d aircraft tracked (%ums)\n",
+                               src.name(), aircraft_list.count, elapsed);
+        } else {
+            platform_log_warn("Fetch (%s): FAILED, %d aircraft tracked (%ums)\n",
+                              src.name(), aircraft_list.count, elapsed);
+        }
         // Waits up to 20s, but returns immediately if
         // fetcher_request_immediate_fetch() is called in the meantime
         // (locations_set_active() calls it on every location switch).

@@ -99,12 +99,12 @@ bool airlines_load() {
     size_t total = 0;
     uint32_t t0 = platform_millis();
     if (!platform_http_get(AIRLINES_URL, buf.data(), buf.size(), &total)) {
-        platform_log("[Airlines] HTTP fetch failed in %lums\n",
+        platform_log_warn("Airlines: HTTP fetch failed in %lums\n",
                      (unsigned long)(platform_millis() - t0));
         error_log_add("Airlines load failed");
         return false;
     }
-    platform_log("[Airlines] HTTP OK (%zu bytes) in %lums\n",
+    platform_log_debug("Airlines: HTTP OK (%zu bytes) in %lums\n",
                  total, (unsigned long)(platform_millis() - t0));
 
     char today[16];
@@ -123,7 +123,7 @@ bool airlines_load() {
     }
 
     bool ok = _airline_count > 0;
-    platform_log("[Airlines] Loaded %d entries (OpenTravelData)\n", _airline_count);
+    platform_log_info("Airlines: Loaded %d entries (OpenTravelData)\n", _airline_count);
     if (!ok) error_log_add("Airlines load failed (empty table)");
     return ok;
 }

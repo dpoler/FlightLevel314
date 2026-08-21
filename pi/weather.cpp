@@ -464,7 +464,7 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
 
     curl_multi_cleanup(multi);
     if (failed > 0) {
-        platform_log("Weather: %d/%d tiles failed after retries\n", failed, total);
+        platform_log_warn("Weather: %d/%d tiles failed after retries\n", failed, total);
     }
     return true;
 }
@@ -564,19 +564,19 @@ void save_cache(const std::string &path, const WeatherSlot &slot) {
 bool resolve_latest_frame(std::string &host, std::string &frame_path) {
     std::vector<uint8_t> body;
     if (!http_get(MAPS_URL, body, 15)) {
-        platform_log("Weather: failed to fetch weather-maps.json\n");
+        platform_log_warn("Weather: failed to fetch weather-maps.json\n");
         return false;
     }
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, body.data(), body.size());
     if (err) {
-        platform_log("Weather: maps.json parse error: %s\n", err.c_str());
+        platform_log_warn("Weather: maps.json parse error: %s\n", err.c_str());
         return false;
     }
     const char *h = doc["host"];
     JsonArray past = doc["radar"]["past"].as<JsonArray>();
     if (!h || !h[0] || past.isNull() || past.size() == 0) {
-        platform_log("Weather: maps.json missing host/past frames\n");
+        platform_log_warn("Weather: maps.json missing host/past frames\n");
         return false;
     }
     JsonObject last = past[past.size() - 1];
@@ -672,7 +672,7 @@ bool build_weather(WeatherSlot &slot, uint32_t gen) {
     int tiles_h = ty1 - ty0 + 1;
     // z≤7 keeps tile counts small; still guard memory.
     if (tiles_w <= 0 || tiles_h <= 0 || tiles_w * tiles_h > 200) {
-        platform_log("Weather: tile AABB too large (%dx%d at z=%d), abort\n",
+        platform_log_warn("Weather: tile AABB too large (%dx%d at z=%d), abort\n",
                      tiles_w, tiles_h, z);
         return false;
     }
@@ -700,7 +700,7 @@ bool build_weather(WeatherSlot &slot, uint32_t gen) {
         }
     }
 
-    platform_log("Weather: fetching %d tiles at z=%d frame=%s\n",
+    platform_log_debug("Weather: fetching %d tiles at z=%d frame=%s\n",
                  (int)jobs.size(), z, frame_path.c_str());
     if (!fetch_tiles_parallel(jobs, mosaic, mosaic_w, mosaic_h, gen))
         return false;
@@ -764,9 +764,9 @@ void worker_main(uint32_t gen) {
         local.bind_buf();
         local.valid = true;
         ok = true;
-        platform_log("Weather: cache hit %s\n", path.c_str());
+        platform_log_debug("Weather: cache hit %s\n", path.c_str());
     } else {
-        platform_log("Weather: building (%.4f,%.4f) r=%.0fnm %dx%d\n",
+        platform_log_debug("Weather: building (%.4f,%.4f) r=%.0fnm %dx%d\n",
                      local.lat, local.lon, local.radius_nm, local.w, local.h);
         ok = build_weather(local, gen);
         if (ok) save_cache(path, local);
@@ -778,9 +778,9 @@ void worker_main(uint32_t gen) {
             g_inbox = std::move(local);
             g_inbox.bind_buf();
             g_inbox_ready = true;
-            platform_log("Weather: ready %dx%d\n", g_inbox.w, g_inbox.h);
+            platform_log_debug("Weather: ready %dx%d\n", g_inbox.w, g_inbox.h);
         } else if (gen != g_req_gen) {
-            platform_log("Weather: discarded superseded build (gen %u → %u)\n",
+            platform_log_debug("Weather: discarded superseded build (gen %u → %u)\n",
                          (unsigned)gen, (unsigned)g_req_gen);
         }
         g_worker_busy = false;
@@ -907,7 +907,7 @@ int weather_cache_clear(void) {
     std::string dir = cache_dir();
     DIR *d = opendir(dir.c_str());
     if (!d) {
-        platform_log("Weather: cache clear — no dir at %s\n", dir.c_str());
+        platform_log_info("Weather: cache clear — no dir at %s\n", dir.c_str());
         return 0;
     }
     int removed = 0;
@@ -920,7 +920,7 @@ int weather_cache_clear(void) {
         if (unlink(path.c_str()) == 0) removed++;
     }
     closedir(d);
-    platform_log("Weather: cache clear — removed %d file(s) from %s\n",
+    platform_log_info("Weather: cache clear — removed %d file(s) from %s\n",
                  removed, dir.c_str());
     return removed;
 }

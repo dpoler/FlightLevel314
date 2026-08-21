@@ -82,7 +82,7 @@ UserConfig storage_load_config() {
 
     FILE *f = fopen(config_file_path().c_str(), "r");
     if (!f) {
-        platform_log("Storage: no config file yet at %s, using defaults\n", config_file_path().c_str());
+        platform_log_info("Storage: no config file yet at %s, using defaults\n", config_file_path().c_str());
         return cfg;
     }
     fseek(f, 0, SEEK_END);
@@ -99,7 +99,7 @@ UserConfig storage_load_config() {
 
     JsonDocument doc;
     if (deserializeJson(doc, buf) != DeserializationError::Ok) {
-        platform_log("Storage: %s failed to parse, using defaults\n", config_file_path().c_str());
+        platform_log_warn("Storage: %s failed to parse, using defaults\n", config_file_path().c_str());
         return cfg;
     }
 
@@ -176,7 +176,7 @@ UserConfig storage_load_config() {
     cfg.last_range_idx = doc["last_rng"] | cfg.last_range_idx;
     strlcpy(cfg.last_location_name, doc["last_loc"] | cfg.last_location_name, sizeof(cfg.last_location_name));
 
-    platform_log("Storage: config loaded from %s\n", config_file_path().c_str());
+    platform_log_info("Storage: config loaded from %s\n", config_file_path().c_str());
     return cfg;
 }
 
@@ -246,17 +246,17 @@ void storage_save_config(const UserConfig &cfg) {
 
     FILE *f = fopen(config_file_path().c_str(), "w");
     if (!f) {
-        platform_log("Storage: failed to open %s for writing\n", config_file_path().c_str());
+        platform_log_error("Storage: failed to open %s for writing\n", config_file_path().c_str());
         return;
     }
     std::string out;
     serializeJson(doc, out);
     fwrite(out.data(), 1, out.size(), f);
     fclose(f);
-    platform_log("Storage: config saved to %s\n", config_file_path().c_str());
+    platform_log_debug("Storage: config saved to %s\n", config_file_path().c_str());
 }
 
 void storage_factory_reset() {
     remove(config_file_path().c_str());
-    platform_log("Storage: config file removed (factory reset)\n");
+    platform_log_info("Storage: config file removed (factory reset)\n");
 }

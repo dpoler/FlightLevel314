@@ -143,7 +143,7 @@ void save_all_locked() {
 
     FILE *f = fopen(locations_file_path().c_str(), "w");
     if (!f) {
-        platform_log("Locations: failed to open %s for writing\n", locations_file_path().c_str());
+        platform_log_error("Locations: failed to open %s for writing\n", locations_file_path().c_str());
         return;
     }
     std::string out;
@@ -159,7 +159,7 @@ void load_all_locked() {
 
     FILE *f = fopen(locations_file_path().c_str(), "r");
     if (!f) {
-        platform_log("Locations: no saved-locations file yet at %s\n", locations_file_path().c_str());
+        platform_log_info("Locations: no saved-locations file yet at %s\n", locations_file_path().c_str());
         return;
     }
     fseek(f, 0, SEEK_END);
@@ -176,7 +176,7 @@ void load_all_locked() {
 
     JsonDocument doc;
     if (deserializeJson(doc, buf) != DeserializationError::Ok) {
-        platform_log("Locations: %s failed to parse\n", locations_file_path().c_str());
+        platform_log_warn("Locations: %s failed to parse\n", locations_file_path().c_str());
         return;
     }
 
@@ -198,7 +198,7 @@ void load_all_locked() {
         _count++;
     }
 
-    platform_log("Locations: loaded %d saved location(s) from %s\n", _count, locations_file_path().c_str());
+    platform_log_info("Locations: loaded %d saved location(s) from %s\n", _count, locations_file_path().c_str());
 }
 
 // Same OurAirports/airportdb.io field-name mapping as src/data/locations.cpp's
@@ -767,7 +767,7 @@ void locations_nearby_cache_clear() {
             _locations[_active_index].nearby_enabled) {
             restart_idx = _active_index;
         }
-        platform_log("Locations: nearby-airport caches cleared\n");
+        platform_log_info("Locations: nearby-airport caches cleared\n");
     }
 
     if (restart_idx < 0) return;
@@ -783,5 +783,5 @@ void locations_factory_reset() {
     memset(_locations, 0, sizeof(_locations));
     memset(_nearby_all_count, 0, sizeof(_nearby_all_count));
     remove(locations_file_path().c_str());
-    platform_log("Locations: %s removed (factory reset)\n", locations_file_path().c_str());
+    platform_log_info("Locations: %s removed (factory reset)\n", locations_file_path().c_str());
 }

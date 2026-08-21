@@ -210,7 +210,7 @@ void adbox_note_call(long http_status) {
     if ((hit_soft || hit_429) && g_config.aerodatabox_enabled) {
         g_config.aerodatabox_enabled = false;
         g_config.adbox_rate_limited = true;
-        platform_log("[Enrich] AeroDataBox auto-disabled (%s, count=%d limit=%d)\n",
+        platform_log_warn("Enrich: AeroDataBox auto-disabled (%s, count=%d limit=%d)\n",
                      hit_429 ? "HTTP 429" : "soft limit",
                      g_config.adbox_usage_count, g_config.adbox_soft_limit);
         storage_save_config(g_config);
@@ -399,30 +399,30 @@ bool fetch_adbox_route(int provider, const char *key,
         size_t len = 0;
         long status = 0;
         if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &status, hdrs)) {
-            platform_log("[Enrich] AeroDataBox transport fail: %s\n", url);
+            platform_log_warn("Enrich: AeroDataBox transport fail: %s\n", url);
             return 0;
         }
         adbox_note_call(status);
         if (status == 401 || status == 403) {
-            platform_log("[Enrich] AeroDataBox auth failed (http=%ld)\n", status);
+            platform_log_warn("Enrich: AeroDataBox auth failed (http=%ld)\n", status);
             return -1;
         }
         if (status == 429) {
-            platform_log("[Enrich] AeroDataBox rate limited (http=429)\n");
+            platform_log_warn("Enrich: AeroDataBox rate limited (http=429)\n");
             return -1;
         }
         if (status == 204 || status == 404) {
-            platform_log("[Enrich] AeroDataBox no flight (http=%ld) %s\n", status, url);
+            platform_log_debug("Enrich: AeroDataBox no flight (http=%ld) %s\n", status, url);
             return 0;
         }
         if (status < 200 || status >= 300) {
-            platform_log("[Enrich] AeroDataBox http=%ld len=%zu %s\n", status, len, url);
+            platform_log_warn("Enrich: AeroDataBox http=%ld len=%zu %s\n", status, len, url);
             return 0;
         }
         if (len == 0) return 0;
         JsonDocument doc;
         if (deserializeJson(doc, buf.data(), len) != DeserializationError::Ok) {
-            platform_log("[Enrich] AeroDataBox JSON parse fail (%zu bytes)\n", len);
+            platform_log_warn("Enrich: AeroDataBox JSON parse fail (%zu bytes)\n", len);
             return 0;
         }
         return parse_adbox_route(doc, origin, origin_sz, dest, dest_sz) ? 1 : 0;
@@ -647,7 +647,7 @@ void run_enrichment(std::string icao, std::string registration, std::string call
             strlcpy(entry->engine_type, ac["engine_type"] | "", sizeof(entry->engine_type));
             entry->year_built = ac["year_built"] | 0;
         } else {
-            platform_log("[Enrich] stage1 (adsbdb) failed for %s\n", icao.c_str());
+            platform_log_debug("Enrich: stage1 (adsbdb) failed for %s\n", icao.c_str());
         }
         notify_callback(entry);
     }
@@ -677,7 +677,7 @@ void run_enrichment(std::string icao, std::string registration, std::string call
             strlcpy(entry->photo_photographer, photos[0]["photographer"] | "",
                     sizeof(entry->photo_photographer));
         } else {
-            platform_log("[Enrich] stage2 (planespotters) no photos for %s\n", icao.c_str());
+            platform_log_debug("Enrich: stage2 (planespotters) no photos for %s\n", icao.c_str());
         }
         notify_callback(entry);
     }
@@ -699,12 +699,12 @@ void run_enrichment(std::string icao, std::string registration, std::string call
                 entry->photo_rgb565 = rgb;
                 entry->photo_w = pw;
                 entry->photo_h = ph;
-                platform_log("[Enrich] photo %ux%u for %s\n", pw, ph, icao.c_str());
+                platform_log_debug("Enrich: photo %ux%u for %s\n", pw, ph, icao.c_str());
             } else {
-                platform_log("[Enrich] photo decode failed for %s\n", icao.c_str());
+                platform_log_warn("Enrich: photo decode failed for %s\n", icao.c_str());
             }
         } else {
-            platform_log("[Enrich] photo download failed for %s\n", icao.c_str());
+            platform_log_warn("Enrich: photo download failed for %s\n", icao.c_str());
         }
         notify_callback(entry);
     }
@@ -728,8 +728,8 @@ void run_enrichment(std::string icao, std::string registration, std::string call
         {
             std::lock_guard<std::mutex> lock(_mutex);
             mark_route_result(entry, callsign.c_str(), origin, dest, ok);
-            if (ok) platform_log("[Enrich] route %s -> %s for %s\n", origin, dest, icao.c_str());
-            else platform_log("[Enrich] AeroDataBox no route for %s\n", icao.c_str());
+            if (ok) platform_log_debug("Enrich: route %s -> %s for %s\n", origin, dest, icao.c_str());
+            else platform_log_debug("Enrich: AeroDataBox no route for %s\n", icao.c_str());
         }
         notify_callback(entry);
     } else {
@@ -738,7 +738,7 @@ void run_enrichment(std::string icao, std::string registration, std::string call
         // spin until TTL / callsign change / cache clear.
         mark_route_result(entry, callsign.c_str(), "", "", false);
         if (adbox_on && !want_route)
-            platform_log("[Enrich] route skipped (not commercial/large) for %s\n",
+            platform_log_debug("Enrich: route skipped (not commercial/large) for %s\n",
                          icao.c_str());
     }
 
@@ -778,14 +778,14 @@ void run_route_refresh(std::string icao, std::string registration, std::string c
                                     origin, sizeof(origin), dest, sizeof(dest));
         std::lock_guard<std::mutex> lock(_mutex);
         mark_route_result(entry, callsign.c_str(), origin, dest, ok);
-        platform_log("[Enrich] route refresh %s -> %s for %s (%s)\n",
+        platform_log_debug("Enrich: route refresh %s -> %s for %s (%s)\n",
                      ok ? origin : "-", ok ? dest : "-", icao.c_str(),
                      ok ? "ok" : "none");
     } else {
         std::lock_guard<std::mutex> lock(_mutex);
         mark_route_result(entry, callsign.c_str(), "", "", false);
         if (adbox_on)
-            platform_log("[Enrich] route refresh skipped (not commercial/large) for %s\n",
+            platform_log_debug("Enrich: route refresh skipped (not commercial/large) for %s\n",
                          icao.c_str());
     }
 
@@ -874,7 +874,7 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
 
         if (!kick_route_only) {
             if (_busy) {
-                platform_log("enrich: skipped (fetch already in progress)\n");
+                platform_log_debug("Enrich: skipped (fetch already in progress)\n");
                 return;
             }
             _busy = true;

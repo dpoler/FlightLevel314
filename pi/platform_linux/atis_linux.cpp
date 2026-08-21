@@ -111,7 +111,7 @@ bool refresh_datis_list() {
         _datis_icaos.swap(next);
         _list_fetched_ms = platform_millis();
     }
-    platform_log("ATIS: datis list %zu airports\n", _datis_icaos.size());
+    platform_log_debug("ATIS: datis list %zu airports\n", _datis_icaos.size());
     return true;
 }
 
@@ -227,7 +227,7 @@ void do_fetch(const char *icao) {
     // failure and we used to leave ATIS_ERROR (UI showed nothing).
     if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &http_status, nullptr)) {
         atis_status = ATIS_ERROR;
-        platform_log("ATIS: network failed for %s\n", icao);
+        platform_log_warn("ATIS: network failed for %s\n", icao);
         return;
     }
 
@@ -235,7 +235,7 @@ void do_fetch(const char *icao) {
         clear_texts();
         strlcpy(atis_airport, icao, sizeof(atis_airport));
         atis_status = ATIS_UNAVAILABLE;
-        platform_log("ATIS: unavailable for %s (http %ld)\n", icao, http_status);
+        platform_log_info("ATIS: unavailable for %s (http %ld)\n", icao, http_status);
     };
 
     if (http_status == 404 || len == 0) {
@@ -244,14 +244,14 @@ void do_fetch(const char *icao) {
     }
     if (http_status < 200 || http_status >= 300) {
         atis_status = ATIS_ERROR;
-        platform_log("ATIS: HTTP %ld for %s\n", http_status, icao);
+        platform_log_warn("ATIS: HTTP %ld for %s\n", http_status, icao);
         return;
     }
 
     JsonDocument doc;
     if (deserializeJson(doc, buf.data(), len) != DeserializationError::Ok) {
         atis_status = ATIS_ERROR;
-        platform_log("ATIS: JSON parse error for %s\n", icao);
+        platform_log_warn("ATIS: JSON parse error for %s\n", icao);
         return;
     }
     // {"error":"..."} object, empty array, or no rows.
@@ -266,7 +266,7 @@ void do_fetch(const char *icao) {
 
     apply_rows(doc.as<JsonArray>(), icao);
     if (atis_status == ATIS_OK) {
-        platform_log("ATIS: %s (%s)\n", atis_airport, atis_split ? "arr/dep" : "combined");
+        platform_log_debug("ATIS: %s (%s)\n", atis_airport, atis_split ? "arr/dep" : "combined");
     }
 }
 
@@ -317,7 +317,7 @@ void atis_poll() {
         if (hit && (now - hit->fetched_ms) < ATIS_REFRESH_MS) {
             atis_cache_apply(hit);
             last_fetch_ms = hit->fetched_ms;
-            platform_log("ATIS: cache hit %s\n", icao);
+            platform_log_debug("ATIS: cache hit %s\n", icao);
             return;
         }
         clear_texts();

@@ -38,7 +38,28 @@ bool platform_config_load(const char *key, void *buf, size_t buf_size, size_t *o
 bool platform_config_save(const char *key, const void *buf, size_t len);
 
 // --- Log ---
-void platform_log(const char *fmt, ...);
+// Levels: DEBUG < INFO < WARN < ERROR. Default minimum is INFO (quiet kiosk
+// journal). WARN/ERROR go to stderr; DEBUG/INFO to stdout (both → journald).
+typedef enum {
+    PLATFORM_LOG_DEBUG = 0,
+    PLATFORM_LOG_INFO  = 1,
+    PLATFORM_LOG_WARN  = 2,
+    PLATFORM_LOG_ERROR = 3,
+} platform_log_level_t;
+
+void platform_log_set_min_level(platform_log_level_t level);
+platform_log_level_t platform_log_get_min_level(void);
+
+void platform_log_at(platform_log_level_t level, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+
+#define platform_log_debug(...) platform_log_at(PLATFORM_LOG_DEBUG, __VA_ARGS__)
+#define platform_log_info(...)  platform_log_at(PLATFORM_LOG_INFO, __VA_ARGS__)
+#define platform_log_warn(...)  platform_log_at(PLATFORM_LOG_WARN, __VA_ARGS__)
+#define platform_log_error(...) platform_log_at(PLATFORM_LOG_ERROR, __VA_ARGS__)
+
+// Compat: same as platform_log_info (prefer the leveled macros at new sites).
+void platform_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 // --- Compatibility shims ---
 // Shared UI/data still call millis()/pdMS_TO_TICKS()/strlcpy() from the

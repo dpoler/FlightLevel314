@@ -351,7 +351,7 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
 
     curl_multi_cleanup(multi);
     if (failed > 0) {
-        platform_log("Basemap: %d/%d tiles failed after retries\n", failed, total);
+        platform_log_warn("Basemap: %d/%d tiles failed after retries\n", failed, total);
     }
     return true;
 }
@@ -478,7 +478,7 @@ bool cache_fresh(const std::string &path, int ttl_days) {
 
 bool load_cache(const std::string &path, BasemapSlot &slot) {
     if (!cache_fresh(path, style_cache_ttl_days(slot.style))) {
-        platform_log("Basemap: cache expired %s (ttl=%dd)\n",
+        platform_log_debug("Basemap: cache expired %s (ttl=%dd)\n",
                      path.c_str(), style_cache_ttl_days(slot.style));
         return false;
     }
@@ -685,11 +685,11 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         if (tiles_w <= 0 || tiles_h <= 0) return false;
         if (tiles_w * tiles_h <= MAX_BASEMAP_TILES) break;
         if (z <= z_floor) {
-            platform_log("Basemap: tile AABB too large (%dx%d at z=%d), abort\n",
+            platform_log_warn("Basemap: tile AABB too large (%dx%d at z=%d), abort\n",
                          tiles_w, tiles_h, z);
             return false;
         }
-        platform_log("Basemap: tile AABB %dx%d at z=%d exceeds %d — dropping zoom\n",
+        platform_log_info("Basemap: tile AABB %dx%d at z=%d exceeds %d — dropping zoom\n",
                      tiles_w, tiles_h, z, MAX_BASEMAP_TILES);
         z--;
     }
@@ -729,12 +729,12 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         }
     }
 
-    platform_log("Basemap: fetching %d tiles at z=%d (parallel %d)\n",
+    platform_log_debug("Basemap: fetching %d tiles at z=%d (parallel %d)\n",
                  tile_total, z, MAX_PARALLEL);
     const uint32_t t_fetch0 = platform_millis();
     if (!fetch_tiles_parallel(jobs, mosaic, mosaic_w, mosaic_h, gen, FETCH_PCT_END))
         return false;
-    platform_log("Basemap: tile fetch %ums for %d tiles\n",
+    platform_log_debug("Basemap: tile fetch %ums for %d tiles\n",
                  (unsigned)(platform_millis() - t_fetch0), tile_total);
 
     // Anti-alias before the nonlinear warp. Critical for two reasons:
@@ -805,7 +805,7 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
             slot.rgb565[off + 1] = (uint8_t)(pix >> 8);
         }
     }
-    platform_log("Basemap: warp %ums (%dx%d)\n",
+    platform_log_debug("Basemap: warp %ums (%dx%d)\n",
                  (unsigned)(platform_millis() - t_warp0), slot.w, slot.h);
 
     slot.bind_buf();
@@ -837,10 +837,10 @@ void worker_main(uint32_t gen) {
         ok = true;
         // Cache hit: don't flash the "Updating map..." chrome.
         progress_clear_if_gen(gen);
-        platform_log("Basemap: cache hit %s\n", path.c_str());
+        platform_log_debug("Basemap: cache hit %s\n", path.c_str());
     } else {
         progress_set(gen, true, 1);
-        platform_log("Basemap: fetching style=%s (%.4f,%.4f) r=%.0fnm %dx%d\n",
+        platform_log_debug("Basemap: fetching style=%s (%.4f,%.4f) r=%.0fnm %dx%d\n",
                      style_cache_tag(local.style),
                      local.lat, local.lon, local.radius_nm, local.w, local.h);
         ok = build_basemap(local, gen);
@@ -893,7 +893,7 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
         g_unavailable = true;
         g_prog_visible = false;
         g_prog_pct = 0;
-        platform_log("Basemap: VFR sectional not available at %.2f,%.2f — skip fetch\n",
+        platform_log_info("Basemap: VFR sectional not available at %.2f,%.2f — skip fetch\n",
                      lat, lon);
         return;
     }
@@ -1052,7 +1052,7 @@ int basemap_cache_clear(void) {
     std::string dir = cache_dir();
     DIR *d = opendir(dir.c_str());
     if (!d) {
-        platform_log("Basemap: cache clear — no dir at %s\n", dir.c_str());
+        platform_log_info("Basemap: cache clear — no dir at %s\n", dir.c_str());
         return 0;
     }
     int removed = 0;
@@ -1065,7 +1065,7 @@ int basemap_cache_clear(void) {
         if (unlink(path.c_str()) == 0) removed++;
     }
     closedir(d);
-    platform_log("Basemap: cache clear — removed %d file(s) from %s\n",
+    platform_log_info("Basemap: cache clear — removed %d file(s) from %s\n",
                  removed, dir.c_str());
     return removed;
 }

@@ -1211,7 +1211,7 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
     _list = list;
 
 #if !HAS_AIRPORTS_DB
-    platform_log("Map: airports_db.h missing — VIEW Other Airports has no static glyphs "
+    platform_log_warn("Map: airports_db.h missing — VIEW Other Airports has no static glyphs "
                  "(run: python3 tools/generate_airports_db.py)\n");
 #endif
 

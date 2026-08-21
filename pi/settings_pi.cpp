@@ -507,7 +507,7 @@ static void clear_all_caches_cb(lv_event_t *e) {
     int nw = weather_cache_clear();
     locations_nearby_cache_clear();
     enrichment_clear_cache();
-    platform_log("Settings: cleared all caches (%d basemap + %d weather file(s) + nearby runways + enrichment)\n",
+    platform_log_info("Settings: cleared all caches (%d basemap + %d weather file(s) + nearby runways + enrichment)\n",
                  n, nw);
     map_view_on_show();
 }
@@ -538,7 +538,7 @@ static void factory_reset_cb(lv_event_t *e) {
 
     location_picker_close();
     map_view_on_show();
-    platform_log("Settings: ADS-B factory defaults restored (config + locations + caches)\n");
+    platform_log_info("Settings: ADS-B factory defaults restored (config + locations + caches)\n");
     settings_hide();
 }
 
