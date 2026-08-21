@@ -46,6 +46,12 @@ bool basemap_updating(int *out_pct);
 // Returns the number of cache files removed.
 int basemap_cache_clear(void);
 
+// Drop the *current* mosaic only (matching g_req_* / last basemap_request):
+// delete its on-disk cache file, clear in-memory front/inbox for it, and
+// kick a fresh fetch. LVGL-thread only. Use from VIEW "Rebuild map" — not
+// the Settings full-cache clear. Returns true if a rebuild was started.
+bool basemap_rebuild_current(void);
+
 #ifdef __cplusplus
 }
 #endif
