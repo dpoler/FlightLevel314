@@ -65,7 +65,7 @@ See §7.1. Highest-signal open items:
 - Enrichment O/D: hide implausible low-altitude routes at airport views
 - Satellite basemap style (Esri or Mapbox; API key OK)
 - VIEW: “Rebuild this map” (current mosaic only; not full cache clear)
-- Map overnight hang — root cause: LV_ASSERT while(1) in image decoder (fix in progress)
+- Logging cleanup — levels / quiet kiosk journal (see §7.1; direction TBD)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -79,6 +79,9 @@ Recently closed (2026-08-10): airline names from OpenTravelData (dropped
 AirlinesCSV; ~900 ICAO3 codes, global); AeroDataBox O/D accuracy + skip
 small GA/HELI/MIL; Map/Radar bullseye declutter (Map: no rings;
 Radar: rings+sweep only, no airport/runway drawing).
+Recently closed (2026-08-14 / soak): Map overnight hang (Invalid draw
+buffer assert → soft-fail + `lv_draw_buf_init` bind).
+Recently closed (2026-08-21 confirm): INFO ATIS panel (incl. arr/dep split).
 
 ### Settings draft semantics (TRAFFIC SOURCE)
 TRAFFIC SOURCE live-previews on change but persists only on **Save**;
@@ -634,17 +637,23 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   `pi/basemap.cpp`). Residual mismatch can still come from OSM/FAA chart
   artwork vs airportdb runway endpoint definitions (different datasets).
 
-- **Tap-to-open ATIS overlay on the INFO/Stats screen**: follow-on to the
-  already-shipped METAR readout. Scoped to US airports first. Known complexity:
-  some airports (KDEN named specifically) publish separate arrival/departure
-  ATIS, not one combined broadcast — overlay needs to show both distinctly.
-  No ATIS data source identified/vetted yet.
+- ~~**Tap-to-open ATIS overlay on the INFO/Stats screen**~~ **done**
+  (Dan confirm 2026-08-21) — INFO weather column shows ATIS (combined or
+  ARRIVAL/DEPARTURE split for places like KDEN) via datis.clowd.io; not a
+  separate tap overlay, but the intended INFO ATIS readout is shipped.
 
-- **Logging cleanup — broader scope**: the concrete gap that motivated this
-  (enrichment.cpp silent failures) is fixed, but ~31 `Serial.print*` call sites
-  across the codebase still have no log-level system, no consistent
-  prefix/format, mixed ad hoc debug prints and durable status logs. Needs
-  clarification on the actual goal before a full pass.
+- **Logging cleanup — broader scope** (clarified 2026-08-21): the old
+  “~31 `Serial.print*`” note is stale — Pi-only tree uses `platform_log()` →
+  stdout → journald (`journalctl -u flightlevel314`). No levels; ~100 call
+  sites; mixed prefixes (`Basemap:` vs `[Enrich]`); `error_log_*` is a
+  separate on-screen ring (not mirrored to journal). LVGL `LV_USE_LOG` is on
+  but not wired to printf. Steady noise: Fetch OK ~20s, RadarProfile ~2s
+  (temp), enrich happy-path, some basemap/weather cache hits.
+  **Proposed direction (not started):** thin INFO/WARN/ERR (+ optional DEBUG)
+  on `platform_log`, default INFO on kiosk; demote Fetch OK / cache hits /
+  enrich success to DEBUG; delete RadarProfile; keep failures + boot/OTA as
+  WARN/ERR; normalize prefixes. Avoid `sd_journal_*` unless needed later.
+  Needs Dan OK before coding.
 
 - **README.md needs a massive update**: badly stale (still describes the old
   single-location architecture, lists removed route/origin-destination
