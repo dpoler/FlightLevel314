@@ -61,7 +61,6 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
-- Device provisioning for API keys / secrets (how they get onto the Pi)
 - Enrichment O/D: hide implausible low-altitude routes at airport views
 - Satellite basemap style (Esri or Mapbox; API key OK)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
@@ -81,7 +80,8 @@ Recently closed (2026-08-14 / soak): Map overnight hang (Invalid draw
 buffer assert → soft-fail + `lv_draw_buf_init` bind).
 Recently closed (2026-08-21 confirm): INFO ATIS panel (incl. arr/dep split);
 logging levels + quiet journal (RadarProfile removed).
-Recently closed (2026-08-21): VIEW **Rebuild map** (current mosaic only).
+Recently closed (2026-08-21): VIEW **Rebuild map** (current mosaic only);
+API-key provisioning (`tools/set_api_keys.py` + README kiosk path).
 
 ### Settings draft semantics (TRAFFIC SOURCE)
 TRAFFIC SOURCE live-previews on change but persists only on **Save**;
@@ -567,16 +567,13 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   first frame; switch Plymouth to **`spinner`** or a dim custom splash.
   Notes kept below for if we revisit.
 
-- **Device provisioning — get API keys / tokens onto the Pi**: remember to
-  sort out the story. Today: hand-edit
-  `~/.config/flightlevel314/config.json` (or the kiosk path under
-  `/opt/flightlevel314/.config/…`) for `apt_tok`, `adbox_key`, etc. Settings
-  toggles features but does **not** accept typing secrets on the touchscreen
-  (deliberate). Old ESP32 path was USB-serial `configure_device.sh` +
-  `serial_config` — removed in Pi-only cleanup. Need a Pi-appropriate
-  approach (SSH/scp recipe, first-boot wizard over SSH, companion script,
-  USB stick drop, etc.). Scope: AirportDB, AeroDataBox, and any future
-  keys — not just airportdb.
+- ~~**Device provisioning — get API keys / tokens onto the Pi**~~
+  **done 2026-08-21**: `tools/set_api_keys.py` merges `apt_tok` /
+  `adbox_key` (optional `adbox_prov`) into the **kiosk** config by default
+  (`/opt/flightlevel314/.config/flightlevel314/config.json`), chowns to
+  `flightlevel314` when run as root. README documents the kiosk-vs-`~`
+  footgun, `--show`, and Settings VALID/ENABLE. Still no on-screen typing
+  of secrets. Future satellite keys can use the same script/path.
 
 - **Enrichment O/D — hide implausible low routes at airport views (Dan,
   2026-08-10)**: when O/D was looked up, **don’t print** FROM/TO if:

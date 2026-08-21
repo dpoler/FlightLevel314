@@ -112,22 +112,54 @@ Logs: `journalctl -u flightlevel314 -f`.
 
 | Path | Role |
 |------|------|
-| `~/.config/flightlevel314/config.json` | Preferences, API keys, display options |
+| `~/.config/flightlevel314/config.json` | Preferences, API keys, display options (dev / interactive user) |
+| `/opt/flightlevel314/.config/flightlevel314/config.json` | **Kiosk service** config (`User=flightlevel314`, `HOME=/opt/…`) |
 | `~/.config/flightlevel314/locations.json` | Saved map centers |
 
-API keys are **not** typed on the touchscreen. Edit `config.json` by hand:
+API keys are **not** typed on the touchscreen (deliberate). Put them in the
+kiosk `config.json`, then enable features in Settings.
+
+### Provisioning API keys (Pi kiosk)
+
+The #1 footgun: editing `~/.config/…` as your login user does **not** change
+the running kiosk — the service uses `/opt/flightlevel314/.config/…`.
+
+```bash
+# From a FlightLevel314 checkout on the Pi:
+sudo python3 tools/set_api_keys.py \
+  --apt-tok 'YOUR_AIRPORTDB_TOKEN' \
+  --adbox-key 'YOUR_AERODATABOX_KEY'
+
+# Optional gateway: 0=RapidAPI, 1=API.Market, 2=Direct
+sudo python3 tools/set_api_keys.py --adbox-prov 0
+
+# Inspect (prints present/missing, not the secret values):
+sudo python3 tools/set_api_keys.py --show
+```
+
+Then open **Settings** (gear) → **API KEYS** → confirm VALID → ENABLE
+AirportDB / AeroDataBox. Or restart the service:
+
+```bash
+sudo systemctl restart flightlevel314
+```
+
+Manual edit works too:
+
+```bash
+sudo -u flightlevel314 nano /opt/flightlevel314/.config/flightlevel314/config.json
+```
 
 ```json
 {
   "apt_tok": "your-airportdb-token",
   "adbox_key": "your-aerodatabox-key",
+  "adbox_prov": 0,
   "traffic_prov": 0
 }
 ```
 
-Then open **Settings** (gear) → enable AirportDB / AeroDataBox under API KEYS
-and pick the AeroDataBox gateway if needed. Use **TRAFFIC SOURCE** to choose
-adsb.lol or adsb.fi.
+Use **TRAFFIC SOURCE** in Settings to choose adsb.lol or adsb.fi.
 
 ### App updates (Pi)
 

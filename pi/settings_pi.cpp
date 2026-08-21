@@ -646,7 +646,7 @@ void settings_init(lv_obj_t *parent) {
     // --- Column 1 (middle): API keys ---
     create_label(_content, "API KEYS", col1, 0);
     lv_obj_t *hint = lv_label_create(_content);
-    lv_label_set_text(hint, "Edit apt_tok / adbox_key in config.json");
+    lv_label_set_text(hint, "Keys: tools/set_api_keys.py (or edit config.json)");
     lv_obj_set_style_text_color(hint, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(hint, col1, 20);
