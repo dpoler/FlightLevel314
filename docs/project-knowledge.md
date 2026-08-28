@@ -61,6 +61,8 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
+- Map browse: pinch-to-zoom, pan, save view / tap airport in view (2026-08-28)
+- Detail card: AeroDataBox STD/ATD/STA/ATA + diverted (etc.) — same status JSON, 0 extra calls
 - Enrichment O/D: hide implausible low-altitude routes at airport views
 - Satellite basemap style (Esri or Mapbox; API key OK)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
@@ -530,6 +532,33 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   - **Existing "track":** `map_view_track` only draws a red ring; does not
     move center or fetch.
 
+- **Map browse — pinch-to-zoom, pan, save view (Dan, 2026-08-28)**:
+  Free-hand map navigation (not Follow Mode). Touch: pinch zoom + drag pan;
+  mouse/SDL: scroll-wheel zoom + drag (or equivalent). Overlays (aircraft,
+  runways, weather) can move with `MapProjection.offset_x/y` + radius changes
+  immediately; the basemap is still a baked mosaic for one
+  `(lat, lon, range, style)` — continuous slippy scroll is a major lift
+  (see Follow Mode basemap notes). Practical v1 likely: pan/zoom overlays
+  live; debounce basemap recenter/rebuild; accept brief geography lag.
+  **Save:** either “save this view” as a location, or tap an airport currently
+  in view to save/switch to it. ADS-B fetch remains centered on the *active
+  location* today — browsing far off-center without moving the query center
+  will empty the traffic. Related to Follow Mode geometry; keep them
+  coordinated but this item is browse + persist, not track-a-flight.
+  **Do not start unless Dan asks.**
+
+- **Detail card — flight ops times / diverted from AeroDataBox (Dan,
+  2026-08-28)**: surface scheduled + actual (and revised/predicted where
+  useful) departure and arrival, plus status flags such as **Diverted**
+  (and Delayed/Canceled if worth showing). Same Flight Status JSON already
+  fetched for O/D (`fetch_adbox_route` / `parse_adbox_route`); parser already
+  reads `scheduledTime` / `runwayTime` / `revisedTime` / `predictedTime` and
+  `status` for scoring but only keeps origin/dest ICAO in
+  `AircraftEnrichment`. **0 extra API calls** if we only persist and display
+  fields from that response. Free-tier cost remains the existing status call
+  (typically Tier 2 = 2 units). Display on detail card near FROM/TO; UTC vs
+  local TBD. See §8. **Do not start unless Dan asks.**
+
 - ~~**Airport Mode, Phase 3 (INFO METAR/ATIS)**~~ **done 2026-08-09** —
   Pi INFO four-quadrant / 1/3–2/3 layout; METAR via aviationweather.gov;
   D-ATIS via datis.clowd.io (US majors). Europe deferred (no solid free API).
@@ -820,6 +849,13 @@ Rationale: low near an airport that isn’t on the published route → schedule
 pick is probably wrong; better blank than misleading. Display-only filter
 (don’t need to re-hit AeroDataBox); still show O/D when HIGH / at waypoints /
 when route touches the local airport set. See §7.1.
+
+**Backlog (Dan, 2026-08-28):** detail-card flight ops from the **same**
+AeroDataBox status payload — STD/ATD (and STA/ATA), revised/predicted when
+useful, plus Diverted (and related status). Today those timestamps/`status`
+are used only to pick the best flight row; `AircraftEnrichment` stores
+origin/dest only. Extending the cache + detail card is display work, not a
+new endpoint. See §7.1.
 
 ---
 
