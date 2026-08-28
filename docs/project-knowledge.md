@@ -68,7 +68,8 @@ See §7.1. Highest-signal open items:
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
-Deferred (do not start): small airports in static DB; airframes.io ACARS O/D.
+Deferred (do not start): small airports in static DB; airframes.io ACARS O/D;
+Android / Kindle Fire tablet port (exploratory — see §7.1b).
 
 Recently closed (2026-08-09): Airport Mode Phase 3 (INFO METAR/ATIS);
 Pi-only cleanup (ESP32/jc1060 sources removed); GND default hidden;
@@ -699,6 +700,27 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   (acarsdec/dumpvdl2) on the same SDR hardware. Commercial-jets-only.
   **Deferred** until/unless an ACARS feeder exists. (AeroDataBox / other O/D
   path on Pi is separate — see §8.)
+
+- **Android / Kindle Fire tablet port (Dan, 2026-08-28 — exploratory;
+  do not start)**: old jailbroken/sideloadable Fire tablet as a wall display.
+  **Effort (scope, not calendar):** dominated by a new Android shell
+  (display/input/lifecycle/APK), not by rewriting ADS-B UI logic.
+  - **Best-fit approach:** SDL2 Android + NDK/CMake, keep LVGL `src/ui` and
+    most curl-based `platform_linux` fetch/enrichment — same pattern as the
+    existing Pi SDL simulator backend. Drop DRM/libinput/systemd/sysfs
+    backlight/Linux OTA.
+  - **Reuse:** LVGL screens, data models, remote HTTPS traffic, basemap/
+    weather algorithms, `platform.h` seam.
+  - **Must change:** Activity lifecycle (pause/resume vs endless loop),
+    app-private storage (not `~/.config`), logcat, brightness/kiosk/update
+    story, compile-time **1280×800** layout retune for the Fire panel.
+  - **Fire OS gotchas:** no Google Play Services (fine if HTTPS-only);
+    sideload APK; weak CPU/RAM for full-screen SW LVGL + mosaics; doze/
+    background kills; many aspect ratios.
+  - **Avoid:** Flutter/Compose/Web rewrite (full UI rewrite, weak reuse);
+    Termux/Linux-on-device as the product path.
+  Feasible as a second target; larger than a feature, smaller than a
+  from-scratch app if SDL+LVGL is kept.
 
 ### 7.1c Closed 2026-08-09 (Dan confirmation)
 
