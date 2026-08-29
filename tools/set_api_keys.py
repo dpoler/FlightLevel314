@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""Merge AirportDB / AeroDataBox API keys into FlightLevel314 config.json.
+"""Merge AirportDB / AeroDataBox / CARTO API keys into FlightLevel314 config.json.
 
 Secrets are never typed on the touchscreen. This script is the supported
-SSH/kiosk path for putting apt_tok / adbox_key onto the Pi.
+SSH/kiosk path for putting apt_tok / adbox_key / carto_key onto the Pi.
 
 Default target (systemd kiosk):
   /opt/flightlevel314/.config/flightlevel314/config.json
 
 Examples:
   sudo python3 tools/set_api_keys.py --apt-tok TOKEN --adbox-key KEY
+  sudo python3 tools/set_api_keys.py --carto-key KEY
   sudo python3 tools/set_api_keys.py --config /path/to/config.json --apt-tok TOKEN
   python3 tools/set_api_keys.py --print-path
 
 After writing keys, open Settings → API KEYS (VALID / ENABLE) or restart:
   sudo systemctl restart flightlevel314
+
+CARTO: free key from https://carto.com/basemaps/apikey — required for
+dark / voyager raster basemap styles (otherwise tiles are watermarked
+"API key required"). Then VIEW → Basemap → Rebuild map (or wait for
+cache miss) so watermarked mosaics are replaced.
 """
 
 from __future__ import annotations
@@ -83,6 +89,10 @@ def main() -> int:
     ap.add_argument("--apt-tok", help="AirportDB.io token → apt_tok")
     ap.add_argument("--adbox-key", help="AeroDataBox API key → adbox_key")
     ap.add_argument(
+        "--carto-key",
+        help="CARTO basemap API key → carto_key (free: carto.com/basemaps/apikey)",
+    )
+    ap.add_argument(
         "--adbox-prov",
         type=int,
         choices=(0, 1, 2),
@@ -109,21 +119,32 @@ def main() -> int:
     if args.show:
         apt = bool(doc.get("apt_tok"))
         adb = bool(doc.get("adbox_key"))
+        carto = bool(doc.get("carto_key"))
         print(f"{path}")
         print(f"  apt_tok:   {'present' if apt else 'missing'}")
         print(f"  adbox_key: {'present' if adb else 'missing'}")
+        print(f"  carto_key: {'present' if carto else 'missing'}")
         if "adbox_prov" in doc:
             print(f"  adbox_prov: {doc.get('adbox_prov')}")
         return 0
 
-    if args.apt_tok is None and args.adbox_key is None and args.adbox_prov is None:
-        ap.error("pass --apt-tok and/or --adbox-key (and optional --adbox-prov), "
-                 "or use --show / --print-path")
+    if (
+        args.apt_tok is None
+        and args.adbox_key is None
+        and args.adbox_prov is None
+        and args.carto_key is None
+    ):
+        ap.error(
+            "pass --apt-tok / --adbox-key / --carto-key (and optional --adbox-prov), "
+            "or use --show / --print-path"
+        )
 
     if args.apt_tok is not None:
         doc["apt_tok"] = args.apt_tok.strip()
     if args.adbox_key is not None:
         doc["adbox_key"] = args.adbox_key.strip()
+    if args.carto_key is not None:
+        doc["carto_key"] = args.carto_key.strip()
     if args.adbox_prov is not None:
         doc["adbox_prov"] = args.adbox_prov
 
@@ -138,8 +159,11 @@ def main() -> int:
     print(f"Updated {path}")
     print(f"  apt_tok:   {'set' if doc.get('apt_tok') else 'empty'}")
     print(f"  adbox_key: {'set' if doc.get('adbox_key') else 'empty'}")
+    print(f"  carto_key: {'set' if doc.get('carto_key') else 'empty'}")
     print("Next: open Settings → API KEYS (VALID / ENABLE), or:")
     print("  sudo systemctl restart flightlevel314")
+    if doc.get("carto_key"):
+        print("For basemap: VIEW → Basemap → Rebuild map (clears watermarked cache).")
     return 0
 
 

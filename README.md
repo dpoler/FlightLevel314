@@ -128,7 +128,8 @@ the running kiosk — the service uses `/opt/flightlevel314/.config/…`.
 # From a FlightLevel314 checkout on the Pi:
 sudo python3 tools/set_api_keys.py \
   --apt-tok 'YOUR_AIRPORTDB_TOKEN' \
-  --adbox-key 'YOUR_AERODATABOX_KEY'
+  --adbox-key 'YOUR_AERODATABOX_KEY' \
+  --carto-key 'YOUR_CARTO_BASEMAP_KEY'
 
 # Optional gateway: 0=RapidAPI, 1=API.Market, 2=Direct
 sudo python3 tools/set_api_keys.py --adbox-prov 0
@@ -136,6 +137,13 @@ sudo python3 tools/set_api_keys.py --adbox-prov 0
 # Inspect (prints present/missing, not the secret values):
 sudo python3 tools/set_api_keys.py --show
 ```
+
+**CARTO basemap key (required for dark / voyager styles):** request a free
+key at [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey) (no
+account queue). Without it, CARTO still serves PNGs but watermarks each tile
+with “API key required”. After setting `carto_key`, use **VIEW → Basemap →
+Rebuild map** (or restart) so old watermarked mosaics are replaced. OpenTopo
+and FAA VFR sectional styles do not use this key.
 
 Then open **Settings** (gear) → **API KEYS** → confirm VALID → ENABLE
 AirportDB / AeroDataBox. Or restart the service:
@@ -155,6 +163,7 @@ sudo -u flightlevel314 nano /opt/flightlevel314/.config/flightlevel314/config.js
   "apt_tok": "your-airportdb-token",
   "adbox_key": "your-aerodatabox-key",
   "adbox_prov": 0,
+  "carto_key": "your-carto-basemap-key",
   "traffic_prov": 0
 }
 ```

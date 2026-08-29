@@ -61,6 +61,7 @@ static lv_obj_t *_adbox_valid_val = nullptr;
 static lv_obj_t *_sw_adbox_en = nullptr;
 static lv_obj_t *_dd_adbox_prov = nullptr;
 static lv_obj_t *_adbox_usage_val = nullptr;
+static lv_obj_t *_carto_key_val = nullptr;
 static lv_obj_t *_ota_ver_val = nullptr;
 static lv_obj_t *_ota_status_lbl = nullptr;
 static lv_obj_t *_ota_btn_lbl = nullptr;
@@ -198,6 +199,15 @@ static void refresh_key_presence_ui() {
         } else {
             lv_obj_set_style_text_color(_adbox_key_val, WARN_COLOR, 0);
             lv_label_set_text(_adbox_key_val, "missing");
+        }
+    }
+    if (_carto_key_val) {
+        if (_cfg.carto_basemap_key[0]) {
+            lv_obj_set_style_text_color(_carto_key_val, SYS_COLOR, 0);
+            lv_label_set_text(_carto_key_val, "present");
+        } else {
+            lv_obj_set_style_text_color(_carto_key_val, WARN_COLOR, 0);
+            lv_label_set_text(_carto_key_val, "missing");
         }
     }
 
@@ -694,6 +704,17 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_pos(quota_note, col1, 340);
     lv_obj_set_width(quota_note, COL_W - 8);
     lv_obj_clear_flag(quota_note, LV_OBJ_FLAG_CLICKABLE);
+
+    create_label(_content, "CARTO BASEMAP", col1, 430);
+    _carto_key_val = create_inline_row(_content, "KEY", col1, 452, 70);
+    lv_obj_t *carto_hint = lv_label_create(_content);
+    lv_label_set_text(carto_hint, "Free key: carto.com/basemaps/apikey\n"
+                                  "(needed for dark/voyager styles)");
+    lv_obj_set_style_text_color(carto_hint, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(carto_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(carto_hint, col1, 474);
+    lv_obj_set_width(carto_hint, COL_W - 8);
+    lv_obj_clear_flag(carto_hint, LV_OBJ_FLAG_CLICKABLE);
 
     // --- Column 2 (right): DEVICE + ERRORS ---
     create_label(_content, "DEVICE", col2, 0);

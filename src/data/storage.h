@@ -85,6 +85,10 @@ struct UserConfig {
     // Style: 0=Carto dark, 1=Carto dark (no labels), 2=FAA VFR sectional,
     // 3=Carto voyager (cream light), 4=voyager no labels, 5=OpenTopoMap.
     // Opacity is per-style.
+    // Carto raster tiles require a free API key (carto.com/basemaps/apikey)
+    // or they return PNGs watermarked "API key required". Not used for
+    // OpenTopo / FAA sectional.
+    char carto_basemap_key[80];
     bool map_basemap_enabled;
     int map_basemap_opa[6];         // 10-100 percent per style (default 50)
     int map_basemap_style;          // see display_prefs / basemap styles
