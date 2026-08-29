@@ -14,11 +14,13 @@
 // Cache: one RGB565 file per (style, lat, lon, range, canvas geometry).
 // Freshness is mtime vs a per-style TTL (OSM/Carto ~30d; sectionals ~40d
 // so we refetch ahead of the ~56-day chart cycle). Filename includes an
-// `eq5` tag: HTTP/1.1 tile fetch (fixes OpenTopo missing squares under HTTP/2).
+// `eq6` tag: HTTP/1.1 tile fetch + Carto `?key=` (eq5 mosaics may contain
+// "API key required" watermarks from CARTO's 2026 raster key requirement).
 
 #include "basemap.h"
 
 #include "../src/platform/platform.h"
+#include "../src/data/storage.h"
 #include "../src/ui/display_prefs.h"
 
 #include <curl/curl.h>
@@ -419,6 +421,18 @@ void format_tile_url(char *buf, size_t buflen, int style, int z, int x, int y) {
                  "https://basemaps.cartocdn.com/dark_all/%d/%d/%d.png", z, x, y);
         break;
     }
+
+    // CARTO raster basemaps require a free API key (2026); without it the
+    // CDN still returns 200 PNGs but watermarks "API key required" on each
+    // tile. OpenTopo / FAA sectional URLs are unchanged.
+    const bool carto = (style == MAP_BASEMAP_STYLE_DARK
+                        || style == MAP_BASEMAP_STYLE_DARK_NOLABELS
+                        || style == MAP_BASEMAP_STYLE_LIGHT
+                        || style == MAP_BASEMAP_STYLE_LIGHT_NOLABELS);
+    if (carto && g_config.carto_basemap_key[0]) {
+        size_t len = strlen(buf);
+        snprintf(buf + len, buflen - len, "?key=%s", g_config.carto_basemap_key);
+    }
 }
 
 void pixel_of_coord(float lat, float lon, int z, double &px, double &py) {
@@ -460,9 +474,16 @@ void ensure_dir(const std::string &path) {
 
 std::string cache_path(int style, float lat, float lon, float radius_nm,
                        int w, int h, int cy, int br) {
-    char name[220];
-    snprintf(name, sizeof(name), "%s/%s_eq5_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
-             cache_dir().c_str(), style_cache_tag(style),
+    char name[240];
+    // k1/k0: whether a Carto key is configured. Adding a key must not reuse
+    // watermarked mosaics fetched without one (and vice versa).
+    const bool carto = (style == MAP_BASEMAP_STYLE_DARK
+                        || style == MAP_BASEMAP_STYLE_DARK_NOLABELS
+                        || style == MAP_BASEMAP_STYLE_LIGHT
+                        || style == MAP_BASEMAP_STYLE_LIGHT_NOLABELS);
+    const char *k = (carto && g_config.carto_basemap_key[0]) ? "k1" : "k0";
+    snprintf(name, sizeof(name), "%s/%s_eq6%s_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.rgb565",
+             cache_dir().c_str(), style_cache_tag(style), k,
              lat, lon, radius_nm, w, h, cy, br);
     return name;
 }
@@ -887,6 +908,22 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     if (canvas_w <= 0 || canvas_h <= 0 || bullseye_r_px <= 0) return;
 
     const int style = map_basemap_style();
+
+    const bool carto = (style == MAP_BASEMAP_STYLE_DARK
+                        || style == MAP_BASEMAP_STYLE_DARK_NOLABELS
+                        || style == MAP_BASEMAP_STYLE_LIGHT
+                        || style == MAP_BASEMAP_STYLE_LIGHT_NOLABELS);
+    if (carto && !g_config.carto_basemap_key[0]) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            platform_log_warn(
+                "Basemap: CARTO raster styles need a free API key "
+                "(https://carto.com/basemaps/apikey) → config carto_key / "
+                "tools/set_api_keys.py --carto-key; else tiles show "
+                "'API key required' watermarks\n");
+        }
+    }
 
     // FAA VFR sectionals only cover US chart areas — don't fetch empty tiles
     // (gray paper after a pointless progress bar) for EGLL / etc.

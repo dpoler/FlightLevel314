@@ -9,11 +9,14 @@ Usage:
 
 Defaults to HOME_LAT/HOME_LON from src/config.h if not specified.
 Tile source: CartoDB dark_all (dark basemap matching the UI theme).
+Set CARTO_KEY (or --carto-key) for the free CARTO basemap API key —
+without it tiles may be watermarked "API key required".
 """
 
 import argparse
 import io
 import math
+import os
 import struct
 import sys
 import time
@@ -41,6 +44,13 @@ RANGE_LEVELS = [150, 100, 50, 20, 5, 1]
 
 TILE_URL = "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
 USER_AGENT = "ADS-B-Display-Static-Map/1.0"
+
+
+def tile_url(z: int, x: int, y: int, carto_key: str = "") -> str:
+    url = TILE_URL.format(z=z, x=x, y=y)
+    if carto_key:
+        url += f"?key={carto_key}"
+    return url
 
 
 def osm_lon_to_x(lon: float, z: int) -> int:
@@ -76,9 +86,12 @@ def pixel_of_coord(lat: float, lon: float, z: int) -> tuple[float, float]:
     return px, py
 
 
+_carto_key = ""
+
+
 def download_tile(z: int, x: int, y: int, max_retries: int = 3) -> Image.Image:
-    """Download a single OSM tile with retries."""
-    url = TILE_URL.format(z=z, x=x, y=y)
+    """Download a single OSM/Carto tile with retries."""
+    url = tile_url(z, x, y, _carto_key)
     for attempt in range(max_retries):
         try:
             resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=10)
@@ -225,6 +238,7 @@ def parse_config_h(config_path: str) -> tuple[float, float]:
 
 
 def main():
+    global _carto_key
     parser = argparse.ArgumentParser(description="Generate static map backgrounds for ADS-B display")
     parser.add_argument("--lat", type=float, help="Center latitude (default: from config.h)")
     parser.add_argument("--lon", type=float, help="Center longitude (default: from config.h)")
@@ -232,7 +246,13 @@ def main():
     parser.add_argument("--height", type=int, default=285, help="Output height per map (default: 285)")
     parser.add_argument("--output", type=str, default=None,
                         help="Output path (default: src/ui/static_map_data.h)")
+    parser.add_argument("--carto-key", default=os.environ.get("CARTO_KEY", ""),
+                        help="CARTO basemap API key (or CARTO_KEY env)")
     args = parser.parse_args()
+    _carto_key = (args.carto_key or "").strip()
+    if not _carto_key:
+        print("WARNING: no --carto-key / CARTO_KEY; tiles may be watermarked",
+              file=sys.stderr)
 
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent

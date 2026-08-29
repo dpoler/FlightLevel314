@@ -66,6 +66,7 @@ static UserConfig defaults() {
         cfg.view_show_tag_type[i] = false;
         cfg.view_show_secondary_locations[i] = true;
     }
+    cfg.carto_basemap_key[0] = '\0';
     cfg.map_basemap_enabled = true;
     for (int i = 0; i < 6; i++) cfg.map_basemap_opa[i] = 50;
     cfg.map_basemap_style = 0;
@@ -153,6 +154,8 @@ UserConfig storage_load_config() {
     cfg.view_show_tag_type[1] = doc["tag_type1"] | cfg.view_show_tag_type[1];
     cfg.view_show_secondary_locations[0] = doc["show2loc0"] | cfg.view_show_secondary_locations[0];
     cfg.view_show_secondary_locations[1] = doc["show2loc1"] | cfg.view_show_secondary_locations[1];
+    strlcpy(cfg.carto_basemap_key, doc["carto_key"] | cfg.carto_basemap_key,
+            sizeof(cfg.carto_basemap_key));
     cfg.map_basemap_enabled = doc["bm_on"] | cfg.map_basemap_enabled;
     // Legacy single bm_opa seeds all styles if per-style keys are absent.
     int legacy_opa = doc["bm_opa"] | 50;
@@ -230,6 +233,7 @@ void storage_save_config(const UserConfig &cfg) {
     doc["tag_type1"] = cfg.view_show_tag_type[1];
     doc["show2loc0"] = cfg.view_show_secondary_locations[0];
     doc["show2loc1"] = cfg.view_show_secondary_locations[1];
+    doc["carto_key"] = cfg.carto_basemap_key;
     doc["bm_on"] = cfg.map_basemap_enabled;
     for (int i = 0; i < 6; i++) {
         char key[12];
