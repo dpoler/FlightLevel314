@@ -253,39 +253,6 @@ static void route_set_hidden(bool hidden) {
     apply(_route_to_name);
 }
 
-// Drop common trailing words so FROM/TO name columns stay readable at
-// half-width ("John F. Kennedy International Airport" → "John F. Kennedy").
-static void shorten_airport_name(const char *full, char *out, size_t out_sz) {
-    if (!out || out_sz == 0) return;
-    out[0] = '\0';
-    if (!full || !full[0]) return;
-    static const char *const SUFFIXES[] = {
-        " International Airport",
-        " International",
-        " Regional Airport",
-        " Municipal Airport",
-        " Airport",
-        " Airfield",
-        " Air Base",
-        " AFB",
-        nullptr
-    };
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%s", full);
-    for (int i = 0; SUFFIXES[i]; i++) {
-        size_t bl = strlen(buf);
-        size_t sl = strlen(SUFFIXES[i]);
-        if (bl > sl && strcmp(buf + bl - sl, SUFFIXES[i]) == 0) {
-            buf[bl - sl] = '\0';
-            break;
-        }
-    }
-    // Trim trailing spaces after stripping.
-    size_t n = strlen(buf);
-    while (n > 0 && buf[n - 1] == ' ') buf[--n] = '\0';
-    snprintf(out, out_sz, "%s", buf[0] ? buf : full);
-}
-
 static void on_enrichment_ready(AircraftEnrichment *data) {
     if (!_visible) return;
 
@@ -316,18 +283,15 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
     if (data->origin_icao[0] || data->dest_icao[0]) {
         const char *o = data->origin_icao[0] ? data->origin_icao : "----";
         const char *d = data->dest_icao[0] ? data->dest_icao : "----";
-        char oname[64] = {}, dname[64] = {};
-        char oshort[48] = {}, dshort[48] = {};
-        airports_format_name(data->origin_icao, oname, sizeof(oname));
-        airports_format_name(data->dest_icao, dname, sizeof(dname));
-        shorten_airport_name(oname, oshort, sizeof(oshort));
-        shorten_airport_name(dname, dshort, sizeof(dshort));
+        char oplace[48] = {}, dplace[48] = {};
+        airports_format_place(data->origin_icao, oplace, sizeof(oplace));
+        airports_format_place(data->dest_icao, dplace, sizeof(dplace));
 
         lv_label_set_text(_route_from_icao, o);
         lv_label_set_text(_route_to_icao, d);
         // ASCII "-" only — Montserrat has no U+2014 em dash (renders as tofu).
-        lv_label_set_text(_route_from_name, oshort[0] ? oshort : "-");
-        lv_label_set_text(_route_to_name, dshort[0] ? dshort : "-");
+        lv_label_set_text(_route_from_name, oplace[0] ? oplace : "-");
+        lv_label_set_text(_route_to_name, dplace[0] ? dplace : "-");
         route_set_hidden(false);
     }
 
