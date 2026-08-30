@@ -86,19 +86,21 @@ find_package(Threads REQUIRED)
 target_link_libraries(lvgl PUBLIC Threads::Threads)
 
 # Static large/medium airport glyph DB (gitignored). Regenerate when missing
-# or schema-stale (name[64], alias[], AIRPORTS_DB_HAS_ALIAS). Configure-time
-# covers fresh checkouts; the ensure target also runs on every build so a
-# plain `cmake --build` after git pull fixes a stale header without a
-# manual reconfigure.
+# or schema-stale (name[64], municipality[], alias[], schema flags).
+# Configure-time covers fresh checkouts; the ensure target also runs on every
+# build so a plain `cmake --build` after git pull fixes a stale header without
+# a manual reconfigure.
 set(AIRPORTS_DB_H "${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/airports_db.h")
 set(AIRPORTS_DB_GEN "${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_airports_db.py")
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 if(EXISTS "${AIRPORTS_DB_H}")
-    file(READ "${AIRPORTS_DB_H}" _adb_hdr LIMIT 1200)
+    file(READ "${AIRPORTS_DB_H}" _adb_hdr LIMIT 1600)
     if(NOT _adb_hdr MATCHES "AIRPORTS_DB_HAS_ALIAS"
+       OR NOT _adb_hdr MATCHES "AIRPORTS_DB_HAS_MUNICIPALITY"
        OR NOT _adb_hdr MATCHES "char alias\\[5\\]"
-       OR NOT _adb_hdr MATCHES "char name\\[64\\]")
+       OR NOT _adb_hdr MATCHES "char name\\[64\\]"
+       OR NOT _adb_hdr MATCHES "char municipality\\[48\\]")
         message(STATUS "airports_db.h is schema-stale — regenerating")
         file(REMOVE "${AIRPORTS_DB_H}")
     endif()
