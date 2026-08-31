@@ -14,9 +14,9 @@ APIs return, e.g. SPJC). `ident` is kept as `alias` when it differs
 (e.g. SPIM) so lookups still resolve historical / local codes without
 drawing a second map glyph.
 
-`municipality` is the city / locality (e.g. Honolulu, Denver) for compact
-UI such as the detail-card FROM/TO line; `name` stays the official airport
-name for picker / search.
+`municipality` is the city / locality from OurAirports (search + future UI).
+Detail-card FROM/TO place labels use abbreviate + cut-Airport/Aerodrome, with
+optional ICAO overrides in `airport_display_names.h` — not municipality.
 
 Usage:
     python3 tools/generate_airports_db.py [--output PATH]
