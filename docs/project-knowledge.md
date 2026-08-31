@@ -61,6 +61,8 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
+- Detail card: AeroDataBox STD/ATD/STA/ATA + diverted; reclaim blank
+  telemetry rows; card can grow taller / better centered (2026-08-31)
 - Enrichment O/D: hide implausible low-altitude routes at airport views
 - Satellite basemap style (Esri or Mapbox; API key OK)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
