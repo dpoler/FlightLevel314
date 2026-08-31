@@ -674,8 +674,11 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(lbl, CARD_DIM, 0);
         lv_obj_set_pos(lbl, x, y_route_name);
-        lv_obj_set_width(lbl, route_col_w);
-        lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+        // Half-column width; reserve two lines so long honorific names wrap
+        // instead of clipping mid-word. DOTS ellipsizes if still too long.
+        // montserrat_14 line height is 16 — 32px = two lines exactly.
+        lv_obj_set_size(lbl, route_col_w, 32);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
         lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
         return lbl;
     };
