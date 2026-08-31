@@ -14,6 +14,7 @@ struct AirportDisplayOverride {
 
 // Sorted by icao for bsearch; keep sorted when editing.
 static const AirportDisplayOverride k_airport_display_overrides[] = {
+    {"CYUL", "Montreal/Trudeau"},
     {"EHAM", "Schiphol"},
     {"EHBD", "Budel"},
     {"EHGG", "Eelde"},
