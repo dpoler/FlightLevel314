@@ -14,6 +14,7 @@ struct AirportDisplayOverride {
 
 // Sorted by icao for bsearch; keep sorted when editing.
 static const AirportDisplayOverride k_airport_display_overrides[] = {
+    {"CYCE", "Centralia"},
     {"CYUL", "Montreal/Trudeau"},
     {"EHAM", "Schiphol"},
     {"EHBD", "Budel"},
@@ -24,11 +25,13 @@ static const AirportDisplayOverride k_airport_display_overrides[] = {
     {"ENSB", "Longyear"},
     {"ENTO", "Torp"},
     {"ENZV", "Sola"},
+    {"KAFW", "Fort Worth Alliance"},
     {"KBFI", "Boeing Field"},
     {"KBTL", "Kellogg Field"},
     {"KCOE", "Pappy Boyington Field"},
     {"KCSV", "Whitson Field"},
     {"KCVG", "Cincinnati/N. Kentucky"},
+    {"KDAL", "Love Field"},
     {"KDUA", "Eaker Field"},
     {"KELY", "Yelland Field"},
     {"KFAY", "Grannis Field"},
