@@ -32,5 +32,5 @@ void airports_format_name(const char *icao, char *buf, int buf_size);
 
 // Compact place label for UI (detail-card FROM/TO): curated ICAO override
 // if present, else abbreviate International/Regional/… and cut at the first
-// Airport/Aerodrome (drop that word and everything after). Empty if unknown.
+// Airport/Aerodrome/Field (drop that word and everything after). Empty if unknown.
 void airports_format_place(const char *icao, char *buf, int buf_size);

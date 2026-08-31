@@ -71,10 +71,13 @@ static void replace_word(char *buf, size_t buflen, const char *from, const char 
     snprintf(buf, buflen, "%s", tmp);
 }
 
-// Cut at the first whole-word Airport / Aerodrome (drop that word and after).
+// Cut at the first whole-word Airport / Aerodrome / Field (drop that word
+// and after). "Field" is US-common for the same role as Airport; curated
+// overrides cover cases where Field is the *brand* (Love Field) or a
+// surname mid-name (James T. Field Memorial).
 static void cut_at_airport_word(char *buf) {
     if (!buf || !buf[0]) return;
-    static const char *const CUT[] = {"Airport", "Aerodrome", nullptr};
+    static const char *const CUT[] = {"Airport", "Aerodrome", "Field", nullptr};
     size_t n = strlen(buf);
     size_t best = n;
     for (int c = 0; CUT[c]; c++) {
