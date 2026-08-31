@@ -5,6 +5,7 @@
 #include "../../src/data/error_log.h"
 #include "../../src/platform/platform.h"
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -55,6 +56,101 @@ bool code_already_loaded(const char *code) {
     return false;
 }
 
+// Montserrat (and our other UI fonts) are ASCII-only. Fold accents then drop
+// anything outside 0x20–0x7E so "LATAM Perú" becomes "LATAM Peru" instead of
+// "LATAM Per" + a missing-glyph box. Handles multi-byte UTF-8 in OPTD names.
+void copy_name_ascii(char *dst, size_t dst_sz, const char *src, size_t src_len) {
+    if (!dst || dst_sz == 0) return;
+    dst[0] = '\0';
+    if (!src || src_len == 0) return;
+
+    size_t out = 0;
+    size_t i = 0;
+    while (i < src_len && out + 1 < dst_sz) {
+        unsigned char c = (unsigned char)src[i];
+        if (c < 0x80) {
+            if (c >= 0x20 && c < 0x7F) dst[out++] = (char)c;
+            i++;
+            continue;
+        }
+        // Decode one UTF-8 codepoint, NFKD-ish via a tiny Latin-1 / common
+        // supplement fold table for airline names (é→e, ø→o, …).
+        uint32_t cp = 0;
+        int need = 0;
+        if ((c & 0xE0) == 0xC0 && i + 1 < src_len) {
+            need = 2;
+            cp = (c & 0x1F);
+        } else if ((c & 0xF0) == 0xE0 && i + 2 < src_len) {
+            need = 3;
+            cp = (c & 0x0F);
+        } else if ((c & 0xF8) == 0xF0 && i + 3 < src_len) {
+            need = 4;
+            cp = (c & 0x07);
+        } else {
+            i++; // invalid lead — skip
+            continue;
+        }
+        bool ok = true;
+        for (int k = 1; k < need; k++) {
+            unsigned char cc = (unsigned char)src[i + k];
+            if ((cc & 0xC0) != 0x80) { ok = false; break; }
+            cp = (cp << 6) | (cc & 0x3F);
+        }
+        if (!ok) { i++; continue; }
+        i += (size_t)need;
+
+        // Common accented Latin letters → ASCII base (NFC forms from OPTD).
+        auto base = [](uint32_t u) -> char {
+            if (u >= 'A' && u <= 'Z') return (char)u;
+            if (u >= 'a' && u <= 'z') return (char)u;
+            // Latin-1 supplement + a few extras seen in OPTD airline names.
+            switch (u) {
+            case 0x00C0: case 0x00C1: case 0x00C2: case 0x00C3: case 0x00C4: case 0x00C5:
+            case 0x00E0: case 0x00E1: case 0x00E2: case 0x00E3: case 0x00E4: case 0x00E5:
+                return (u < 0x00E0) ? 'A' : 'a';
+            case 0x00C7: case 0x00E7: return (u < 0x00E0) ? 'C' : 'c';
+            case 0x00C8: case 0x00C9: case 0x00CA: case 0x00CB:
+            case 0x00E8: case 0x00E9: case 0x00EA: case 0x00EB:
+                return (u < 0x00E0) ? 'E' : 'e';
+            case 0x00CC: case 0x00CD: case 0x00CE: case 0x00CF:
+            case 0x00EC: case 0x00ED: case 0x00EE: case 0x00EF:
+                return (u < 0x00E0) ? 'I' : 'i';
+            case 0x00D1: case 0x00F1: return (u < 0x00E0) ? 'N' : 'n';
+            case 0x00D2: case 0x00D3: case 0x00D4: case 0x00D5: case 0x00D6: case 0x00D8:
+            case 0x00F2: case 0x00F3: case 0x00F4: case 0x00F5: case 0x00F6: case 0x00F8:
+                return (u < 0x00E0) ? 'O' : 'o';
+            case 0x00D9: case 0x00DA: case 0x00DB: case 0x00DC:
+            case 0x00F9: case 0x00FA: case 0x00FB: case 0x00FC:
+                return (u < 0x00E0) ? 'U' : 'u';
+            case 0x00DD: case 0x00FD: case 0x00FF: return (u == 0x00DD) ? 'Y' : 'y';
+            case 0x00DF: return 's'; // ß → s (good enough for UI)
+            case 0x0152: return 'O'; // Œ
+            case 0x0153: return 'o'; // œ
+            case 0x0178: return 'Y'; // Ÿ
+            default: return 0;
+            }
+        };
+        char ch = base(cp);
+        if (ch) dst[out++] = ch;
+    }
+    dst[out] = '\0';
+    // Collapse runs of spaces left by dropped glyphs.
+    size_t r = 0, w = 0;
+    bool sp = false;
+    while (dst[r]) {
+        if (dst[r] == ' ') {
+            if (!sp && w > 0) dst[w++] = ' ';
+            sp = true;
+        } else {
+            dst[w++] = dst[r];
+            sp = false;
+        }
+        r++;
+    }
+    while (w > 0 && dst[w - 1] == ' ') w--;
+    dst[w] = '\0';
+}
+
 // Parses one OPTD line. Skips header, expired rows, and duplicate ICAO codes.
 void parse_line(const char *line, size_t len, const char *today) {
     if (len == 0 || _airline_count >= AIRLINES_MAX) return;
@@ -85,8 +181,8 @@ void parse_line(const char *line, size_t len, const char *today) {
     AirlineEntry &e = _airlines[_airline_count];
     memset(&e, 0, sizeof(e));
     memcpy(e.code, code, 3);
-    size_t copy_n = name_len < sizeof(e.name) - 1 ? name_len : sizeof(e.name) - 1;
-    memcpy(e.name, name_f, copy_n);
+    copy_name_ascii(e.name, sizeof(e.name), name_f, name_len);
+    if (!e.name[0]) return; // nothing left after folding
     // Telephony callsign not in this OPTD file — leave empty.
     _airline_count++;
 }

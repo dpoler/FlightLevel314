@@ -10,7 +10,7 @@
 
 struct AirlineEntry {
     char code[4];      // ICAO airline code, e.g. "UAL"
-    char name[40];     // e.g. "United Airlines"
+    char name[40];     // e.g. "United Airlines" (ASCII-folded from OPTD)
     char callsign[16]; // telephony callsign if known (often empty from OPTD)
 };
 
