@@ -73,18 +73,35 @@ def c_escape(s: str) -> str:
 
 def to_ascii(s: str) -> str:
     # Montserrat has no Arabic/CJK/etc.; fold accents then drop non-ASCII.
-    nk = unicodedata.normalize("NFKD", s or "")
-    return "".join(c for c in nk if 32 <= ord(c) < 127)
+    # OurAirports often glues tokens with '/' or a Unicode dash (U+2013)
+    # and no spaces — e.g. "São Paulo/Guarulhos–Governor …". Stripping the
+    # dash without a replacement yields "GuarulhosGovernor". Normalize those
+    # separators to spaced ASCII first so truncate and UI wrap can break.
+    s = s or ""
+    for ch in ("\u2013", "\u2014", "\u2212", "\u2010", "\u2011"):
+        s = s.replace(ch, " - ")
+    s = s.replace("/", " / ")
+    nk = unicodedata.normalize("NFKD", s)
+    ascii_s = "".join(c for c in nk if 32 <= ord(c) < 127)
+    return " ".join(ascii_s.split())
 
 
 def truncate_field(name: str, max_len: int) -> str:
-    name = " ".join(to_ascii(name).split())  # collapse whitespace + ASCII-fold
+    name = to_ascii(name)  # already whitespace-collapsed
     if len(name) <= max_len:
         return name
     budget = max_len - 3  # room for "..."
-    cut = name[:budget].rsplit(" ", 1)[0]
-    if len(cut) < 12:
-        cut = name[:budget]
+    head = name[:budget]
+    # Prefer " / " (city/airport pairs) then a plain space.
+    cut = None
+    for sep in (" / ", " "):
+        if sep in head:
+            cand = head.rsplit(sep, 1)[0]
+            if len(cand) >= 12:
+                cut = cand
+                break
+    if cut is None:
+        cut = head
     return cut + "..."
 
 
