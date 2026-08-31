@@ -123,6 +123,34 @@ static void abbreviate_airport_name(const char *full, char *out, size_t out_sz) 
     snprintf(out, out_sz, "%s", buf[0] ? buf : full);
 }
 
+// LVGL LABEL_LONG_DOT wraps on whitespace. Names and overrides often glue
+// city/airport with '/' and no spaces ("Sao Paulo/Guarulhos…",
+// "Montreal/Trudeau"), so the slash-joined token never breaks. Insert spaces
+// around '/' so wrap can split there (e.g. "Sao Paulo / Guarulhos …").
+static void loosen_slash_breaks(char *buf, size_t buflen) {
+    if (!buf || !buf[0] || buflen < 2) return;
+    char tmp[160];
+    size_t o = 0;
+    for (size_t i = 0; buf[i] && o + 1 < sizeof(tmp); i++) {
+        if (buf[i] == '/') {
+            if (o > 0 && tmp[o - 1] != ' ') {
+                if (o + 1 >= sizeof(tmp)) break;
+                tmp[o++] = ' ';
+            }
+            if (o + 1 >= sizeof(tmp)) break;
+            tmp[o++] = '/';
+            if (buf[i + 1] != '\0' && buf[i + 1] != ' ') {
+                if (o + 1 >= sizeof(tmp)) break;
+                tmp[o++] = ' ';
+            }
+        } else {
+            tmp[o++] = buf[i];
+        }
+    }
+    tmp[o] = '\0';
+    snprintf(buf, buflen, "%s", tmp);
+}
+
 static const char *display_override_for_icao(const char *icao_key) {
     // Linear scan is fine for a few dozen curated entries.
     for (int i = 0; i < k_airport_display_override_count; i++) {
@@ -207,11 +235,13 @@ void airports_format_place(const char *icao, char *buf, int buf_size) {
     if (ovr) {
         strncpy(buf, ovr, (size_t)buf_size - 1);
         buf[buf_size - 1] = '\0';
+        loosen_slash_breaks(buf, (size_t)buf_size);
         return;
     }
 
     if (ap && ap->name[0]) {
         abbreviate_airport_name(ap->name, buf, (size_t)buf_size);
+        loosen_slash_breaks(buf, (size_t)buf_size);
     }
 }
 
