@@ -61,6 +61,8 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
+- Detail card: AeroDataBox STD/ATD/STA/ATA + diverted; reclaim blank
+  telemetry rows; card can grow taller / better centered (2026-08-31)
 - Enrichment O/D: hide implausible low-altitude routes at airport views
 - Satellite basemap style (Esri or Mapbox; API key OK)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
@@ -583,6 +585,24 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   ~50 nm of it. Probably a bad schedule match; blank is better. Display
   gate in detail_card (or enrichment read path) — no extra API. Full note
   under origin/destination history above §9.
+
+- **Detail card — flight ops times + reclaim blank telemetry (Dan,
+  2026-08-28 / 08-31)**: surface STD/ATD/STA/ATA (+ Diverted etc.) from the
+  same AeroDataBox Flight Status JSON already used for O/D — **0 extra API
+  calls** if we only persist fields the parser already reads for scoring.
+  Layout notes when implementing:
+  1. **Card can grow taller** — the summary/flight-info box is not vertically
+     centered in the dimmed overlay; there is unused margin. Prefer a modest
+     height bump (and/or centering) over packing times into a cramped column.
+  2. **Reclaim nearly-always-blank grid cells:** MACH / IAS / TAS / ROLL are
+     parsed from the feed (`datasource_remote.cpp`) but **adsb.lol / typical
+     aggregator JSON almost never includes them** (0/80 KDEN and 0/133 LAX
+     spot-checks 2026-08-31; keys absent, not just zero). Those are optional
+     Mode‑S / air-referenced fields many public aggregators strip. By
+     contrast GND SPD, NAV ALT, and QNH are often present. Dropping or
+     hiding the MACH/IAS/TAS/ROLL row(s) frees ~1–2 grid rows for times /
+     status without losing useful live data on this traffic source.
+  **Do not start unless Dan asks.**
 
 - ~~**VIEW — “Rebuild this map” (current mosaic only) (Dan, 2026-08-10)**~~
   **done 2026-08-21**: VIEW → Basemap → **Rebuild map** calls
