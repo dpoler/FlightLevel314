@@ -12,6 +12,7 @@ struct StaticAirport {
     char icao[5];
     char alias[5];
     char name[64];
+    char municipality[48];
     float lat, lon;
     unsigned char large;
 };
@@ -20,9 +21,17 @@ struct StaticAirport {
 // Exact ICAO or alias match (case-insensitive). nullptr if unknown / DB absent.
 const StaticAirport *airports_lookup_icao(const char *icao);
 
-// Case-insensitive substring match on name/ICAO. Writes up to max_out
-// pointers into out[]; returns the number written. Exact ICAO hits first.
+// Case-insensitive substring match on name/municipality/ICAO. Writes up to
+// max_out pointers into out[]; returns the number written. Exact ICAO hits
+// first.
 int airports_search(const char *query, const StaticAirport **out, int max_out);
 
-// Convenience: copy truncated name for an ICAO into buf, or "" if unknown.
+// Convenience: copy official airport name for an ICAO into buf, or "" if
+// unknown.
 void airports_format_name(const char *icao, char *buf, int buf_size);
+
+// Compact place label for UI (detail-card FROM/TO): curated ICAO override
+// if present, else abbreviate International/Regional/… and cut at the first
+// Airport/Aerodrome/Field (drop that word and everything after). '/' is spaced
+// ("A / B") so LVGL wrap can break on city/airport pairs. Empty if unknown.
+void airports_format_place(const char *icao, char *buf, int buf_size);
