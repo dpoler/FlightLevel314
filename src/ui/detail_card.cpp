@@ -36,29 +36,20 @@ static lv_obj_t *_photo_img = nullptr;
 static lv_image_dsc_t _photo_dsc;
 static char _photo_shown_icao[7] = {};
 #endif
-// Data grid row 1 — flight state
+// Telemetry grid values (labels created in detail_card_init).
 static lv_obj_t *_alt_label = nullptr;
 static lv_obj_t *_spd_label = nullptr;
 static lv_obj_t *_hdg_label = nullptr;
 static lv_obj_t *_vrate_label = nullptr;
+static lv_obj_t *_nav_alt_label = nullptr;
 static lv_obj_t *_squawk_label = nullptr;
 static lv_obj_t *_status_label = nullptr;
-
-// Data grid row 2 — position & tracking
 static lv_obj_t *_dist_label = nullptr;
 static lv_obj_t *_bearing_label = nullptr;
 static lv_obj_t *_lat_label = nullptr;
 static lv_obj_t *_lon_label = nullptr;
 static lv_obj_t *_track_label = nullptr;
 static lv_obj_t *_signal_label = nullptr;
-
-// Data grid row 3 — extended flight params
-static lv_obj_t *_mach_label = nullptr;
-static lv_obj_t *_ias_label = nullptr;
-static lv_obj_t *_tas_label = nullptr;
-static lv_obj_t *_nav_alt_label = nullptr;
-static lv_obj_t *_roll_label = nullptr;
-static lv_obj_t *_qnh_label = nullptr;
 
 // Live update timer
 static lv_timer_t *_update_timer = nullptr;
@@ -79,9 +70,8 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #define SUMMARY_H      270
 #define PHOTO_SLOT_W   400
 #define PHOTO_SLOT_H   220
-// Telemetry labels/values are short ("ALTITUDE", "FL350") — no need to
-// pack the grid against the summary. Center a fixed-width 3-col block in
-// the gap between summary and photo.
+// Telemetry labels ("LONGITUDE", "VERT SPD") need ~140px. Center a
+// fixed-width 3-col block in the gap between summary and photo.
 #define GRID_COL_W     140
 #define STATS_W        (GRID_COL_W * 3)
 #define MID_AVAIL      (LCD_H_RES - 2 * CARD_PAD - SUMMARY_W - PHOTO_SLOT_W)
@@ -362,17 +352,15 @@ static lv_obj_t *make_data_row(lv_obj_t *parent, const char *label_text,
     return lbl;
 }
 
-// Renders everything in the data grid (rows 1-3) from `ac`. Shared by
-// detail_card_show()'s initial paint and update_timer_cb()'s per-tick
-// refresh -- previously this only ever ran once, at the moment the card was
-// tapped open, so DIST/BEARING/ALT/SPD/position/etc. all froze at whatever
-// they were then. That was most visible as "switching to a different active
-// location doesn't update DIST/BEARING for an aircraft visible from both"
-// (reported), but it was really a general staleness bug, not something
-// specific to switching -- none of this ever tracked live telemetry updates
-// either, switching or not.
+// Renders the telemetry grid from `ac`. Shared by detail_card_show()'s
+// initial paint and update_timer_cb()'s per-tick refresh -- previously this
+// only ever ran once, at the moment the card was tapped open, so
+// DIST/BEARING/ALT/SPD/position/etc. all froze at whatever they were then.
+// That was most visible as "switching to a different active location doesn't
+// update DIST/BEARING for an aircraft visible from both" (reported), but it
+// was really a general staleness bug, not something specific to switching --
+// none of this ever tracked live telemetry updates either, switching or not.
 static void render_grid(const Aircraft *ac) {
-    // === DATA GRID ROW 1 — flight state ===
     if (ac->on_ground) {
         lv_label_set_text(_alt_label, "GND");
     } else if (ac->altitude >= 18000) {
@@ -385,6 +373,16 @@ static void render_grid(const Aircraft *ac) {
     lv_label_set_text_fmt(_hdg_label, "%03d", ac->heading);
     lv_label_set_text_fmt(_vrate_label, "%+d fpm", ac->vert_rate);
     lv_label_set_text_fmt(_squawk_label, "%04d", ac->squawk);
+
+    if (ac->nav_altitude > 0) {
+        if (ac->nav_altitude >= 18000) {
+            lv_label_set_text_fmt(_nav_alt_label, "FL%d", ac->nav_altitude / 100);
+        } else {
+            lv_label_set_text_fmt(_nav_alt_label, "%d ft", ac->nav_altitude);
+        }
+    } else {
+        lv_label_set_text(_nav_alt_label, "--");
+    }
 
     // Keep identity squawk row in sync with live telemetry.
     if (_ids_label) {
@@ -406,7 +404,6 @@ static void render_grid(const Aircraft *ac) {
     else status = "Cruising";
     lv_label_set_text(_status_label, status);
 
-    // === DATA GRID ROW 2 — position & tracking ===
     // DIST/BEARING measure from whichever location is actually active, not
     // a hardcoded Home -- this was a real, latent bug found while removing
     // Home as a special case: unlike stats.cpp's CLOSEST record (already
@@ -458,49 +455,6 @@ static void render_grid(const Aircraft *ac) {
     } else {
         lv_label_set_text_fmt(_signal_label, "%lum%lus",
             (unsigned long)(age_ms / 60000), (unsigned long)((age_ms / 1000) % 60));
-    }
-
-    // === DATA GRID ROW 3 — extended flight params ===
-    if (ac->mach > 0.01f) {
-        lv_label_set_text_fmt(_mach_label, "%.3f", ac->mach);
-    } else {
-        lv_label_set_text(_mach_label, "--");
-    }
-
-    if (ac->ias > 0) {
-        lv_label_set_text_fmt(_ias_label, "%d kts", ac->ias);
-    } else {
-        lv_label_set_text(_ias_label, "--");
-    }
-
-    if (ac->tas > 0) {
-        lv_label_set_text_fmt(_tas_label, "%d kts", ac->tas);
-    } else {
-        lv_label_set_text(_tas_label, "--");
-    }
-
-    if (ac->nav_altitude > 0) {
-        if (ac->nav_altitude >= 18000) {
-            lv_label_set_text_fmt(_nav_alt_label, "FL%d", ac->nav_altitude / 100);
-        } else {
-            lv_label_set_text_fmt(_nav_alt_label, "%d ft", ac->nav_altitude);
-        }
-    } else {
-        lv_label_set_text(_nav_alt_label, "--");
-    }
-
-    // Roll angle
-    if (ac->roll != 0.0f) {
-        lv_label_set_text_fmt(_roll_label, "%.1f%s", ac->roll, ac->roll > 0 ? " R" : " L");
-    } else {
-        lv_label_set_text(_roll_label, "--");
-    }
-
-    // Altimeter QNH
-    if (ac->nav_qnh > 0.0f) {
-        lv_label_set_text_fmt(_qnh_label, "%.1f hPa", ac->nav_qnh);
-    } else {
-        lv_label_set_text(_qnh_label, "--");
     }
 }
 
@@ -706,57 +660,49 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
 #endif
 
     // === DATA GRID ===
-    // Wide: 3 columns × 6 rows in the middle band (beside summary + photo).
-    // Narrow: original 6 columns × 3 rows under the identity block.
+    // Wide (Pi): 3 columns, grouped by meaning. LATITUDE/LONGITUDE stay
+    // adjacent; MACH/IAS/TAS/ROLL/QNH dropped (rarely present / low value).
+    // Bottom cells left empty for upcoming flight-ops times.
+    // Narrow: 6 columns × 2 rows + SIGNAL, same groupings left-to-right.
 #if LCD_H_RES >= 1280
     int y0 = GRID_Y0;
-    make_data_row(_card, "ALTITUDE", COL1, y0 + 0 * GRID_ROW_H, &_alt_label);
-    make_data_row(_card, "GND SPD",  COL2, y0 + 0 * GRID_ROW_H, &_spd_label);
-    make_data_row(_card, "HEADING",  COL3, y0 + 0 * GRID_ROW_H, &_hdg_label);
-
-    make_data_row(_card, "V/S",      COL1, y0 + 1 * GRID_ROW_H, &_vrate_label);
-    make_data_row(_card, "SQUAWK",   COL2, y0 + 1 * GRID_ROW_H, &_squawk_label);
-    make_data_row(_card, "STATUS",   COL3, y0 + 1 * GRID_ROW_H, &_status_label);
-
-    make_data_row(_card, "DISTANCE", COL1, y0 + 2 * GRID_ROW_H, &_dist_label);
-    make_data_row(_card, "BEARING",  COL2, y0 + 2 * GRID_ROW_H, &_bearing_label);
-    make_data_row(_card, "LAT",      COL3, y0 + 2 * GRID_ROW_H, &_lat_label);
-
-    make_data_row(_card, "LON",      COL1, y0 + 3 * GRID_ROW_H, &_lon_label);
-    make_data_row(_card, "TRACKED",  COL2, y0 + 3 * GRID_ROW_H, &_track_label);
-    make_data_row(_card, "SIGNAL",   COL3, y0 + 3 * GRID_ROW_H, &_signal_label);
-
-    make_data_row(_card, "MACH",     COL1, y0 + 4 * GRID_ROW_H, &_mach_label);
-    make_data_row(_card, "IAS",      COL2, y0 + 4 * GRID_ROW_H, &_ias_label);
-    make_data_row(_card, "TAS",      COL3, y0 + 4 * GRID_ROW_H, &_tas_label);
-
-    make_data_row(_card, "NAV ALT",  COL1, y0 + 5 * GRID_ROW_H, &_nav_alt_label);
-    make_data_row(_card, "ROLL",     COL2, y0 + 5 * GRID_ROW_H, &_roll_label);
-    make_data_row(_card, "QNH",      COL3, y0 + 5 * GRID_ROW_H, &_qnh_label);
+    // Motion
+    make_data_row(_card, "ALTITUDE",  COL1, y0 + 0 * GRID_ROW_H, &_alt_label);
+    make_data_row(_card, "GND SPD",   COL2, y0 + 0 * GRID_ROW_H, &_spd_label);
+    make_data_row(_card, "HEADING",   COL3, y0 + 0 * GRID_ROW_H, &_hdg_label);
+    // Vertical profile + phase
+    make_data_row(_card, "VERT SPD",  COL1, y0 + 1 * GRID_ROW_H, &_vrate_label);
+    make_data_row(_card, "NAV ALT",   COL2, y0 + 1 * GRID_ROW_H, &_nav_alt_label);
+    make_data_row(_card, "STATUS",    COL3, y0 + 1 * GRID_ROW_H, &_status_label);
+    // Relative to active location + ATC
+    make_data_row(_card, "DISTANCE",  COL1, y0 + 2 * GRID_ROW_H, &_dist_label);
+    make_data_row(_card, "BEARING",   COL2, y0 + 2 * GRID_ROW_H, &_bearing_label);
+    make_data_row(_card, "SQUAWK",    COL3, y0 + 2 * GRID_ROW_H, &_squawk_label);
+    // Absolute position (paired) + trail
+    make_data_row(_card, "LATITUDE",  COL1, y0 + 3 * GRID_ROW_H, &_lat_label);
+    make_data_row(_card, "LONGITUDE", COL2, y0 + 3 * GRID_ROW_H, &_lon_label);
+    make_data_row(_card, "TRACKED",   COL3, y0 + 3 * GRID_ROW_H, &_track_label);
+    // Feed freshness; remaining cells reserved for STD/ATD/STA/ATA later
+    make_data_row(_card, "SIGNAL",    COL1, y0 + 4 * GRID_ROW_H, &_signal_label);
 #else
     int y1 = GRID_Y0;
-    make_data_row(_card, "ALTITUDE", COL1, y1, &_alt_label);
-    make_data_row(_card, "GND SPD", COL2, y1, &_spd_label);
-    make_data_row(_card, "HEADING", COL3, y1, &_hdg_label);
-    make_data_row(_card, "V/S", COL4, y1, &_vrate_label);
-    make_data_row(_card, "SQUAWK", COL5, y1, &_squawk_label);
-    make_data_row(_card, "STATUS", COL6, y1, &_status_label);
+    make_data_row(_card, "ALTITUDE",  COL1, y1, &_alt_label);
+    make_data_row(_card, "GND SPD",   COL2, y1, &_spd_label);
+    make_data_row(_card, "HEADING",   COL3, y1, &_hdg_label);
+    make_data_row(_card, "VERT SPD",  COL4, y1, &_vrate_label);
+    make_data_row(_card, "NAV ALT",   COL5, y1, &_nav_alt_label);
+    make_data_row(_card, "STATUS",    COL6, y1, &_status_label);
 
     int y2 = GRID_Y0 + GRID_ROW_H;
-    make_data_row(_card, "DISTANCE", COL1, y2, &_dist_label);
-    make_data_row(_card, "BEARING", COL2, y2, &_bearing_label);
-    make_data_row(_card, "LAT", COL3, y2, &_lat_label);
-    make_data_row(_card, "LON", COL4, y2, &_lon_label);
-    make_data_row(_card, "TRACKED", COL5, y2, &_track_label);
-    make_data_row(_card, "SIGNAL", COL6, y2, &_signal_label);
+    make_data_row(_card, "DISTANCE",  COL1, y2, &_dist_label);
+    make_data_row(_card, "BEARING",   COL2, y2, &_bearing_label);
+    make_data_row(_card, "SQUAWK",    COL3, y2, &_squawk_label);
+    make_data_row(_card, "LATITUDE",  COL4, y2, &_lat_label);
+    make_data_row(_card, "LONGITUDE", COL5, y2, &_lon_label);
+    make_data_row(_card, "TRACKED",   COL6, y2, &_track_label);
 
     int y3 = GRID_Y0 + 2 * GRID_ROW_H;
-    make_data_row(_card, "MACH", COL1, y3, &_mach_label);
-    make_data_row(_card, "IAS", COL2, y3, &_ias_label);
-    make_data_row(_card, "TAS", COL3, y3, &_tas_label);
-    make_data_row(_card, "NAV ALT", COL4, y3, &_nav_alt_label);
-    make_data_row(_card, "ROLL", COL5, y3, &_roll_label);
-    make_data_row(_card, "QNH", COL6, y3, &_qnh_label);
+    make_data_row(_card, "SIGNAL",    COL1, y3, &_signal_label);
 #endif
 
     // Tap to close
