@@ -27,6 +27,7 @@ static const AirportDisplayOverride k_airport_display_overrides[] = {
     {"KBTL", "Kellogg Field"},
     {"KCOE", "Pappy Boyington Field"},
     {"KCSV", "Whitson Field"},
+    {"KCVG", "Cincinnati/N. Kentucky"},
     {"KDUA", "Eaker Field"},
     {"KELY", "Yelland Field"},
     {"KFAY", "Grannis Field"},
