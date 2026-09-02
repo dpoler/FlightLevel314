@@ -63,6 +63,8 @@ See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Detail card: AeroDataBox STD/ATD/STA/ATA + diverted; reclaim blank
   telemetry rows; card can grow taller / better centered (2026-08-31)
+- AeroDataBox: surface marketplace API-units + requests remaining from
+  response headers (piggyback; no dedicated poll) (2026-09-02)
 - Enrichment O/D: hide implausible low-altitude routes at airport views
 - Satellite basemap style (Esri or Mapbox; API key OK)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
@@ -602,6 +604,34 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
      contrast GND SPD, NAV ALT, and QNH are often present. Dropping or
      hiding the MACH/IAS/TAS/ROLL row(s) frees ~1–2 grid rows for times /
      status without losing useful live data on this traffic source.
+  **Do not start unless Dan asks.**
+
+- **AeroDataBox — show marketplace quota from response headers (Dan,
+  2026-09-02)**: Basic-plan warnings near ~515/600 API **units** with only
+  ~283 HTTP **requests** are expected (flight search is usually Tier 2 = 2
+  units/call; units ≠ requests). Settings USAGE today is a **local** UTC-month
+  HTTP counter (`adbox_n`) and deliberately skips key-verify calls — so it
+  drifts from RapidAPI’s real meter. Marketplaces already report remaining
+  quota on every response; we currently discard those headers in
+  `platform_http_get_ex` / libcurl (`pi/platform_linux/http_linux.cpp`).
+  **Design sketch (piggyback — no dedicated quota poll):**
+  1. Capture response headers on ADB calls (flight search + Settings verify).
+     RapidAPI typically exposes both counters (names case-insensitive):
+     - `X-RateLimit-API-Units-Limit` / `…-Remaining` ← **real Basic quota (600)**
+     - `X-RateLimit-Requests-Limit` / `…-Remaining` ← looser HTTP-call cap
+     Confirm API.Market / Direct header names before wiring those providers
+     (may differ or be absent).
+  2. Extend the HTTP helper (curl `HEADERFUNCTION` or equivalent) with an
+     optional out-struct for selected headers; leave existing
+     `platform_http_get` / `_ex` callers unchanged.
+  3. On each billed ADB response, stash last-seen units/requests remaining
+     (+ limit, timestamp). Settings USAGE row e.g.
+     `units 85/600 · req 2117/2400` (marketplace), with local `adbox_n` as a
+     secondary note if still useful. Soft-cap (`adbox_lim`) can later key off
+     **units remaining** instead of local HTTP count.
+  4. Update only when we already hit ADB (detail-card O/D or cached Settings
+     verify). Stale-until-next-call is fine — better than spending units just
+     to refresh a meter.
   **Do not start unless Dan asks.**
 
 - ~~**VIEW — “Rebuild this map” (current mosaic only) (Dan, 2026-08-10)**~~
