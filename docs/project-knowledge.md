@@ -590,22 +590,16 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   gate in detail_card (or enrichment read path) — no extra API. Full note
   under origin/destination history above §9.
 
-- **Detail card — flight ops times + reclaim blank telemetry (Dan,
-  2026-08-28 / 08-31)**: surface STD/ATD/STA/ATA (+ Diverted etc.) from the
-  same AeroDataBox Flight Status JSON already used for O/D — **0 extra API
-  calls** if we only persist fields the parser already reads for scoring.
-  Layout notes when implementing:
+- **Detail card — flight ops times (Dan, 2026-08-28 / 08-31)**: surface
+  STD/ATD/STA/ATA (+ Diverted etc.) from the same AeroDataBox Flight Status
+  JSON already used for O/D — **0 extra API calls** if we only persist fields
+  the parser already reads for scoring. Layout notes when implementing:
   1. **Card can grow taller** — the summary/flight-info box is not vertically
      centered in the dimmed overlay; there is unused margin. Prefer a modest
      height bump (and/or centering) over packing times into a cramped column.
-  2. **Reclaim nearly-always-blank grid cells:** MACH / IAS / TAS / ROLL are
-     parsed from the feed (`datasource_remote.cpp`) but **adsb.lol / typical
-     aggregator JSON almost never includes them** (0/80 KDEN and 0/133 LAX
-     spot-checks 2026-08-31; keys absent, not just zero). Those are optional
-     Mode‑S / air-referenced fields many public aggregators strip. By
-     contrast GND SPD, NAV ALT, and QNH are often present. Dropping or
-     hiding the MACH/IAS/TAS/ROLL row(s) frees ~1–2 grid rows for times /
-     status without losing useful live data on this traffic source.
+  2. Telemetry grid already dropped MACH / IAS / TAS / ROLL / QNH (2026-08-31)
+     and regrouped LATITUDE/LONGITUDE; empty cells on the last grid row are
+     reserved for times / diverted.
   **Do not start unless Dan asks.**
 
 - ~~**VIEW — “Rebuild this map” (current mosaic only) (Dan, 2026-08-10)**~~
