@@ -85,7 +85,7 @@ static inline IconType classify_icon(const Aircraft &ac) {
     if (ac.category[0] == 'A' && ac.category[1] == '7') return ICON_HELI;
     if (ac.type_code[0] && is_heli_type(ac.type_code)) return ICON_HELI;
     if (ac.is_military) return ICON_JET;
-    if (is_airline_callsign(ac.callsign)) return ICON_AIRLINER;
-    if (ac.category[0] == 'A' && ac.category[1] >= '3') return ICON_AIRLINER;
+    // Same rule as COM filter / AeroDataBox O/D: airline callsign AND A2–A6.
+    if (is_commercial_traffic(ac.callsign, ac.category)) return ICON_AIRLINER;
     return ICON_GA;
 }

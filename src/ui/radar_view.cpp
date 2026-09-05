@@ -318,8 +318,7 @@ static void draw_blips(lv_layer_t *layer) {
         else if ((ac.category[0] == 'A' && ac.category[1] == '7') ||
                  (ac.type_code[0] && is_heli_type(ac.type_code)))
             color = COLOR_HELI_CAT;
-        else if (is_airline_callsign(ac.callsign) ||
-                 (ac.category[0] == 'A' && ac.category[1] >= '3'))
+        else if (is_commercial_traffic(ac.callsign, ac.category))
             color = COLOR_COMMERCIAL;
         else
             color = COLOR_GA_PRIVATE;
