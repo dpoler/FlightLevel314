@@ -56,17 +56,16 @@ volatile AircraftEnrichment *_deferred_entry = nullptr;
 volatile bool _deferred_ready = false;
 
 // Marketplace meters from ADB response headers (RapidAPI units/requests).
-// Hot path is in-memory; units + reset are mirrored into g_config so Settings
-// USAGE / VALID survive restart without burning another verify call.
+// Hot path is in-memory; units are mirrored into g_config so Settings USAGE
+// survives restart without burning another verify call. Billing renewal day
+// is user-configured (adbox_renew_day), not from headers.
 std::mutex _quota_mutex;
 bool _quota_have_units = false;
 bool _quota_have_requests = false;
-bool _quota_have_reset = false;
 int _quota_units_limit = 0;
 int _quota_units_remaining = 0;
 int _quota_requests_limit = 0;
 int _quota_requests_remaining = 0;
-time_t _quota_reset_at = 0; // unix time when units window refreshes (0 = unknown)
 
 static uint32_t adbox_key_hash(const char *key) {
     // FNV-1a 32-bit — fingerprint only; not a secret.
@@ -80,36 +79,23 @@ static uint32_t adbox_key_hash(const char *key) {
 }
 
 static void quota_hydrate_from_config() {
-    bool wipe_reset = false;
-    {
-        std::lock_guard<std::mutex> lock(_quota_mutex);
-        if (g_config.adbox_mkt_have_units) {
-            _quota_have_units = true;
-            _quota_units_limit = g_config.adbox_mkt_units_lim;
-            _quota_units_remaining = g_config.adbox_mkt_units_rem;
-        }
-        // Never restore reset ETA from disk. Older builds saved requests-reset
-        // (~3d gateway window), which is not the RapidAPI billing anniversary.
-        _quota_have_reset = false;
-        _quota_reset_at = 0;
-        if (g_config.adbox_mkt_reset_at != 0) {
-            g_config.adbox_mkt_reset_at = 0;
-            wipe_reset = true;
-        }
+    std::lock_guard<std::mutex> lock(_quota_mutex);
+    if (g_config.adbox_mkt_have_units) {
+        _quota_have_units = true;
+        _quota_units_limit = g_config.adbox_mkt_units_lim;
+        _quota_units_remaining = g_config.adbox_mkt_units_rem;
     }
-    if (wipe_reset) storage_save_config(g_config);
 }
 
 static void quota_persist_units_unlocked() {
-    // Caller holds _quota_mutex. Persist units only — not reset ETA.
+    // Caller holds _quota_mutex.
     g_config.adbox_mkt_have_units = _quota_have_units;
     g_config.adbox_mkt_units_lim = _quota_units_limit;
     g_config.adbox_mkt_units_rem = _quota_units_remaining;
-    g_config.adbox_mkt_reset_at = 0;
 }
 
 void adbox_note_rate_limit(const PlatformHttpRateLimit &rl) {
-    if (!rl.have_units && !rl.have_requests && !rl.have_reset) return;
+    if (!rl.have_units && !rl.have_requests) return;
     bool exhausted = false;
     int units_lim = 0;
     bool persist = false;
@@ -130,13 +116,6 @@ void adbox_note_rate_limit(const PlatformHttpRateLimit &rl) {
             _quota_have_requests = true;
             _quota_requests_limit = rl.requests_limit;
             _quota_requests_remaining = rl.requests_remaining;
-        }
-        // have_reset is units-reset only (see http_linux.cpp).
-        if (rl.have_reset) {
-            _quota_have_reset = true;
-            time_t now = time(nullptr);
-            _quota_reset_at = now + (time_t)rl.reset_seconds;
-            persist = true;
         }
         if (persist) quota_persist_units_unlocked();
     }
@@ -1087,25 +1066,13 @@ void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *
 }
 
 bool aerodatabox_marketplace_quota(int *units_remaining, int *units_limit,
-                                   int *requests_remaining, int *requests_limit,
-                                   int *reset_secs_left) {
+                                   int *requests_remaining, int *requests_limit) {
     std::lock_guard<std::mutex> lock(_quota_mutex);
-    if (!_quota_have_units && !_quota_have_requests && !_quota_have_reset) return false;
+    if (!_quota_have_units && !_quota_have_requests) return false;
     if (units_remaining) *units_remaining = _quota_have_units ? _quota_units_remaining : -1;
     if (units_limit) *units_limit = _quota_have_units ? _quota_units_limit : -1;
     if (requests_remaining) *requests_remaining = _quota_have_requests ? _quota_requests_remaining : -1;
     if (requests_limit) *requests_limit = _quota_have_requests ? _quota_requests_limit : -1;
-    if (reset_secs_left) {
-        if (!_quota_have_reset || _quota_reset_at <= 0) {
-            *reset_secs_left = -1;
-        } else {
-            time_t now = time(nullptr);
-            long left = (long)_quota_reset_at - (long)now;
-            if (left < 0) left = 0;
-            if (left > 1000000000L) left = 1000000000L;
-            *reset_secs_left = (int)left;
-        }
-    }
     return true;
 }
 
@@ -1117,17 +1084,14 @@ void aerodatabox_clear_rate_limit() {
         std::lock_guard<std::mutex> lock(_quota_mutex);
         _quota_have_units = false;
         _quota_have_requests = false;
-        _quota_have_reset = false;
         _quota_units_limit = 0;
         _quota_units_remaining = 0;
         _quota_requests_limit = 0;
         _quota_requests_remaining = 0;
-        _quota_reset_at = 0;
     }
     g_config.adbox_mkt_have_units = false;
     g_config.adbox_mkt_units_rem = 0;
     g_config.adbox_mkt_units_lim = 0;
-    g_config.adbox_mkt_reset_at = 0;
     // Force a fresh key check next Settings open (previous verify may have
     // been a 429 "rate limited" failure while the sticky flag was set).
     {

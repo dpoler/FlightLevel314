@@ -156,6 +156,18 @@ static void set_valid_label(lv_obj_t *lbl, KeyValid v) {
     }
 }
 
+static const char *day_ordinal_suffix(int d) {
+    // 1st/2nd/3rd/4th … 11th/12th/13th … 21st/22nd/23rd/31st
+    int mod100 = d % 100;
+    if (mod100 >= 11 && mod100 <= 13) return "th";
+    switch (d % 10) {
+    case 1: return "st";
+    case 2: return "nd";
+    case 3: return "rd";
+    default: return "th";
+    }
+}
+
 static void refresh_adbox_usage_ui() {
     if (!_adbox_usage_val) return;
     int ym = 0, n = 0, lim = 0;
@@ -168,27 +180,23 @@ static void refresh_adbox_usage_ui() {
     int month = ym % 100;
     const char *mon = (month >= 1 && month <= 12) ? MONTHS[month - 1] : "???";
 
-    int u_rem = -1, u_lim = -1, r_rem = -1, r_lim = -1, reset_left = -1;
+    int u_rem = -1, u_lim = -1, r_rem = -1, r_lim = -1;
     const bool have_mkt = aerodatabox_marketplace_quota(
-        &u_rem, &u_lim, &r_rem, &r_lim, &reset_left);
+        &u_rem, &u_lim, &r_rem, &r_lim);
+    const int renew = _cfg.adbox_renew_day; // 1–31, 0 = unset
 
-    auto append_reset = [&](char *dst, size_t dst_sz) {
-        if (reset_left < 0 || dst_sz == 0) return;
+    auto append_renew = [&](char *dst, size_t dst_sz) {
+        if (renew < 1 || renew > 31 || dst_sz == 0) return;
         size_t used = strlen(dst);
-        if (used + 8 >= dst_sz) return;
-        if (reset_left >= 86400) {
-            snprintf(dst + used, dst_sz - used, " ~%dd", reset_left / 86400);
-        } else if (reset_left >= 3600) {
-            snprintf(dst + used, dst_sz - used, " ~%dh", reset_left / 3600);
-        } else {
-            int mins = reset_left / 60;
-            if (mins < 1) mins = 1;
-            snprintf(dst + used, dst_sz - used, " ~%dm", mins);
-        }
+        // " · resets ~31st of every month" ≈ 34 chars
+        if (used + 40 >= dst_sz) return;
+        // e.g. " · resets ~9th of every month"
+        snprintf(dst + used, dst_sz - used, " · resets ~%d%s of every month",
+                 renew, day_ordinal_suffix(renew));
     };
 
     // Marketplace first: "used of limit" (matches RapidAPI dashboard).
-    char buf[96];
+    char buf[128];
     if (have_mkt && u_lim >= 0 && u_rem >= 0) {
         int used = u_lim - u_rem;
         if (used < 0) used = 0;
@@ -197,7 +205,7 @@ static void refresh_adbox_usage_ui() {
             lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
         } else {
             snprintf(buf, sizeof(buf), "%d of %d", used, u_lim);
-            append_reset(buf, sizeof(buf));
+            append_renew(buf, sizeof(buf));
             const bool high = (u_lim > 0 && used * 10 >= u_lim * 9);
             lv_obj_set_style_text_color(_adbox_usage_val, high ? WARN_COLOR : SYS_COLOR, 0);
         }
@@ -209,6 +217,7 @@ static void refresh_adbox_usage_ui() {
             lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
         } else {
             snprintf(buf, sizeof(buf), "%d of %d r", used, r_lim);
+            append_renew(buf, sizeof(buf));
             lv_obj_set_style_text_color(_adbox_usage_val, SYS_COLOR, 0);
         }
     } else if (rl) {
@@ -496,6 +505,13 @@ static void save_and_close(lv_event_t *e) {
         _cfg.display_brightness_pct = b;
     }
 
+    // Settings never edits renewal day (set_api_keys.py). Keep on-disk value
+    // so Save after a mid-open --adbox-renew-day does not wipe it.
+    {
+        UserConfig disk = storage_load_config();
+        _cfg.adbox_renew_day = disk.adbox_renew_day;
+    }
+
     storage_save_config(_cfg);
     if (clear_enrich) enrichment_clear_cache();
     if (_on_change) _on_change(&_cfg);
@@ -735,12 +751,12 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_t *quota_note = lv_label_create(_content);
     // Show marketplace used/limit when headers exist; auto-off at 0
     // remaining (see adbox_note_rate_limit). Local soft-cap / 429 still apply.
+    // Renewal day is user-set (not from API headers).
     lv_label_set_text(quota_note,
-        "USAGE: marketplace units used of limit.\n"
-        "Reset ETA only from live units-reset\n"
-        "header (not billing anniversary).\n"
-        "Auto-off at 0 remaining / 429 / soft-cap.\n"
-        "Key check is cached across restarts.");
+        "USAGE: used of limit · resets ~Nth of every month "
+        "(set_api_keys --adbox-renew-day N). "
+        "Auto-off at 0 remaining / 429 / soft-cap. "
+        "Key check cached across restarts.");
     lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(quota_note, col1, 340);

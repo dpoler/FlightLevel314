@@ -24,17 +24,15 @@ bool platform_http_get(const char *url, char *out, size_t out_size, size_t *out_
 // Optional marketplace rate-limit headers (RapidAPI / similar). All fields
 // start false/0; callers pass nullptr when they do not care. Header names are
 // matched case-insensitively (x-ratelimit-api-units-* /
-// x-ratelimit-requests-*). reset_seconds is seconds until the quota window
-// refreshes (not a calendar date); prefer units-reset when both are present.
+// x-ratelimit-requests-*). Billing anniversary is NOT in these headers —
+// users set adbox_renew_day via tools/set_api_keys.py.
 struct PlatformHttpRateLimit {
     bool have_units;
     bool have_requests;
-    bool have_reset;
     int units_limit;
     int units_remaining;
     int requests_limit;
     int requests_remaining;
-    int reset_seconds;
 };
 
 // Synchronous GET with optional extra headers and raw HTTP status.

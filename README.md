@@ -134,6 +134,11 @@ sudo python3 tools/set_api_keys.py \
 # Optional gateway: 0=RapidAPI, 1=API.Market, 2=Direct
 sudo python3 tools/set_api_keys.py --adbox-prov 0
 
+# RapidAPI billing anniversary (day of month) — Settings USAGE shows
+# "522 of 600 · resets ~9th of every month" (not from API headers)
+sudo python3 tools/set_api_keys.py --adbox-renew-day 9
+# Clear: --adbox-renew-day 0
+
 # Inspect (prints present/missing, not the secret values):
 sudo python3 tools/set_api_keys.py --show
 ```

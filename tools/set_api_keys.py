@@ -3,6 +3,7 @@
 
 Secrets are never typed on the touchscreen. This script is the supported
 SSH/kiosk path for putting apt_tok / adbox_key / carto_key onto the Pi.
+Also sets optional AeroDataBox billing renewal day (adbox_renew_day).
 
 Default target (systemd kiosk):
   /opt/flightlevel314/.config/flightlevel314/config.json
@@ -10,6 +11,7 @@ Default target (systemd kiosk):
 Examples:
   sudo python3 tools/set_api_keys.py --apt-tok TOKEN --adbox-key KEY
   sudo python3 tools/set_api_keys.py --carto-key KEY
+  sudo python3 tools/set_api_keys.py --adbox-renew-day 9
   sudo python3 tools/set_api_keys.py --config /path/to/config.json --apt-tok TOKEN
   python3 tools/set_api_keys.py --print-path
 
@@ -99,6 +101,13 @@ def main() -> int:
         help="AeroDataBox gateway: 0=RapidAPI, 1=API.Market, 2=Direct",
     )
     ap.add_argument(
+        "--adbox-renew-day",
+        type=int,
+        metavar="N",
+        help="RapidAPI billing anniversary day-of-month (1–31) → adbox_renew_day; "
+        "0 clears. Shown on Settings USAGE as 'resets ~Nth of every month'.",
+    )
+    ap.add_argument(
         "--print-path",
         action="store_true",
         help="Print the resolved config path and exit",
@@ -126,6 +135,8 @@ def main() -> int:
         print(f"  carto_key: {'present' if carto else 'missing'}")
         if "adbox_prov" in doc:
             print(f"  adbox_prov: {doc.get('adbox_prov')}")
+        renew = doc.get("adbox_renew_day", 0)
+        print(f"  adbox_renew_day: {renew if renew else 'unset'}")
         return 0
 
     if (
@@ -133,11 +144,15 @@ def main() -> int:
         and args.adbox_key is None
         and args.adbox_prov is None
         and args.carto_key is None
+        and args.adbox_renew_day is None
     ):
         ap.error(
-            "pass --apt-tok / --adbox-key / --carto-key (and optional --adbox-prov), "
-            "or use --show / --print-path"
+            "pass --apt-tok / --adbox-key / --carto-key / --adbox-renew-day "
+            "(and optional --adbox-prov), or use --show / --print-path"
         )
+
+    if args.adbox_renew_day is not None and not (0 <= args.adbox_renew_day <= 31):
+        ap.error("--adbox-renew-day must be 0 (clear) or 1–31")
 
     if args.apt_tok is not None:
         doc["apt_tok"] = args.apt_tok.strip()
@@ -147,6 +162,8 @@ def main() -> int:
         doc["carto_key"] = args.carto_key.strip()
     if args.adbox_prov is not None:
         doc["adbox_prov"] = args.adbox_prov
+    if args.adbox_renew_day is not None:
+        doc["adbox_renew_day"] = args.adbox_renew_day
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
@@ -160,6 +177,8 @@ def main() -> int:
     print(f"  apt_tok:   {'set' if doc.get('apt_tok') else 'empty'}")
     print(f"  adbox_key: {'set' if doc.get('adbox_key') else 'empty'}")
     print(f"  carto_key: {'set' if doc.get('carto_key') else 'empty'}")
+    renew = doc.get("adbox_renew_day", 0)
+    print(f"  adbox_renew_day: {renew if renew else 'unset'}")
     print("Next: open Settings → API KEYS (VALID / ENABLE), or:")
     print("  sudo systemctl restart flightlevel314")
     if doc.get("carto_key"):

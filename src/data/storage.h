@@ -31,7 +31,9 @@ struct UserConfig {
     bool adbox_mkt_have_units;
     int adbox_mkt_units_rem;
     int adbox_mkt_units_lim;
-    int64_t adbox_mkt_reset_at; // unix; 0 = unknown (units-reset header only)
+    // User-set RapidAPI billing anniversary day-of-month (1–31). 0 = unset.
+    // Set via tools/set_api_keys.py --adbox-renew-day N (not from API headers).
+    int adbox_renew_day;
     // Live traffic aggregator. Both expose ADSBx-v2-shaped JSON; URLs differ.
     // 0=adsb.lol (default), 1=adsb.fi (opendata v3 lat/lon/dist).
     int traffic_provider;
