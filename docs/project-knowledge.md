@@ -78,6 +78,10 @@ Recently closed (2026-08-10): airline names from OpenTravelData (dropped
 AirlinesCSV; ~900 ICAO3 codes, global); AeroDataBox O/D accuracy + skip
 small GA/HELI/MIL; Map/Radar bullseye declutter (Map: no rings;
 Radar: rings+sweep only, no airport/runway drawing).
+Recently closed (2026-09-05): commercial traffic = airline callsign **and**
+A2–A6 (`is_commercial_traffic` shared by COM filter, airliner icon, radar
+color, stats jets, AeroDataBox O/D); empty category → not commercial /
+no O/D; ADB CallSign-first, no Reg fallback.
 Recently closed (2026-08-14 / soak): Map overnight hang (Invalid draw
 buffer assert → soft-fail + `lv_draw_buf_init` bind).
 Recently closed (2026-08-21 confirm): INFO ATIS panel (incl. arr/dep split);
@@ -826,7 +830,10 @@ Approaching/Departed; demote Arrived/Canceled) and departure/arrival time vs
 now; 30‑minute route TTL + invalidate when callsign changes (route-only
 refresh, photo/adsbdb cache kept). Still not live OOOI — GA/codeshare limits
 remain. Follow-up same day: **skip O/D API** for MIL, HELI, and small GA
-(A0–A2 / B/C); only query airline callsign or emitter category A3–A6.
+(A0–A1 / B/C); only query when airline callsign **and** emitter category
+A2–A6 (same `is_commercial_traffic` as COM filter / airliner icon; empty
+category → no lookup). Later: CallSign-first AeroDataBox search, no Reg
+fallback (quota).
 
 **Backlog (Dan, 2026-08-10):** further O/D display hygiene when enrichment
 already has a route — **do not show** FROM/TO on the detail card if all of:
