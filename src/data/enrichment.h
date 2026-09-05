@@ -43,8 +43,9 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
                       const char *category, const char *type_code, bool is_military,
                       void (*callback)(AircraftEnrichment *data));
 
-// True when AeroDataBox O/D is worth a query: commercial / large (A3–A6)
-// fixed-wing. Skips military, helicopters, and light/small GA (A0–A2, B/C).
+// True when AeroDataBox O/D is worth a query: same "commercial" rule as the
+// COM filter / airliner icon (airline callsign AND emitter category A2–A6).
+// Skips military, helicopters, light GA (A0–A1), and empty category.
 bool enrichment_route_eligible(const char *callsign, const char *category,
                                const char *type_code, bool is_military);
 

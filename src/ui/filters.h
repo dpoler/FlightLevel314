@@ -46,6 +46,12 @@ int filter_label_text(char *buf, size_t buf_size, lv_color_t *color);
 // Filter match logic
 bool aircraft_passes_filter(const Aircraft &ac);
 
-// Helpers (also used by map_view icon classification)
+// Helpers (also used by map icon classification / AeroDataBox eligibility)
 bool is_airline_callsign(const char *cs);
 bool is_heli_type(const char *t);
+
+// "Commercial" for COM filter, airliner icon, and AeroDataBox O/D:
+// airline-shaped callsign (AAA + digit) AND ADS-B emitter category A2–A6.
+// Empty/missing category → false (no guess). Callers still exclude MIL/HELI
+// where needed (O/D); COM filter uses this as the sole COM match.
+bool is_commercial_traffic(const char *callsign, const char *category);
