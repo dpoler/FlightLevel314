@@ -43,6 +43,10 @@ struct RateLimitParse {
     bool got_units_rem = false;
     bool got_req_lim = false;
     bool got_req_rem = false;
+    bool got_units_reset = false;
+    bool got_req_reset = false;
+    int units_reset = 0;
+    int req_reset = 0;
 };
 
 size_t header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
@@ -54,6 +58,14 @@ size_t header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
     if (len == 2 && buffer[0] == '\r' && buffer[1] == '\n') {
         st->out->have_units = st->got_units_lim && st->got_units_rem;
         st->out->have_requests = st->got_req_lim && st->got_req_rem;
+        // Prefer API-units reset (billing object); else requests reset.
+        if (st->got_units_reset) {
+            st->out->have_reset = true;
+            st->out->reset_seconds = st->units_reset;
+        } else if (st->got_req_reset) {
+            st->out->have_reset = true;
+            st->out->reset_seconds = st->req_reset;
+        }
         return len;
     }
     if (memchr(buffer, ':', len) == nullptr) return len;
@@ -70,8 +82,10 @@ size_t header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
     // HTTP counter. Names matched case-insensitively.
     take("x-ratelimit-api-units-limit", &st->out->units_limit, &st->got_units_lim);
     take("x-ratelimit-api-units-remaining", &st->out->units_remaining, &st->got_units_rem);
+    take("x-ratelimit-api-units-reset", &st->units_reset, &st->got_units_reset);
     take("x-ratelimit-requests-limit", &st->out->requests_limit, &st->got_req_lim);
     take("x-ratelimit-requests-remaining", &st->out->requests_remaining, &st->got_req_rem);
+    take("x-ratelimit-requests-reset", &st->req_reset, &st->got_req_reset);
 
     return len;
 }
@@ -89,10 +103,12 @@ bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_
     if (rate_limit) {
         rate_limit->have_units = false;
         rate_limit->have_requests = false;
+        rate_limit->have_reset = false;
         rate_limit->units_limit = 0;
         rate_limit->units_remaining = 0;
         rate_limit->requests_limit = 0;
         rate_limit->requests_remaining = 0;
+        rate_limit->reset_seconds = 0;
     }
 
     RateLimitParse hdr_parse;
@@ -131,6 +147,13 @@ bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_
     if (rate_limit) {
         rate_limit->have_units = hdr_parse.got_units_lim && hdr_parse.got_units_rem;
         rate_limit->have_requests = hdr_parse.got_req_lim && hdr_parse.got_req_rem;
+        if (hdr_parse.got_units_reset) {
+            rate_limit->have_reset = true;
+            rate_limit->reset_seconds = hdr_parse.units_reset;
+        } else if (hdr_parse.got_req_reset) {
+            rate_limit->have_reset = true;
+            rate_limit->reset_seconds = hdr_parse.req_reset;
+        }
     }
 
     if (res != CURLE_OK) {

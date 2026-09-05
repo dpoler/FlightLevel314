@@ -72,8 +72,10 @@ void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *
 // Last marketplace quota observed on an AeroDataBox response (flight search
 // or Settings verify). In-memory only; returns false until at least one
 // response carried recognizable rate-limit headers.
+// reset_secs_left: seconds until quota window refresh (-1 if unknown).
 bool aerodatabox_marketplace_quota(int *units_remaining, int *units_limit,
-                                   int *requests_remaining, int *requests_limit);
+                                   int *requests_remaining, int *requests_limit,
+                                   int *reset_secs_left = nullptr);
 
 // Clear the sticky rate-limit flag (caller should also re-enable if desired).
 void aerodatabox_clear_rate_limit();
