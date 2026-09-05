@@ -60,13 +60,15 @@ volatile bool _deferred_ready = false;
 std::mutex _quota_mutex;
 bool _quota_have_units = false;
 bool _quota_have_requests = false;
+bool _quota_have_reset = false;
 int _quota_units_limit = 0;
 int _quota_units_remaining = 0;
 int _quota_requests_limit = 0;
 int _quota_requests_remaining = 0;
+time_t _quota_reset_at = 0; // unix time when window refreshes (0 = unknown)
 
 void adbox_note_rate_limit(const PlatformHttpRateLimit &rl) {
-    if (!rl.have_units && !rl.have_requests) return;
+    if (!rl.have_units && !rl.have_requests && !rl.have_reset) return;
     bool exhausted = false;
     int units_lim = 0;
     {
@@ -85,6 +87,11 @@ void adbox_note_rate_limit(const PlatformHttpRateLimit &rl) {
             _quota_have_requests = true;
             _quota_requests_limit = rl.requests_limit;
             _quota_requests_remaining = rl.requests_remaining;
+        }
+        if (rl.have_reset) {
+            _quota_have_reset = true;
+            time_t now = time(nullptr);
+            _quota_reset_at = now + (time_t)rl.reset_seconds;
         }
     }
     if (exhausted && g_config.aerodatabox_enabled) {
@@ -1005,13 +1012,25 @@ void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *
 }
 
 bool aerodatabox_marketplace_quota(int *units_remaining, int *units_limit,
-                                   int *requests_remaining, int *requests_limit) {
+                                   int *requests_remaining, int *requests_limit,
+                                   int *reset_secs_left) {
     std::lock_guard<std::mutex> lock(_quota_mutex);
-    if (!_quota_have_units && !_quota_have_requests) return false;
+    if (!_quota_have_units && !_quota_have_requests && !_quota_have_reset) return false;
     if (units_remaining) *units_remaining = _quota_have_units ? _quota_units_remaining : -1;
     if (units_limit) *units_limit = _quota_have_units ? _quota_units_limit : -1;
     if (requests_remaining) *requests_remaining = _quota_have_requests ? _quota_requests_remaining : -1;
     if (requests_limit) *requests_limit = _quota_have_requests ? _quota_requests_limit : -1;
+    if (reset_secs_left) {
+        if (!_quota_have_reset || _quota_reset_at <= 0) {
+            *reset_secs_left = -1;
+        } else {
+            time_t now = time(nullptr);
+            long left = (long)_quota_reset_at - (long)now;
+            if (left < 0) left = 0;
+            if (left > 1000000000L) left = 1000000000L;
+            *reset_secs_left = (int)left;
+        }
+    }
     return true;
 }
 
@@ -1023,10 +1042,12 @@ void aerodatabox_clear_rate_limit() {
         std::lock_guard<std::mutex> lock(_quota_mutex);
         _quota_have_units = false;
         _quota_have_requests = false;
+        _quota_have_reset = false;
         _quota_units_limit = 0;
         _quota_units_remaining = 0;
         _quota_requests_limit = 0;
         _quota_requests_remaining = 0;
+        _quota_reset_at = 0;
     }
     // Force a fresh key check next Settings open (previous verify may have
     // been a 429 "rate limited" failure while the sticky flag was set).
