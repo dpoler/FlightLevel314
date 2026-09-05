@@ -67,16 +67,32 @@ int _quota_requests_remaining = 0;
 
 void adbox_note_rate_limit(const PlatformHttpRateLimit &rl) {
     if (!rl.have_units && !rl.have_requests) return;
-    std::lock_guard<std::mutex> lock(_quota_mutex);
-    if (rl.have_units) {
-        _quota_have_units = true;
-        _quota_units_limit = rl.units_limit;
-        _quota_units_remaining = rl.units_remaining;
+    bool exhausted = false;
+    int units_lim = 0;
+    {
+        std::lock_guard<std::mutex> lock(_quota_mutex);
+        if (rl.have_units) {
+            _quota_have_units = true;
+            _quota_units_limit = rl.units_limit;
+            _quota_units_remaining = rl.units_remaining;
+            // Marketplace Basic quota spent — stop further ADB calls.
+            if (rl.units_remaining <= 0) {
+                exhausted = true;
+                units_lim = rl.units_limit;
+            }
+        }
+        if (rl.have_requests) {
+            _quota_have_requests = true;
+            _quota_requests_limit = rl.requests_limit;
+            _quota_requests_remaining = rl.requests_remaining;
+        }
     }
-    if (rl.have_requests) {
-        _quota_have_requests = true;
-        _quota_requests_limit = rl.requests_limit;
-        _quota_requests_remaining = rl.requests_remaining;
+    if (exhausted && g_config.aerodatabox_enabled) {
+        g_config.aerodatabox_enabled = false;
+        g_config.adbox_rate_limited = true;
+        platform_log_warn("Enrich: AeroDataBox auto-disabled (marketplace units "
+                          "exhausted, limit=%d)\n", units_lim);
+        storage_save_config(g_config);
     }
 }
 
@@ -248,6 +264,11 @@ void adbox_note_call(long http_status) {
 bool adbox_allowed() {
     if (!g_config.aerodatabox_enabled || !g_config.aerodatabox_key[0]) return false;
     if (g_config.adbox_rate_limited) return false;
+    {
+        std::lock_guard<std::mutex> lock(_quota_mutex);
+        // Already saw marketplace units hit zero on a prior response.
+        if (_quota_have_units && _quota_units_remaining <= 0) return false;
+    }
     int ym = current_yyyymm();
     if (g_config.adbox_soft_limit > 0
         && g_config.adbox_usage_yyyymm == ym
@@ -996,6 +1017,17 @@ bool aerodatabox_marketplace_quota(int *units_remaining, int *units_limit,
 
 void aerodatabox_clear_rate_limit() {
     g_config.adbox_rate_limited = false;
+    // Drop stale marketplace meters so a re-enable can probe again (new
+    // billing cycle / dashboard refresh). Next ADB response re-fills them.
+    {
+        std::lock_guard<std::mutex> lock(_quota_mutex);
+        _quota_have_units = false;
+        _quota_have_requests = false;
+        _quota_units_limit = 0;
+        _quota_units_remaining = 0;
+        _quota_requests_limit = 0;
+        _quota_requests_remaining = 0;
+    }
     // Force a fresh key check next Settings open (previous verify may have
     // been a 429 "rate limited" failure while the sticky flag was set).
     {
