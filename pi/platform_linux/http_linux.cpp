@@ -58,13 +58,11 @@ size_t header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
     if (len == 2 && buffer[0] == '\r' && buffer[1] == '\n') {
         st->out->have_units = st->got_units_lim && st->got_units_rem;
         st->out->have_requests = st->got_req_lim && st->got_req_rem;
-        // Prefer API-units reset (billing object); else requests reset.
+        // Only API-units reset — requests-reset is often a shorter gateway
+        // window and does not match the RapidAPI billing anniversary.
         if (st->got_units_reset) {
             st->out->have_reset = true;
             st->out->reset_seconds = st->units_reset;
-        } else if (st->got_req_reset) {
-            st->out->have_reset = true;
-            st->out->reset_seconds = st->req_reset;
         }
         return len;
     }
@@ -150,9 +148,6 @@ bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_
         if (hdr_parse.got_units_reset) {
             rate_limit->have_reset = true;
             rate_limit->reset_seconds = hdr_parse.units_reset;
-        } else if (hdr_parse.got_req_reset) {
-            rate_limit->have_reset = true;
-            rate_limit->reset_seconds = hdr_parse.req_reset;
         }
     }
 

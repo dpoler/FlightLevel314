@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 struct UserConfig {
     char wifi_ssid[33];
@@ -18,7 +19,19 @@ struct UserConfig {
     int adbox_usage_yyyymm;   // calendar month of adbox_usage_count, e.g. 202608
     int adbox_usage_count;    // AeroDataBox HTTP calls this month
     int adbox_soft_limit;     // 0 = no local cap; else auto-disable at count
-    bool adbox_rate_limited;  // sticky: hit HTTP 429 (or soft limit)
+    bool adbox_rate_limited;  // sticky: hit HTTP 429 (or soft/marketplace limit)
+    // Last successful Settings key-check (persisted) so reopen/restart does
+    // not re-hit AeroDataBox just to paint VALID. Invalidated when provider
+    // or key hash changes. Marketplace still updates on real O/D calls.
+    bool adbox_verify_ok;
+    int adbox_verify_prov;
+    uint32_t adbox_verify_key_hash;
+    // Last marketplace units snapshot from response headers (persisted so
+    // USAGE survives restart without a verify probe).
+    bool adbox_mkt_have_units;
+    int adbox_mkt_units_rem;
+    int adbox_mkt_units_lim;
+    int64_t adbox_mkt_reset_at; // unix; 0 = unknown (units-reset header only)
     // Live traffic aggregator. Both expose ADSBx-v2-shaped JSON; URLs differ.
     // 0=adsb.lol (default), 1=adsb.fi (opendata v3 lat/lon/dist).
     int traffic_provider;

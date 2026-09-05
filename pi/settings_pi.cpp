@@ -737,9 +737,11 @@ void settings_init(lv_obj_t *parent) {
     // Show marketplace used/limit when headers exist; auto-off at 0
     // remaining (see adbox_note_rate_limit). Local soft-cap / 429 still apply.
     lv_label_set_text(quota_note,
-        "USAGE: marketplace units used of limit\n"
-        "(~Nd = approx. time to reset). Auto-off\n"
-        "at 0 remaining, 429, or local soft-cap.");
+        "USAGE: marketplace units used of limit.\n"
+        "~Nd only if units-reset header present\n"
+        "(may differ from RapidAPI billing date).\n"
+        "Auto-off at 0 remaining / 429 / soft-cap.\n"
+        "Key check is cached across restarts.");
     lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(quota_note, col1, 340);
