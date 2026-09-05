@@ -43,7 +43,7 @@ static UserConfig defaults() {
     cfg.adbox_mkt_have_units = false;
     cfg.adbox_mkt_units_rem = 0;
     cfg.adbox_mkt_units_lim = 0;
-    cfg.adbox_mkt_reset_at = 0;
+    cfg.adbox_renew_day = 0;
     cfg.traffic_provider = 0; // adsb.lol
     cfg.radius_nm = 50;
     cfg.radius_presets[0] = 5;
@@ -129,7 +129,8 @@ UserConfig storage_load_config() {
     cfg.adbox_mkt_have_units = doc["adbox_mu"] | cfg.adbox_mkt_have_units;
     cfg.adbox_mkt_units_rem = doc["adbox_murem"] | cfg.adbox_mkt_units_rem;
     cfg.adbox_mkt_units_lim = doc["adbox_mulim"] | cfg.adbox_mkt_units_lim;
-    cfg.adbox_mkt_reset_at = (int64_t)(doc["adbox_mrat"] | (long long)cfg.adbox_mkt_reset_at);
+    cfg.adbox_renew_day = doc["adbox_renew_day"] | cfg.adbox_renew_day;
+    if (cfg.adbox_renew_day < 0 || cfg.adbox_renew_day > 31) cfg.adbox_renew_day = 0;
     cfg.traffic_provider = doc["traffic_prov"] | cfg.traffic_provider;
     if (cfg.traffic_provider < 0 || cfg.traffic_provider > 1) cfg.traffic_provider = 0;
     cfg.radius_nm = doc["radius"] | cfg.radius_nm;
@@ -218,7 +219,7 @@ void storage_save_config(const UserConfig &cfg) {
     doc["adbox_mu"] = cfg.adbox_mkt_have_units;
     doc["adbox_murem"] = cfg.adbox_mkt_units_rem;
     doc["adbox_mulim"] = cfg.adbox_mkt_units_lim;
-    doc["adbox_mrat"] = (long long)cfg.adbox_mkt_reset_at;
+    doc["adbox_renew_day"] = cfg.adbox_renew_day;
     doc["traffic_prov"] = cfg.traffic_provider;
     doc["radius"] = cfg.radius_nm;
     doc["rad0"] = cfg.radius_presets[0];
