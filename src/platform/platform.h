@@ -21,15 +21,31 @@ uint32_t platform_millis();
 // out's contents when false is returned).
 bool platform_http_get(const char *url, char *out, size_t out_size, size_t *out_len);
 
+// Optional marketplace rate-limit headers (RapidAPI / similar). All fields
+// start false/0; callers pass nullptr when they do not care. Header names are
+// matched case-insensitively (x-ratelimit-api-units-* and
+// x-ratelimit-requests-*).
+struct PlatformHttpRateLimit {
+    bool have_units;
+    bool have_requests;
+    int units_limit;
+    int units_remaining;
+    int requests_limit;
+    int requests_remaining;
+};
+
 // Synchronous GET with optional extra headers and raw HTTP status.
 // extra_headers: nullptr, or a nullptr-terminated list of "Name: value"
 // strings (libcurl CURLOPT_HTTPHEADER form).
+// rate_limit: optional; when non-null, cleared then filled from response
+// headers when present (any HTTP status, including 4xx/429).
 // Returns true when an HTTP response was received (any status); false on
 // transport failure. When true, *http_status is set (if non-null) and out
 // receives the body (truncated to out_size-1). Callers that only want 2xx
 // should keep using platform_http_get().
 bool platform_http_get_ex(const char *url, char *out, size_t out_size, size_t *out_len,
-                          long *http_status, const char *const *extra_headers);
+                          long *http_status, const char *const *extra_headers,
+                          PlatformHttpRateLimit *rate_limit = nullptr);
 
 // --- Config storage ---
 // Raw byte blob load/save, keyed by name — Linux maps this onto a JSON file

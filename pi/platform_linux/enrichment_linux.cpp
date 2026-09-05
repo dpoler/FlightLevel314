@@ -55,6 +55,31 @@ void (*_pending_callback)(AircraftEnrichment *) = nullptr;
 volatile AircraftEnrichment *_deferred_entry = nullptr;
 volatile bool _deferred_ready = false;
 
+// Last marketplace meters from ADB response headers (RapidAPI units/requests).
+// In-memory only — refreshed on flight search and Settings verify.
+std::mutex _quota_mutex;
+bool _quota_have_units = false;
+bool _quota_have_requests = false;
+int _quota_units_limit = 0;
+int _quota_units_remaining = 0;
+int _quota_requests_limit = 0;
+int _quota_requests_remaining = 0;
+
+void adbox_note_rate_limit(const PlatformHttpRateLimit &rl) {
+    if (!rl.have_units && !rl.have_requests) return;
+    std::lock_guard<std::mutex> lock(_quota_mutex);
+    if (rl.have_units) {
+        _quota_have_units = true;
+        _quota_units_limit = rl.units_limit;
+        _quota_units_remaining = rl.units_remaining;
+    }
+    if (rl.have_requests) {
+        _quota_have_requests = true;
+        _quota_requests_limit = rl.requests_limit;
+        _quota_requests_remaining = rl.requests_remaining;
+    }
+}
+
 void free_photo(AircraftEnrichment *e) {
     free(e->photo_rgb565);
     e->photo_rgb565 = nullptr;
@@ -398,10 +423,12 @@ bool fetch_adbox_route(int provider, const char *key,
         std::vector<char> buf(96 * 1024);
         size_t len = 0;
         long status = 0;
-        if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &status, hdrs)) {
+        PlatformHttpRateLimit rl {};
+        if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &status, hdrs, &rl)) {
             platform_log_warn("Enrich: AeroDataBox transport fail: %s\n", url);
             return 0;
         }
+        adbox_note_rate_limit(rl);
         adbox_note_call(status);
         if (status == 401 || status == 403) {
             platform_log_warn("Enrich: AeroDataBox auth failed (http=%ld)\n", status);
@@ -487,9 +514,11 @@ bool validate_adbox_key(int provider, const char *key, char *err, size_t err_siz
     long status = 0;
     char url[256];
     snprintf(url, sizeof(url), "%s/airports/icao/KJFK", adbox_base_url(provider));
-    if (!platform_http_get_ex(url, buf, sizeof(buf), &len, &status, hdrs)) {
+    PlatformHttpRateLimit rl {};
+    if (!platform_http_get_ex(url, buf, sizeof(buf), &len, &status, hdrs, &rl)) {
         return fail("network error");
     }
+    adbox_note_rate_limit(rl);
     if (status == 401 || status == 403) return fail("invalid key");
     if (status == 429) return fail("rate limited");
     if (status < 200 || status >= 300) {
@@ -952,6 +981,17 @@ void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *
     if (count) *count = n;
     if (soft_limit) *soft_limit = g_config.adbox_soft_limit;
     if (rate_limited) *rate_limited = g_config.adbox_rate_limited;
+}
+
+bool aerodatabox_marketplace_quota(int *units_remaining, int *units_limit,
+                                   int *requests_remaining, int *requests_limit) {
+    std::lock_guard<std::mutex> lock(_quota_mutex);
+    if (!_quota_have_units && !_quota_have_requests) return false;
+    if (units_remaining) *units_remaining = _quota_have_units ? _quota_units_remaining : -1;
+    if (units_limit) *units_limit = _quota_have_units ? _quota_units_limit : -1;
+    if (requests_remaining) *requests_remaining = _quota_have_requests ? _quota_requests_remaining : -1;
+    if (requests_limit) *requests_limit = _quota_have_requests ? _quota_requests_limit : -1;
+    return true;
 }
 
 void aerodatabox_clear_rate_limit() {

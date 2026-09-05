@@ -167,9 +167,31 @@ static void refresh_adbox_usage_ui() {
     };
     int month = ym % 100;
     const char *mon = (month >= 1 && month <= 12) ? MONTHS[month - 1] : "???";
-    // Local UTC calendar-month count — not the marketplace billing cycle.
+
+    int u_rem = -1, u_lim = -1, r_rem = -1, r_lim = -1;
+    const bool have_mkt = aerodatabox_marketplace_quota(&u_rem, &u_lim, &r_rem, &r_lim);
+
+    // Prefer marketplace API-units (real Basic quota). Fall back to request
+    // meters, then local HTTP tally until headers arrive.
     char buf[96];
-    if (rl) {
+    if (have_mkt && u_lim >= 0 && u_rem >= 0) {
+        if (rl) {
+            snprintf(buf, sizeof(buf), "%d/%d u OFF", u_rem, u_lim);
+            lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
+        } else {
+            snprintf(buf, sizeof(buf), "%d/%d u - %d loc", u_rem, u_lim, n);
+            const bool low = (u_lim > 0 && u_rem * 10 <= u_lim); // <=10% left
+            lv_obj_set_style_text_color(_adbox_usage_val, low ? WARN_COLOR : SYS_COLOR, 0);
+        }
+    } else if (have_mkt && r_lim >= 0 && r_rem >= 0) {
+        if (rl) {
+            snprintf(buf, sizeof(buf), "%d/%d r OFF", r_rem, r_lim);
+            lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
+        } else {
+            snprintf(buf, sizeof(buf), "%d/%d r - %d loc", r_rem, r_lim, n);
+            lv_obj_set_style_text_color(_adbox_usage_val, SYS_COLOR, 0);
+        }
+    } else if (rl) {
         snprintf(buf, sizeof(buf), "%d (%s UTC) AUTO-OFF", n, mon);
         lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
     } else if (lim > 0) {
@@ -691,14 +713,13 @@ void settings_init(lv_obj_t *parent) {
     _sw_adbox_en = make_enable_switch(_content, col1 + 80, 306);
 
     lv_obj_t *quota_note = lv_label_create(_content);
-    // ADB marketplace units reset on the subscription billing cycle
-    // (RapidAPI/API.Market), not a calendar month - see aerodatabox.com/faq.
-    // Our USAGE counter is a local UTC calendar-month tally only.
+    // Marketplace billing cycle != UTC month. Prefer header meters when
+    // present; local HTTP count remains for soft-cap / AUTO-OFF.
     lv_label_set_text(quota_note,
-        "ADB quota resets on billing cycle\n"
-        "(marketplace). USAGE = billed HTTP\n"
-        "lookups this UTC month (not key checks);\n"
-        "adbox_lim soft-cap; 429 auto-disables.");
+        "USAGE: marketplace units when known\n"
+        "(from ADB response headers), else local\n"
+        "HTTP count this UTC month. Soft-cap /\n"
+        "429 still use the local counter.");
     lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(quota_note, col1, 340);
