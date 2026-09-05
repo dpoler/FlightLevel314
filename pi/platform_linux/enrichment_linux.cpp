@@ -444,13 +444,10 @@ bool fetch_adbox_route(int provider, const char *key,
         return try_url(url);
     };
 
-    std::string hex = alnum_upper(icao_hex);
-    if (!hex.empty()) {
-        int r = try_search("Icao24", hex.c_str());
-        if (r == 1) return true;
-        if (r < 0) return false;
-    }
-
+    // CallSign first: eligible traffic always has an airline-shaped callsign,
+    // and that hits ADB more reliably than Mode-S hex for scheduled flights.
+    // Skip Reg entirely — for commercial callsigns it rarely helps and was
+    // the main quota burner in the old Icao24→CallSign→Reg fallback chain.
     std::string cs = alnum_upper(trim_ws(callsign).c_str());
     if (!cs.empty()) {
         int r = try_search("CallSign", cs.c_str());
@@ -458,14 +455,14 @@ bool fetch_adbox_route(int provider, const char *key,
         if (r < 0) return false;
     }
 
-    // Registration: keep letters/digits only (drop dashes/spaces).
-    std::string reg = alnum_upper(registration);
-    if (!reg.empty()) {
-        int r = try_search("Reg", reg.c_str());
+    std::string hex = alnum_upper(icao_hex);
+    if (!hex.empty()) {
+        int r = try_search("Icao24", hex.c_str());
         if (r == 1) return true;
         if (r < 0) return false;
     }
 
+    (void)registration;
     return false;
 }
 
@@ -738,7 +735,7 @@ void run_enrichment(std::string icao, std::string registration, std::string call
         // spin until TTL / callsign change / cache clear.
         mark_route_result(entry, callsign.c_str(), "", "", false);
         if (adbox_on && !want_route)
-            platform_log_debug("Enrich: route skipped (not commercial/large) for %s\n",
+            platform_log_debug("Enrich: route skipped (not commercial) for %s\n",
                          icao.c_str());
     }
 
@@ -785,7 +782,7 @@ void run_route_refresh(std::string icao, std::string registration, std::string c
         std::lock_guard<std::mutex> lock(_mutex);
         mark_route_result(entry, callsign.c_str(), "", "", false);
         if (adbox_on)
-            platform_log_debug("Enrich: route refresh skipped (not commercial/large) for %s\n",
+            platform_log_debug("Enrich: route refresh skipped (not commercial) for %s\n",
                          icao.c_str());
     }
 
@@ -805,13 +802,9 @@ bool enrichment_route_eligible(const char *callsign, const char *category,
     if (category && category[0] == 'A' && category[1] == '7') return false;
     if (type_code && type_code[0] && is_heli_type(type_code)) return false;
 
-    // Commercial / large fixed-wing only: airline callsign OR ADS-B emitter
-    // category A3–A6 (Large / High-vortex / Heavy / High-perf). A1/A2 are
-    // light/small GA; A0 and B/C (glider/UAV/etc.) are not worth a query.
-    if (callsign && callsign[0] && is_airline_callsign(callsign)) return true;
-    if (category && category[0] == 'A' && category[1] >= '3' && category[1] <= '6')
-        return true;
-    return false;
+    // Same commercial rule as COM filter / airliner icon: airline callsign
+    // AND emitter category A2–A6. Empty category → no lookup.
+    return is_commercial_traffic(callsign, category);
 }
 
 AircraftEnrichment *enrichment_get_cached(const char *icao_hex) {

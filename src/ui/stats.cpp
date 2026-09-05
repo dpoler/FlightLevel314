@@ -1,5 +1,6 @@
 #include "../platform/platform.h" // millis()/strlcpy compatibility shims on non-Arduino builds
 #include "stats.h"
+#include "filters.h"
 #include "geo.h"
 #include "../data/locations.h"
 #include <cstring>
@@ -37,29 +38,6 @@ static void mark_seen(const char *icao) {
     if (_seen_count >= MAX_UNIQUE || already_seen(icao)) return;
     strlcpy(_seen_icaos[_seen_count], icao, 7);
     _seen_count++;
-}
-
-static bool is_airline_callsign(const char *cs) {
-    return cs[0] >= 'A' && cs[0] <= 'Z' &&
-           cs[1] >= 'A' && cs[1] <= 'Z' &&
-           cs[2] >= 'A' && cs[2] <= 'Z' &&
-           cs[3] >= '0' && cs[3] <= '9';
-}
-
-static bool is_heli_type(const char *t) {
-    static const char *types[] = {
-        "R22", "R44", "R66", "EC35", "EC45", "EC55",
-        "A109", "A139", "A169", "B06", "B212", "B412",
-        "S76", "S92", "B407", "B429", "B505",
-        "H135", "H145", "H160", "H175", "H225",
-        "AS50", "AS55", "AS65", "MD52", "MD60",
-        "NH90", "CH47", "V22", "UH1", "BK17",
-        nullptr
-    };
-    for (int i = 0; types[i]; i++) {
-        if (strcmp(t, types[i]) == 0) return true;
-    }
-    return false;
 }
 
 #define MAX_TYPE_TRACK 100
@@ -243,8 +221,7 @@ void stats_update(AircraftList *list) {
         // both MIL and JET, making the bars sum to more than the total.
         bool is_h = (ac.category[0] == 'A' && ac.category[1] == '7') ||
                     (ac.type_code[0] && is_heli_type(ac.type_code));
-        bool is_j = !is_h && (is_airline_callsign(ac.callsign) ||
-                   (ac.category[0] == 'A' && ac.category[1] >= '3'));
+        bool is_j = !is_h && is_commercial_traffic(ac.callsign, ac.category);
 
         if (ac.is_emergency) _stats.emergency++;
         else if (ac.is_military) _stats.military++;

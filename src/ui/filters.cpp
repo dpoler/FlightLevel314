@@ -62,10 +62,20 @@ int filter_label_text(char *buf, size_t buf_size, lv_color_t *color) {
 }
 
 bool is_airline_callsign(const char *cs) {
+    if (!cs || !cs[0]) return false;
     return cs[0] >= 'A' && cs[0] <= 'Z' &&
            cs[1] >= 'A' && cs[1] <= 'Z' &&
            cs[2] >= 'A' && cs[2] <= 'Z' &&
            cs[3] >= '0' && cs[3] <= '9';
+}
+
+bool is_commercial_traffic(const char *callsign, const char *category) {
+    // Both required: a C172 (A1) with an airline-shaped callsign is not COM,
+    // and an A3 heavy with only an N-number is not COM either.
+    if (!is_airline_callsign(callsign)) return false;
+    if (!category || category[0] != 'A') return false;
+    // A2 Small … A6 High performance. A0/A1 light GA; A7 rotorcraft.
+    return category[1] >= '2' && category[1] <= '6';
 }
 
 bool is_heli_type(const char *t) {
@@ -112,17 +122,7 @@ static const int32_t AGL_BAND_FT = 10000;
 
 static bool passes_category_filters(const Aircraft &ac, unsigned bits) {
     if ((bits & (1u << FILT_AIRLINE)) &&
-        (is_airline_callsign(ac.callsign) ||
-         // A3-A6 = large/high-vortex-large/heavy/high-performance -- the
-         // "big fixed-wing" signal this is meant to catch as a callsign-
-         // independent fallback. A7 is rotorcraft, not commercial size
-         // class, and `>= '3'` alone doesn't exclude it -- caught a real
-         // report of NYPD (and presumably any A7-squawking) helicopters
-         // showing up under COM. aircraft_icons.h's classify_icon() and
-         // stats.cpp already guard against this (A7 checked/excluded
-         // first); this call site was the one place doing the category
-         // check standalone, with nothing upstream of it filtering A7 out.
-         (ac.category[0] == 'A' && ac.category[1] >= '3' && ac.category[1] <= '6')))
+        is_commercial_traffic(ac.callsign, ac.category))
         return true;
     if ((bits & (1u << FILT_MILITARY)) && ac.is_military)
         return true;
