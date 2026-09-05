@@ -64,9 +64,16 @@ void enrichment_clear_cache();
 void aerodatabox_request_verify();
 bool aerodatabox_verify_result(bool *ok, char *err, size_t err_size);
 
-// Local monthly usage (persisted in UserConfig). Marketplace remaining
-// units are not available via the API key — only this local counter and
-// HTTP 429 / soft-limit auto-disable.
+// Local monthly HTTP tally (persisted) plus last-seen marketplace meters from
+// response headers when the gateway provides them (RapidAPI units/requests).
+// Soft-limit / AUTO-OFF still key off the local HTTP counter + HTTP 429.
 void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *rate_limited);
+
+// Last marketplace quota observed on an AeroDataBox response (flight search
+// or Settings verify). In-memory only; returns false until at least one
+// response carried recognizable rate-limit headers.
+bool aerodatabox_marketplace_quota(int *units_remaining, int *units_limit,
+                                   int *requests_remaining, int *requests_limit);
+
 // Clear the sticky rate-limit flag (caller should also re-enable if desired).
 void aerodatabox_clear_rate_limit();
