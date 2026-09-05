@@ -171,24 +171,29 @@ static void refresh_adbox_usage_ui() {
     int u_rem = -1, u_lim = -1, r_rem = -1, r_lim = -1;
     const bool have_mkt = aerodatabox_marketplace_quota(&u_rem, &u_lim, &r_rem, &r_lim);
 
-    // Prefer marketplace API-units (real Basic quota). Fall back to request
-    // meters, then local HTTP tally until headers arrive.
+    // Marketplace first: "used of limit" (matches RapidAPI dashboard).
+    // Local HTTP count is secondary until/unless headers are missing.
     char buf[96];
     if (have_mkt && u_lim >= 0 && u_rem >= 0) {
-        if (rl) {
-            snprintf(buf, sizeof(buf), "%d/%d u OFF", u_rem, u_lim);
+        int used = u_lim - u_rem;
+        if (used < 0) used = 0;
+        if (rl || u_rem <= 0) {
+            snprintf(buf, sizeof(buf), "%d of %d OFF", used, u_lim);
             lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
         } else {
-            snprintf(buf, sizeof(buf), "%d/%d u - %d loc", u_rem, u_lim, n);
-            const bool low = (u_lim > 0 && u_rem * 10 <= u_lim); // <=10% left
-            lv_obj_set_style_text_color(_adbox_usage_val, low ? WARN_COLOR : SYS_COLOR, 0);
+            snprintf(buf, sizeof(buf), "%d of %d", used, u_lim);
+            // Warn when >=90% of marketplace units used.
+            const bool high = (u_lim > 0 && used * 10 >= u_lim * 9);
+            lv_obj_set_style_text_color(_adbox_usage_val, high ? WARN_COLOR : SYS_COLOR, 0);
         }
     } else if (have_mkt && r_lim >= 0 && r_rem >= 0) {
-        if (rl) {
-            snprintf(buf, sizeof(buf), "%d/%d r OFF", r_rem, r_lim);
+        int used = r_lim - r_rem;
+        if (used < 0) used = 0;
+        if (rl || r_rem <= 0) {
+            snprintf(buf, sizeof(buf), "%d of %d r OFF", used, r_lim);
             lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
         } else {
-            snprintf(buf, sizeof(buf), "%d/%d r - %d loc", r_rem, r_lim, n);
+            snprintf(buf, sizeof(buf), "%d of %d r", used, r_lim);
             lv_obj_set_style_text_color(_adbox_usage_val, SYS_COLOR, 0);
         }
     } else if (rl) {
@@ -713,13 +718,12 @@ void settings_init(lv_obj_t *parent) {
     _sw_adbox_en = make_enable_switch(_content, col1 + 80, 306);
 
     lv_obj_t *quota_note = lv_label_create(_content);
-    // Marketplace billing cycle != UTC month. Prefer header meters when
-    // present; local HTTP count remains for soft-cap / AUTO-OFF.
+    // Show marketplace used/limit when headers exist; auto-off at 0
+    // remaining (see adbox_note_rate_limit). Local soft-cap / 429 still apply.
     lv_label_set_text(quota_note,
-        "USAGE: marketplace units when known\n"
-        "(from ADB response headers), else local\n"
-        "HTTP count this UTC month. Soft-cap /\n"
-        "429 still use the local counter.");
+        "USAGE: marketplace units used of\n"
+        "limit (from ADB headers). Auto-off at\n"
+        "0 remaining, HTTP 429, or local soft-cap.");
     lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(quota_note, col1, 340);
