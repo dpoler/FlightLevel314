@@ -209,7 +209,6 @@ static void refresh_adbox_usage_ui() {
             lv_obj_set_style_text_color(_adbox_usage_val, ERR_COLOR, 0);
         } else {
             snprintf(buf, sizeof(buf), "%d of %d r", used, r_lim);
-            append_reset(buf, sizeof(buf));
             lv_obj_set_style_text_color(_adbox_usage_val, SYS_COLOR, 0);
         }
     } else if (rl) {
@@ -738,8 +737,8 @@ void settings_init(lv_obj_t *parent) {
     // remaining (see adbox_note_rate_limit). Local soft-cap / 429 still apply.
     lv_label_set_text(quota_note,
         "USAGE: marketplace units used of limit.\n"
-        "~Nd only if units-reset header present\n"
-        "(may differ from RapidAPI billing date).\n"
+        "Reset ETA only from live units-reset\n"
+        "header (not billing anniversary).\n"
         "Auto-off at 0 remaining / 429 / soft-cap.\n"
         "Key check is cached across restarts.");
     lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);

@@ -80,24 +80,32 @@ static uint32_t adbox_key_hash(const char *key) {
 }
 
 static void quota_hydrate_from_config() {
-    std::lock_guard<std::mutex> lock(_quota_mutex);
-    if (g_config.adbox_mkt_have_units) {
-        _quota_have_units = true;
-        _quota_units_limit = g_config.adbox_mkt_units_lim;
-        _quota_units_remaining = g_config.adbox_mkt_units_rem;
+    bool wipe_reset = false;
+    {
+        std::lock_guard<std::mutex> lock(_quota_mutex);
+        if (g_config.adbox_mkt_have_units) {
+            _quota_have_units = true;
+            _quota_units_limit = g_config.adbox_mkt_units_lim;
+            _quota_units_remaining = g_config.adbox_mkt_units_rem;
+        }
+        // Never restore reset ETA from disk. Older builds saved requests-reset
+        // (~3d gateway window), which is not the RapidAPI billing anniversary.
+        _quota_have_reset = false;
+        _quota_reset_at = 0;
+        if (g_config.adbox_mkt_reset_at != 0) {
+            g_config.adbox_mkt_reset_at = 0;
+            wipe_reset = true;
+        }
     }
-    if (g_config.adbox_mkt_reset_at > 0) {
-        _quota_have_reset = true;
-        _quota_reset_at = (time_t)g_config.adbox_mkt_reset_at;
-    }
+    if (wipe_reset) storage_save_config(g_config);
 }
 
 static void quota_persist_units_unlocked() {
-    // Caller holds _quota_mutex. Persist units/reset only (not requests).
+    // Caller holds _quota_mutex. Persist units only — not reset ETA.
     g_config.adbox_mkt_have_units = _quota_have_units;
     g_config.adbox_mkt_units_lim = _quota_units_limit;
     g_config.adbox_mkt_units_rem = _quota_units_remaining;
-    g_config.adbox_mkt_reset_at = _quota_have_reset ? (int64_t)_quota_reset_at : 0;
+    g_config.adbox_mkt_reset_at = 0;
 }
 
 void adbox_note_rate_limit(const PlatformHttpRateLimit &rl) {
