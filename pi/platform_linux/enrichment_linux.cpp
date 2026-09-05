@@ -55,6 +55,81 @@ void (*_pending_callback)(AircraftEnrichment *) = nullptr;
 volatile AircraftEnrichment *_deferred_entry = nullptr;
 volatile bool _deferred_ready = false;
 
+// Marketplace meters from ADB response headers (RapidAPI units/requests).
+// Hot path is in-memory; units are mirrored into g_config so Settings USAGE
+// survives restart without burning another verify call. Billing renewal day
+// is user-configured (adbox_renew_day), not from headers.
+std::mutex _quota_mutex;
+bool _quota_have_units = false;
+bool _quota_have_requests = false;
+int _quota_units_limit = 0;
+int _quota_units_remaining = 0;
+int _quota_requests_limit = 0;
+int _quota_requests_remaining = 0;
+
+static uint32_t adbox_key_hash(const char *key) {
+    // FNV-1a 32-bit — fingerprint only; not a secret.
+    uint32_t h = 2166136261u;
+    if (!key) return h;
+    for (const unsigned char *p = (const unsigned char *)key; *p; ++p) {
+        h ^= (uint32_t)(*p);
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static void quota_hydrate_from_config() {
+    std::lock_guard<std::mutex> lock(_quota_mutex);
+    if (g_config.adbox_mkt_have_units) {
+        _quota_have_units = true;
+        _quota_units_limit = g_config.adbox_mkt_units_lim;
+        _quota_units_remaining = g_config.adbox_mkt_units_rem;
+    }
+}
+
+static void quota_persist_units_unlocked() {
+    // Caller holds _quota_mutex.
+    g_config.adbox_mkt_have_units = _quota_have_units;
+    g_config.adbox_mkt_units_lim = _quota_units_limit;
+    g_config.adbox_mkt_units_rem = _quota_units_remaining;
+}
+
+void adbox_note_rate_limit(const PlatformHttpRateLimit &rl) {
+    if (!rl.have_units && !rl.have_requests) return;
+    bool exhausted = false;
+    int units_lim = 0;
+    bool persist = false;
+    {
+        std::lock_guard<std::mutex> lock(_quota_mutex);
+        if (rl.have_units) {
+            _quota_have_units = true;
+            _quota_units_limit = rl.units_limit;
+            _quota_units_remaining = rl.units_remaining;
+            persist = true;
+            // Marketplace Basic quota spent — stop further ADB calls.
+            if (rl.units_remaining <= 0) {
+                exhausted = true;
+                units_lim = rl.units_limit;
+            }
+        }
+        if (rl.have_requests) {
+            _quota_have_requests = true;
+            _quota_requests_limit = rl.requests_limit;
+            _quota_requests_remaining = rl.requests_remaining;
+        }
+        if (persist) quota_persist_units_unlocked();
+    }
+    if (persist) storage_save_config(g_config);
+    if (exhausted && g_config.aerodatabox_enabled) {
+        g_config.aerodatabox_enabled = false;
+        g_config.adbox_rate_limited = true;
+        platform_log_warn("Enrich: AeroDataBox auto-disabled (marketplace units "
+                          "exhausted, limit=%d)\n", units_lim);
+        storage_save_config(g_config);
+    }
+}
+
+
 void free_photo(AircraftEnrichment *e) {
     free(e->photo_rgb565);
     e->photo_rgb565 = nullptr;
@@ -223,6 +298,11 @@ void adbox_note_call(long http_status) {
 bool adbox_allowed() {
     if (!g_config.aerodatabox_enabled || !g_config.aerodatabox_key[0]) return false;
     if (g_config.adbox_rate_limited) return false;
+    {
+        std::lock_guard<std::mutex> lock(_quota_mutex);
+        // Already saw marketplace units hit zero on a prior response.
+        if (_quota_have_units && _quota_units_remaining <= 0) return false;
+    }
     int ym = current_yyyymm();
     if (g_config.adbox_soft_limit > 0
         && g_config.adbox_usage_yyyymm == ym
@@ -398,10 +478,12 @@ bool fetch_adbox_route(int provider, const char *key,
         std::vector<char> buf(96 * 1024);
         size_t len = 0;
         long status = 0;
-        if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &status, hdrs)) {
+        PlatformHttpRateLimit rl {};
+        if (!platform_http_get_ex(url, buf.data(), buf.size(), &len, &status, hdrs, &rl)) {
             platform_log_warn("Enrich: AeroDataBox transport fail: %s\n", url);
             return 0;
         }
+        adbox_note_rate_limit(rl);
         adbox_note_call(status);
         if (status == 401 || status == 403) {
             platform_log_warn("Enrich: AeroDataBox auth failed (http=%ld)\n", status);
@@ -487,9 +569,11 @@ bool validate_adbox_key(int provider, const char *key, char *err, size_t err_siz
     long status = 0;
     char url[256];
     snprintf(url, sizeof(url), "%s/airports/icao/KJFK", adbox_base_url(provider));
-    if (!platform_http_get_ex(url, buf, sizeof(buf), &len, &status, hdrs)) {
+    PlatformHttpRateLimit rl {};
+    if (!platform_http_get_ex(url, buf, sizeof(buf), &len, &status, hdrs, &rl)) {
         return fail("network error");
     }
+    adbox_note_rate_limit(rl);
     if (status == 401 || status == 403) return fail("invalid key");
     if (status == 429) return fail("rate limited");
     if (status < 200 || status >= 300) {
@@ -906,14 +990,34 @@ void enrichment_clear_cache() {
 }
 
 void aerodatabox_request_verify() {
+    const int prov_now = g_config.aerodatabox_provider;
+    const uint32_t hash_now = adbox_key_hash(g_config.aerodatabox_key);
     {
         std::lock_guard<std::mutex> lock(_verify_mutex);
+        // Process-local cache (same session reopen).
         if (_verify_cache_valid
-            && _verify_cache_prov == g_config.aerodatabox_provider
+            && _verify_cache_prov == prov_now
             && strcmp(_verify_cache_key, g_config.aerodatabox_key) == 0) {
             _verify_result_ok = _verify_cache_ok;
             strlcpy(_verify_result_err, _verify_cache_err, sizeof(_verify_result_err));
             _verify_result_ready = true;
+            return;
+        }
+        // Disk cache: skip billed airport probe after restart when key/provider
+        // unchanged and last check succeeded.
+        if (g_config.adbox_verify_ok
+            && g_config.adbox_verify_prov == prov_now
+            && g_config.adbox_verify_key_hash == hash_now
+            && g_config.aerodatabox_key[0]) {
+            _verify_cache_prov = prov_now;
+            strlcpy(_verify_cache_key, g_config.aerodatabox_key, sizeof(_verify_cache_key));
+            _verify_cache_ok = true;
+            _verify_cache_err[0] = '\0';
+            _verify_cache_valid = true;
+            _verify_result_ok = true;
+            _verify_result_err[0] = '\0';
+            _verify_result_ready = true;
+            platform_log_debug("Enrich: AeroDataBox verify cache hit (no HTTP)\n");
             return;
         }
         _verify_result_ready = false;
@@ -924,15 +1028,22 @@ void aerodatabox_request_verify() {
         char key[sizeof(g_config.aerodatabox_key)] = {};
         strlcpy(key, g_config.aerodatabox_key, sizeof(key));
         bool ok = validate_adbox_key(prov, key, err, sizeof(err));
-        std::lock_guard<std::mutex> lock(_verify_mutex);
-        _verify_result_ok = ok;
-        strlcpy(_verify_result_err, err, sizeof(_verify_result_err));
-        _verify_cache_prov = prov;
-        strlcpy(_verify_cache_key, key, sizeof(_verify_cache_key));
-        _verify_cache_ok = ok;
-        strlcpy(_verify_cache_err, err, sizeof(_verify_cache_err));
-        _verify_cache_valid = true;
-        _verify_result_ready = true;
+        {
+            std::lock_guard<std::mutex> lock(_verify_mutex);
+            _verify_result_ok = ok;
+            strlcpy(_verify_result_err, err, sizeof(_verify_result_err));
+            _verify_cache_prov = prov;
+            strlcpy(_verify_cache_key, key, sizeof(_verify_cache_key));
+            _verify_cache_ok = ok;
+            strlcpy(_verify_cache_err, err, sizeof(_verify_cache_err));
+            _verify_cache_valid = true;
+            _verify_result_ready = true;
+        }
+        // Persist success (and clear on failure) so restart does not re-bill.
+        g_config.adbox_verify_ok = ok;
+        g_config.adbox_verify_prov = prov;
+        g_config.adbox_verify_key_hash = adbox_key_hash(key);
+        storage_save_config(g_config);
     }).detach();
 }
 
@@ -954,8 +1065,33 @@ void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *
     if (rate_limited) *rate_limited = g_config.adbox_rate_limited;
 }
 
+bool aerodatabox_marketplace_quota(int *units_remaining, int *units_limit,
+                                   int *requests_remaining, int *requests_limit) {
+    std::lock_guard<std::mutex> lock(_quota_mutex);
+    if (!_quota_have_units && !_quota_have_requests) return false;
+    if (units_remaining) *units_remaining = _quota_have_units ? _quota_units_remaining : -1;
+    if (units_limit) *units_limit = _quota_have_units ? _quota_units_limit : -1;
+    if (requests_remaining) *requests_remaining = _quota_have_requests ? _quota_requests_remaining : -1;
+    if (requests_limit) *requests_limit = _quota_have_requests ? _quota_requests_limit : -1;
+    return true;
+}
+
 void aerodatabox_clear_rate_limit() {
     g_config.adbox_rate_limited = false;
+    // Drop stale marketplace meters (memory + disk) so a re-enable is not
+    // blocked by a persisted remaining=0, and the next ADB call refreshes.
+    {
+        std::lock_guard<std::mutex> lock(_quota_mutex);
+        _quota_have_units = false;
+        _quota_have_requests = false;
+        _quota_units_limit = 0;
+        _quota_units_remaining = 0;
+        _quota_requests_limit = 0;
+        _quota_requests_remaining = 0;
+    }
+    g_config.adbox_mkt_have_units = false;
+    g_config.adbox_mkt_units_rem = 0;
+    g_config.adbox_mkt_units_lim = 0;
     // Force a fresh key check next Settings open (previous verify may have
     // been a 429 "rate limited" failure while the sticky flag was set).
     {
@@ -966,6 +1102,7 @@ void aerodatabox_clear_rate_limit() {
 }
 
 void enrichment_init() {
+    quota_hydrate_from_config();
     lv_timer_create([](lv_timer_t *t) {
         if (_deferred_ready && _pending_callback && _deferred_entry) {
             _deferred_ready = false;

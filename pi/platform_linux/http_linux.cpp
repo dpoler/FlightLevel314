@@ -2,6 +2,8 @@
 #include <curl/curl.h>
 #include <string>
 #include <cstring>
+#include <cctype>
+#include <cstdlib>
 #include <mutex>
 
 namespace {
@@ -12,15 +14,89 @@ size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
     return size * nmemb;
 }
 
+bool hdr_name_eq(const char *line, size_t line_len, const char *name) {
+    // Match "Name: value" case-insensitively on the name only.
+    size_t nlen = strlen(name);
+    if (line_len < nlen + 1) return false;
+    for (size_t i = 0; i < nlen; i++) {
+        if (tolower((unsigned char)line[i]) != tolower((unsigned char)name[i])) return false;
+    }
+    return line[nlen] == ':';
+}
+
+int hdr_int_value(const char *line) {
+    const char *colon = strchr(line, ':');
+    if (!colon) return -1;
+    colon++;
+    while (*colon == ' ' || *colon == '\t') colon++;
+    char *end = nullptr;
+    long v = strtol(colon, &end, 10);
+    if (end == colon) return -1;
+    if (v < 0) v = 0;
+    if (v > 1000000000L) v = 1000000000L;
+    return (int)v;
+}
+
+struct RateLimitParse {
+    PlatformHttpRateLimit *out = nullptr;
+    bool got_units_lim = false;
+    bool got_units_rem = false;
+    bool got_req_lim = false;
+    bool got_req_rem = false;
+};
+
+size_t header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
+    auto *st = static_cast<RateLimitParse *>(userdata);
+    size_t len = size * nitems;
+    if (!st || !st->out || len == 0) return len;
+
+    // Final empty header line — publish only complete pairs.
+    if (len == 2 && buffer[0] == '\r' && buffer[1] == '\n') {
+        st->out->have_units = st->got_units_lim && st->got_units_rem;
+        st->out->have_requests = st->got_req_lim && st->got_req_rem;
+        return len;
+    }
+    if (memchr(buffer, ':', len) == nullptr) return len;
+
+    auto take = [&](const char *name, int *dst, bool *got) {
+        if (!hdr_name_eq(buffer, len, name)) return;
+        int v = hdr_int_value(buffer);
+        if (v < 0) return;
+        *dst = v;
+        *got = true;
+    };
+
+    // RapidAPI AeroDataBox: API-Units = real Basic quota; Requests = looser
+    // HTTP counter. Billing anniversary is user-configured (adbox_renew_day).
+    take("x-ratelimit-api-units-limit", &st->out->units_limit, &st->got_units_lim);
+    take("x-ratelimit-api-units-remaining", &st->out->units_remaining, &st->got_units_rem);
+    take("x-ratelimit-requests-limit", &st->out->requests_limit, &st->got_req_lim);
+    take("x-ratelimit-requests-remaining", &st->out->requests_remaining, &st->got_req_rem);
+
+    return len;
+}
+
 std::once_flag curl_init_flag;
 
 bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_len,
                        long *http_status, const char *const *extra_headers,
-                       bool require_2xx) {
+                       PlatformHttpRateLimit *rate_limit, bool require_2xx) {
     std::call_once(curl_init_flag, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
 
     CURL *curl = curl_easy_init();
     if (!curl) return false;
+
+    if (rate_limit) {
+        rate_limit->have_units = false;
+        rate_limit->have_requests = false;
+        rate_limit->units_limit = 0;
+        rate_limit->units_remaining = 0;
+        rate_limit->requests_limit = 0;
+        rate_limit->requests_remaining = 0;
+    }
+
+    RateLimitParse hdr_parse;
+    hdr_parse.out = rate_limit;
 
     std::string body;
     curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -31,6 +107,11 @@ bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_
     // Planespotters (and some other APIs) reject generic library UAs with
     // HTTP 403 -- identify the app and include a contact URL.
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "flightlevel314/0.1 (+https://github.com/dpoler/FlightLevel314)");
+
+    if (rate_limit) {
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_cb);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hdr_parse);
+    }
 
     struct curl_slist *hdrs = nullptr;
     if (extra_headers) {
@@ -45,6 +126,12 @@ bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     if (hdrs) curl_slist_free_all(hdrs);
     curl_easy_cleanup(curl);
+
+    // Finalize even if the trailing blank header line was skipped.
+    if (rate_limit) {
+        rate_limit->have_units = hdr_parse.got_units_lim && hdr_parse.got_units_rem;
+        rate_limit->have_requests = hdr_parse.got_req_lim && hdr_parse.got_req_rem;
+    }
 
     if (res != CURLE_OK) {
         platform_log_warn("HTTP GET %s failed: curl=%d\n", url, (int)res);
@@ -70,10 +157,12 @@ bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_
 } // namespace
 
 bool platform_http_get(const char *url, char *out, size_t out_size, size_t *out_len) {
-    return http_get_internal(url, out, out_size, out_len, nullptr, nullptr, true);
+    return http_get_internal(url, out, out_size, out_len, nullptr, nullptr, nullptr, true);
 }
 
 bool platform_http_get_ex(const char *url, char *out, size_t out_size, size_t *out_len,
-                          long *http_status, const char *const *extra_headers) {
-    return http_get_internal(url, out, out_size, out_len, http_status, extra_headers, false);
+                          long *http_status, const char *const *extra_headers,
+                          PlatformHttpRateLimit *rate_limit) {
+    return http_get_internal(url, out, out_size, out_len, http_status, extra_headers,
+                             rate_limit, false);
 }

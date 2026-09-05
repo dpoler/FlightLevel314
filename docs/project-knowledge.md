@@ -82,6 +82,12 @@ Recently closed (2026-09-05): commercial traffic = airline callsign **and**
 A2–A6 (`is_commercial_traffic` shared by COM filter, airliner icon, radar
 color, stats jets, AeroDataBox O/D); empty category → not commercial /
 no O/D; ADB CallSign-first, no Reg fallback.
+Recently closed (2026-09-05): Settings USAGE shows marketplace API-units
+from ADB response headers (`x-ratelimit-api-units-*`) when present, with
+local HTTP count as secondary; soft-cap / 429 still use local counter.
+No dedicated quota poll. Renewal day is user-set
+(`set_api_keys.py --adbox-renew-day N`) → USAGE like
+`522 of 600 · resets ~9th of every month` (header reset ETAs dropped).
 Recently closed (2026-08-14 / soak): Map overnight hang (Invalid draw
 buffer assert → soft-fail + `lv_draw_buf_init` bind).
 Recently closed (2026-08-21 confirm): INFO ATIS panel (incl. arr/dep split);
@@ -833,7 +839,11 @@ remain. Follow-up same day: **skip O/D API** for MIL, HELI, and small GA
 (A0–A1 / B/C); only query when airline callsign **and** emitter category
 A2–A6 (same `is_commercial_traffic` as COM filter / airliner icon; empty
 category → no lookup). Later: CallSign-first AeroDataBox search, no Reg
-fallback (quota).
+fallback (quota). **2026-09-05:** Settings USAGE reads marketplace
+`X-RateLimit-API-Units-*` / `Requests-*` headers from existing ADB calls
+(flight search + verify); local HTTP tally kept for soft-cap / AUTO-OFF.
+Header-based reset ETA removed (requests-reset ≠ billing anniversary);
+`adbox_renew_day` via `set_api_keys.py --adbox-renew-day`.
 
 **Backlog (Dan, 2026-08-10):** further O/D display hygiene when enrichment
 already has a route — **do not show** FROM/TO on the detail card if all of:
