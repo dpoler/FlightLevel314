@@ -87,7 +87,8 @@ from ADB response headers (`x-ratelimit-api-units-*`) when present, with
 local HTTP count as secondary; soft-cap / 429 still use local counter.
 No dedicated quota poll. Renewal day is user-set
 (`set_api_keys.py --adbox-renew-day N`) → USAGE like
-`522 of 600 · resets ~9th of every month` (header reset ETAs dropped).
+`522 of 600 | resets ~9th of every month` (header reset ETAs dropped;
+ASCII `|` — montserrat has no middle-dot glyph).
 Recently closed (2026-08-14 / soak): Map overnight hang (Invalid draw
 buffer assert → soft-fail + `lv_draw_buf_init` bind).
 Recently closed (2026-08-21 confirm): INFO ATIS panel (incl. arr/dep split);
@@ -843,7 +844,8 @@ fallback (quota). **2026-09-05:** Settings USAGE reads marketplace
 `X-RateLimit-API-Units-*` / `Requests-*` headers from existing ADB calls
 (flight search + verify); local HTTP tally kept for soft-cap / AUTO-OFF.
 Header-based reset ETA removed (requests-reset ≠ billing anniversary);
-`adbox_renew_day` via `set_api_keys.py --adbox-renew-day`.
+`adbox_renew_day` via `set_api_keys.py --adbox-renew-day`
+(USAGE uses ASCII `|`, not `·` — montserrat tofu).
 
 **Backlog (Dan, 2026-08-10):** further O/D display hygiene when enrichment
 already has a route — **do not show** FROM/TO on the detail card if all of:

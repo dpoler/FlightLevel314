@@ -188,10 +188,11 @@ static void refresh_adbox_usage_ui() {
     auto append_renew = [&](char *dst, size_t dst_sz) {
         if (renew < 1 || renew > 31 || dst_sz == 0) return;
         size_t used = strlen(dst);
-        // " · resets ~31st of every month" ≈ 34 chars
+        // " | resets ~31st of every month" ≈ 34 chars
+        // Prefer ASCII "|" — montserrat lacks U+00B7 (·) and shows tofu.
         if (used + 40 >= dst_sz) return;
-        // e.g. " · resets ~9th of every month"
-        snprintf(dst + used, dst_sz - used, " · resets ~%d%s of every month",
+        // e.g. " | resets ~9th of every month"
+        snprintf(dst + used, dst_sz - used, " | resets ~%d%s of every month",
                  renew, day_ordinal_suffix(renew));
     };
 
@@ -753,7 +754,7 @@ void settings_init(lv_obj_t *parent) {
     // remaining (see adbox_note_rate_limit). Local soft-cap / 429 still apply.
     // Renewal day is user-set (not from API headers).
     lv_label_set_text(quota_note,
-        "USAGE: used of limit · resets ~Nth of every month "
+        "USAGE: used of limit | resets ~Nth of every month "
         "(set_api_keys --adbox-renew-day N). "
         "Auto-off at 0 remaining / 429 / soft-cap. "
         "Key check cached across restarts.");

@@ -135,7 +135,7 @@ sudo python3 tools/set_api_keys.py \
 sudo python3 tools/set_api_keys.py --adbox-prov 0
 
 # RapidAPI billing anniversary (day of month) — Settings USAGE shows
-# "522 of 600 · resets ~9th of every month" (not from API headers)
+# "522 of 600 | resets ~9th of every month" (not from API headers)
 sudo python3 tools/set_api_keys.py --adbox-renew-day 9
 # Clear: --adbox-renew-day 0
 
