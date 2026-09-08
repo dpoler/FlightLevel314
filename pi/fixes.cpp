@@ -306,6 +306,10 @@ void fixes_draw(lv_layer_t *layer,
         local = g_live;
     }
 
+    // Labels get dense fast — show text only at closer ranges; markers always.
+    const bool show_labels = local.radius_nm <= 25.0f;
+    const int label_cap = (local.radius_nm <= 15.0f) ? local.count : 40;
+
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
     line.color = color;
@@ -320,6 +324,7 @@ void fixes_draw(lv_layer_t *layer,
     lbl.text_local = 1;
 
     constexpr int kMark = 3;
+    int labeled = 0;
     for (int i = 0; i < local.count; i++) {
         const FixPoint &p = local.pts[i];
         int sx = 0, sy = 0;
@@ -349,9 +354,12 @@ void fixes_draw(lv_layer_t *layer,
             lv_draw_line(layer, &line);
         }
 
-        lbl.text = p.ident;
-        lv_area_t area = {(lv_coord_t)(sx + kMark + 2), (lv_coord_t)(sy - 6),
-                          (lv_coord_t)(sx + kMark + 52), (lv_coord_t)(sy + 6)};
-        lv_draw_label(layer, &lbl, &area);
+        if (show_labels && labeled < label_cap) {
+            lbl.text = p.ident;
+            lv_area_t area = {(lv_coord_t)(sx + kMark + 2), (lv_coord_t)(sy - 6),
+                              (lv_coord_t)(sx + kMark + 52), (lv_coord_t)(sy + 6)};
+            lv_draw_label(layer, &lbl, &area);
+            labeled++;
+        }
     }
 }
