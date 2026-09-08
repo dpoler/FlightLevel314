@@ -82,13 +82,9 @@ Recently closed (2026-09-05): commercial traffic = airline callsign **and**
 A2–A6 (`is_commercial_traffic` shared by COM filter, airliner icon, radar
 color, stats jets, AeroDataBox O/D); empty category → not commercial /
 no O/D; ADB CallSign-first, no Reg fallback.
-Recently closed (2026-09-05): Settings USAGE shows marketplace API-units
-from ADB response headers (`x-ratelimit-api-units-*`) when present, with
-local HTTP count as secondary; soft-cap / 429 still use local counter.
-No dedicated quota poll. Renewal day is user-set
-(`set_api_keys.py --adbox-renew-day N`) → USAGE like
-`522 of 600 | resets ~9th of every month` (header reset ETAs dropped;
-ASCII `|` — montserrat has no middle-dot glyph).
+Recently closed (2026-09-08): Map **Named fixes** overlay — FAA AIS
+DesignatedPoints + NAVAIDSystem within range; VIEW → LOCATIONS toggle
+(`fx_on`). US coverage; not approach-plate georef.
 Recently closed (2026-08-14 / soak): Map overnight hang (Invalid draw
 buffer assert → soft-fail + `lv_draw_buf_init` bind).
 Recently closed (2026-08-21 confirm): INFO ATIS panel (incl. arr/dep split);

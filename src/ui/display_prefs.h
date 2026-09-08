@@ -66,3 +66,7 @@ bool map_weather_shown();
 void map_weather_toggle();
 int map_weather_opa();
 void map_weather_opa_set(int pct);
+
+// Pi Map FAA named fixes / navaids (DesignatedPoints + NAVAID systems).
+bool map_fixes_shown();
+void map_fixes_toggle();

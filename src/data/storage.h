@@ -112,6 +112,10 @@ struct UserConfig {
     bool map_weather_enabled;
     int map_weather_opa;            // 10-100 percent (default 60)
 
+    // Pi Map FAA named fixes / navaids overlay (DesignatedPoints + NAVAID).
+    // Defaults: off. US coverage only (empty elsewhere).
+    bool map_fixes_enabled;
+
     // Resume-on-boot state -- all written from discrete, human-paced actions
     // (nav tap, range chip tap, location picker selection, filter button
     // tap), never from a high-frequency path like a slider drag, so an

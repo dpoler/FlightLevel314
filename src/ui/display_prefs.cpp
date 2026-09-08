@@ -142,3 +142,9 @@ void map_weather_opa_set(int pct) {
     if (pct > 100) pct = 100;
     g_config.map_weather_opa = pct;
 }
+
+bool map_fixes_shown() { return g_config.map_fixes_enabled; }
+void map_fixes_toggle() {
+    g_config.map_fixes_enabled = !g_config.map_fixes_enabled;
+    storage_save_config(g_config);
+}
