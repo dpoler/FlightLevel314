@@ -66,3 +66,12 @@ bool map_weather_shown();
 void map_weather_toggle();
 int map_weather_opa();
 void map_weather_opa_set(int pct);
+
+// Pi Map FAA named fixes / navaids (DesignatedPoints + NAVAID + CIFP).
+// Feature is parked: code remains but UI + runtime paths stay off until
+// declutter / approach-fix selection is worth finishing.
+#ifndef MAP_FIXES_FEATURE_ENABLED
+#define MAP_FIXES_FEATURE_ENABLED 0
+#endif
+bool map_fixes_shown();
+void map_fixes_toggle();

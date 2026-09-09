@@ -256,7 +256,12 @@ static void open_overlay() {
 
     // Secondary locations (other airports) are Map-only — Radar no longer
     // draws airports/runways. Hide the toggle on Radar so it isn't a no-op.
+#if MAP_FIXES_FEATURE_ENABLED
+    // Named fixes (FAA DesignatedPoints + NAVAID + CIFP) also Map-only.
+    const int alerts_y0 = (views_get_active_index() == VIEW_MAP) ? 394 : 290;
+#else
     const int alerts_y0 = (views_get_active_index() == VIEW_MAP) ? 360 : 290;
+#endif
     if (views_get_active_index() == VIEW_MAP) {
         section_header(_panel, "LOCATIONS", 0, 290);
         toggle_row(_panel, "Other Airports", 0, 318, col_w, secondary_locations_shown(), [](lv_event_t *e) {
@@ -267,6 +272,16 @@ static void open_overlay() {
                 secondary_locations_toggle();
             if (views_get_active_index() == VIEW_MAP) map_view_update();
         });
+#if MAP_FIXES_FEATURE_ENABLED
+        toggle_row(_panel, "Named fixes", 0, 352, col_w, map_fixes_shown(), [](lv_event_t *e) {
+            if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != map_fixes_shown())
+                map_fixes_toggle();
+            if (views_get_active_index() == VIEW_MAP) {
+                map_view_on_show(); // kick FAA fetch when enabling
+                map_view_update();
+            }
+        });
+#endif
     }
 
     // ============================================================

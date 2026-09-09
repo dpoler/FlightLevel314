@@ -79,6 +79,7 @@ static UserConfig defaults() {
     cfg.map_basemap_style = 0;
     cfg.map_weather_enabled = false;
     cfg.map_weather_opa = 60;
+    cfg.map_fixes_enabled = false;
     cfg.last_view_idx = 0;
     cfg.last_range_idx = 0;
     cfg.last_location_name[0] = '\0';
@@ -190,6 +191,7 @@ UserConfig storage_load_config() {
     cfg.map_weather_opa = doc["wx_opa"] | cfg.map_weather_opa;
     if (cfg.map_weather_opa < 10) cfg.map_weather_opa = 10;
     if (cfg.map_weather_opa > 100) cfg.map_weather_opa = 100;
+    cfg.map_fixes_enabled = doc["fx_on"] | cfg.map_fixes_enabled;
     cfg.last_view_idx = doc["last_view"] | cfg.last_view_idx;
     cfg.last_range_idx = doc["last_rng"] | cfg.last_range_idx;
     strlcpy(cfg.last_location_name, doc["last_loc"] | cfg.last_location_name, sizeof(cfg.last_location_name));
@@ -266,6 +268,7 @@ void storage_save_config(const UserConfig &cfg) {
     doc["bm_style"] = cfg.map_basemap_style;
     doc["wx_on"] = cfg.map_weather_enabled;
     doc["wx_opa"] = cfg.map_weather_opa;
+    doc["fx_on"] = cfg.map_fixes_enabled;
     doc["last_view"] = cfg.last_view_idx;
     doc["last_rng"] = cfg.last_range_idx;
     doc["last_loc"] = cfg.last_location_name;
