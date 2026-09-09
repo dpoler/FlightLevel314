@@ -143,8 +143,18 @@ void map_weather_opa_set(int pct) {
     g_config.map_weather_opa = pct;
 }
 
-bool map_fixes_shown() { return g_config.map_fixes_enabled; }
+bool map_fixes_shown() {
+#if MAP_FIXES_FEATURE_ENABLED
+    return g_config.map_fixes_enabled;
+#else
+    return false;
+#endif
+}
 void map_fixes_toggle() {
+#if MAP_FIXES_FEATURE_ENABLED
     g_config.map_fixes_enabled = !g_config.map_fixes_enabled;
     storage_save_config(g_config);
+#else
+    // Parked — see MAP_FIXES_FEATURE_ENABLED in display_prefs.h.
+#endif
 }

@@ -22,7 +22,7 @@
 #define COL_GAP      24
 #define PANEL_PAD    10
 #define PANEL_W_2COL (PANEL_PAD + COL_W + COL_GAP + COL_W + PANEL_PAD)
-#define PANEL_H_2COL 510
+#define PANEL_H_2COL 470
 #define COL1_X       (COL_W + COL_GAP)
 
 #define COLOR_PANEL  lv_color_hex(0x14142a)
@@ -256,8 +256,12 @@ static void open_overlay() {
 
     // Secondary locations (other airports) are Map-only — Radar no longer
     // draws airports/runways. Hide the toggle on Radar so it isn't a no-op.
-    // Named fixes (FAA DesignatedPoints + NAVAID) also Map-only.
+#if MAP_FIXES_FEATURE_ENABLED
+    // Named fixes (FAA DesignatedPoints + NAVAID + CIFP) also Map-only.
     const int alerts_y0 = (views_get_active_index() == VIEW_MAP) ? 394 : 290;
+#else
+    const int alerts_y0 = (views_get_active_index() == VIEW_MAP) ? 360 : 290;
+#endif
     if (views_get_active_index() == VIEW_MAP) {
         section_header(_panel, "LOCATIONS", 0, 290);
         toggle_row(_panel, "Other Airports", 0, 318, col_w, secondary_locations_shown(), [](lv_event_t *e) {
@@ -268,6 +272,7 @@ static void open_overlay() {
                 secondary_locations_toggle();
             if (views_get_active_index() == VIEW_MAP) map_view_update();
         });
+#if MAP_FIXES_FEATURE_ENABLED
         toggle_row(_panel, "Named fixes", 0, 352, col_w, map_fixes_shown(), [](lv_event_t *e) {
             if (lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED) != map_fixes_shown())
                 map_fixes_toggle();
@@ -276,6 +281,7 @@ static void open_overlay() {
                 map_view_update();
             }
         });
+#endif
     }
 
     // ============================================================

@@ -6,6 +6,9 @@
 //   airport (LAX vs KLAX, SLI vs KSLI)
 // - CIFP terminal waypoints (PC) for the active airport — approach/SID/STAR
 //   fixes such as GRASP at KDEN (not present in DesignatedPoints)
+//
+// Parked behind MAP_FIXES_FEATURE_ENABLED (display_prefs.h) — set to 1 to
+// re-enable VIEW toggle + fetch/draw.
 
 #include "lvgl.h"
 

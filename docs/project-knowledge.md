@@ -89,6 +89,8 @@ Follow-up (2026-09-09): skip AIS `OTHER` navaid echoes + suppress
 navaids that duplicate nearby airports (LAX/KLAX, SLI/KSLI); add **CIFP
 terminal waypoints (PC)** for the active airport so approach fixes like
 GRASP@KDEN appear (DesignatedPoints is enroute-only).
+**Parked same day** (`MAP_FIXES_FEATURE_ENABLED 0`) — declutter / which
+fixes to show still too unfinished; code kept for a later pass.
 Recently closed (2026-08-14 / soak): Map overnight hang (Invalid draw
 buffer assert → soft-fail + `lv_draw_buf_init` bind).
 Recently closed (2026-08-21 confirm): INFO ATIS panel (incl. arr/dep split);
