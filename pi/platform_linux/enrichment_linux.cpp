@@ -548,11 +548,10 @@ bool fetch_adbox_route(int provider, const char *key,
     return false;
 }
 
-// Validate key with a cheap airport lookup (not a flight search).
-// Deliberately does NOT call adbox_note_call: Settings re-verifies on every
-// open (and on provider change), and counting those made USAGE climb whenever
-// a detail card was open / Settings was tapped — and a verify 429 could
-// sticky-disable the whole service.
+// Validate key with a FREE TIER healthcheck (0 marketplace units).
+// Do NOT use /airports/... here — that is Tier 1 and burns quota just to
+// paint Valid in Settings. Deliberately does NOT call adbox_note_call: a
+// verify 429 must not sticky-disable O/D for the whole service.
 bool validate_adbox_key(int provider, const char *key, char *err, size_t err_size) {
     auto fail = [&](const char *msg) {
         if (err && err_size) strlcpy(err, msg, err_size);
@@ -568,7 +567,10 @@ bool validate_adbox_key(int provider, const char *key, char *err, size_t err_siz
     size_t len = 0;
     long status = 0;
     char url[256];
-    snprintf(url, sizeof(url), "%s/airports/icao/KJFK", adbox_base_url(provider));
+    // FREE TIER: general feed-service status. Auth still returns 401/403 on
+    // a bad key; success costs 0 API units (unlike airports/icao = Tier 1).
+    snprintf(url, sizeof(url), "%s/health/services/feeds/FlightSchedules",
+             adbox_base_url(provider));
     PlatformHttpRateLimit rl {};
     if (!platform_http_get_ex(url, buf, sizeof(buf), &len, &status, hdrs, &rl)) {
         return fail("network error");
@@ -576,6 +578,8 @@ bool validate_adbox_key(int provider, const char *key, char *err, size_t err_siz
     adbox_note_rate_limit(rl);
     if (status == 401 || status == 403) return fail("invalid key");
     if (status == 429) return fail("rate limited");
+    // 204 = authenticated, empty body; treat as valid key.
+    if (status == 204) return true;
     if (status < 200 || status >= 300) {
         char msg[48];
         snprintf(msg, sizeof(msg), "http %ld", status);
@@ -588,8 +592,8 @@ std::mutex _verify_mutex;
 bool _verify_result_ready = false;
 bool _verify_result_ok = false;
 char _verify_result_err[48] = {};
-// Cache last Settings key-check so reopening Settings (with or without a
-// detail card open) does not re-hit AeroDataBox / inflate USAGE.
+// Cache last Settings key-check so reopening Settings does not re-hit ADB
+// (healthcheck is free, but still avoid needless network).
 int _verify_cache_prov = -999;
 char _verify_cache_key[sizeof(g_config.aerodatabox_key)] = {};
 bool _verify_cache_ok = false;
