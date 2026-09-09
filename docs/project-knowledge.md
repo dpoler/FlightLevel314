@@ -85,6 +85,10 @@ no O/D; ADB CallSign-first, no Reg fallback.
 Recently closed (2026-09-08): Map **Named fixes** overlay — FAA AIS
 DesignatedPoints + NAVAIDSystem within range; VIEW → LOCATIONS toggle
 (`fx_on`). US coverage; not approach-plate georef.
+Follow-up (2026-09-09): skip AIS `OTHER` navaid echoes + suppress
+navaids that duplicate nearby airports (LAX/KLAX, SLI/KSLI); add **CIFP
+terminal waypoints (PC)** for the active airport so approach fixes like
+GRASP@KDEN appear (DesignatedPoints is enroute-only).
 Recently closed (2026-08-14 / soak): Map overnight hang (Invalid draw
 buffer assert → soft-fail + `lv_draw_buf_init` bind).
 Recently closed (2026-08-21 confirm): INFO ATIS panel (incl. arr/dep split);

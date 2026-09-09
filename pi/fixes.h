@@ -1,8 +1,11 @@
 #pragma once
 
-// Pi Map overlay: FAA AIS Designated Points (named fixes) + NAVAID systems
-// near the map center. Free ArcGIS FeatureServer queries — no API key.
-// https://ais-faa.opendata.arcgis.com/
+// Pi Map overlay: FAA named fixes near the map center.
+// - AIS DesignatedPoints (enroute reporting / RNAV fixes on charts)
+// - AIS NAVAIDSystem (VORs etc.), skipping idents that duplicate a nearby
+//   airport (LAX vs KLAX, SLI vs KSLI)
+// - CIFP terminal waypoints (PC) for the active airport — approach/SID/STAR
+//   fixes such as GRASP at KDEN (not present in DesignatedPoints)
 
 #include "lvgl.h"
 
@@ -10,15 +13,12 @@
 extern "C" {
 #endif
 
-// Non-blocking: if toggle off, clears in-memory set. Otherwise kicks a
-// worker when center/radius move enough (or cache miss).
-void fixes_request(float lat, float lon, float radius_nm);
+// airport_icao: active location ICAO when it is an airport (e.g. "KDEN"),
+// or "" / nullptr for waypoints — CIFP terminal WPs only load when set.
+void fixes_request(float lat, float lon, float radius_nm, const char *airport_icao);
 
-// Call from LVGL thread (Map timer). Applies a finished worker snapshot.
 bool fixes_poll_swap(void);
 
-// Draw labeled markers into the Map canvas layer (above weather, under
-// aircraft). No-op until a snapshot is ready.
 void fixes_draw(lv_layer_t *layer,
                 bool (*to_screen)(float lat, float lon, int *sx, int *sy),
                 lv_color_t color, lv_opa_t opa);

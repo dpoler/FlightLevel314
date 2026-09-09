@@ -135,7 +135,13 @@ static void map_weather_sync() {
 }
 
 static void map_fixes_sync() {
-    fixes_request(_proj.center_lat, _proj.center_lon, range_get_nm());
+    const char *icao = nullptr;
+    int ai = locations_active_index();
+    if (ai >= 0) {
+        const Location *loc = locations_get(ai);
+        if (loc && loc->icao[0]) icao = loc->icao;
+    }
+    fixes_request(_proj.center_lat, _proj.center_lon, range_get_nm(), icao);
 }
 
 static bool map_proj_to_screen(float lat, float lon, int *sx, int *sy) {
