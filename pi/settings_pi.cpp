@@ -1,9 +1,10 @@
 // Scoped-down Pi implementation of src/ui/settings.h -- deliberately NOT
 // a port of src/ui/settings.cpp. Pi Settings is a three-tab panel:
 // Display (range presets, metric, brightness), Services (traffic source +
-// keyed API status/enable), Device (OTA + diagnostics). Keys are hand-edited
-// in config.json / set_api_keys.py; the UI only shows presence / validity /
-// enable. WiFi/Ethernet and ESP32 heap/PSRAM UI stay dropped.
+// keyed API status/enable), System (OTA, host info, diagnostics, cache /
+// factory reset). Keys are hand-edited in config.json / set_api_keys.py;
+// the UI only shows presence / validity / enable. WiFi/Ethernet and ESP32
+// heap/PSRAM UI stay dropped.
 
 #include "../src/ui/settings.h"
 #include "../src/data/enrichment.h"
@@ -23,10 +24,12 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <sys/utsname.h>
+#include <unistd.h>
 
 static lv_obj_t *_overlay = nullptr;
 static lv_obj_t *_panel = nullptr;
-static lv_obj_t *_tabview = nullptr; // Display | Services | Device
+static lv_obj_t *_tabview = nullptr; // Display | Services | System
 static lv_obj_t *_keyboard = nullptr;
 static bool _visible = false;
 static uint32_t _shown_at_ms = 0;
@@ -41,6 +44,7 @@ static lv_obj_t *_uptime_val = nullptr;
 static lv_obj_t *_err_count_lbl = nullptr;
 static lv_obj_t *_err_list_lbl = nullptr;
 static lv_obj_t *_factory_lbl = nullptr;
+static lv_obj_t *_sys_uptime_val = nullptr; // host /proc/uptime (System tab)
 static uint32_t _factory_confirm_until_ms = 0;
 
 // API KEYS section -- keys are never typed here; only presence / live
@@ -71,12 +75,12 @@ static UserConfig _cfg;           // draft while Settings is open
 static UserConfig _cfg_at_open;   // snapshot for Cancel restore
 static settings_changed_cb_t _on_change = nullptr;
 
-// Fits under status bar on 1280x800. Body is a 3-tab view (not 3 columns).
-#define PANEL_W 1100
-#define PANEL_H 700
+// Fits under status bar on 1280x800. Narrow — each tab is a single column.
+#define PANEL_W 560
+#define PANEL_H 580
 #define TITLE_H 36
-#define TAB_BAR_H 42
-#define ACTION_H 100
+#define TAB_BAR_H 40
+#define ACTION_H 52
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
 #define ACCENT_COLOR lv_color_hex(0x00cc66)
@@ -85,6 +89,9 @@ static settings_changed_cb_t _on_change = nullptr;
 #define ERR_COLOR lv_color_hex(0xff6666)
 #define ROW_BG lv_color_hex(0x1a1a3a)
 #define BORDER_COLOR lv_color_hex(0x333366)
+#define TAB_IDLE_BG lv_color_hex(0x1a1a3a)
+#define TAB_IDLE_FG lv_color_hex(0x8888aa)
+#define TAB_ACTIVE_BG lv_color_hex(0x1e2a24)
 
 static const char *const ADBOX_PROVIDER_OPTS =
     "RapidAPI\nAPI.Market\nDirect (aerodatabox.com)";
@@ -368,6 +375,8 @@ static void poll_key_validation() {
 
 static void refresh_adbox_usage_ui();
 static void refresh_ota_ui();
+static uint32_t system_uptime_s();
+static void fmt_hms(char *out, size_t out_sz, uint32_t sec);
 
 static void status_refresh(lv_timer_t *t) {
     (void)t;
@@ -384,8 +393,15 @@ static void status_refresh(lv_timer_t *t) {
     if (fs->last_fetch_ms > 0) lv_label_set_text_fmt(_latency_val, "%lums", (unsigned long)fs->last_fetch_ms);
 
     uint32_t uptime_s = (platform_millis() - _boot_time_ms) / 1000;
-    lv_label_set_text_fmt(_uptime_val, "%02d:%02d:%02d",
-        (int)(uptime_s / 3600), (int)((uptime_s % 3600) / 60), (int)(uptime_s % 60));
+    char app_up[16];
+    fmt_hms(app_up, sizeof(app_up), uptime_s);
+    lv_label_set_text(_uptime_val, app_up);
+
+    if (_sys_uptime_val) {
+        char sys_up[16];
+        fmt_hms(sys_up, sizeof(sys_up), system_uptime_s());
+        lv_label_set_text(_sys_uptime_val, sys_up);
+    }
 
     uint32_t err_total = error_log_total_count();
     lv_label_set_text_fmt(_err_count_lbl, "(%lu)", (unsigned long)err_total);
@@ -707,6 +723,62 @@ static const char *const HELP_TRAFFIC[2] = {
     "Cancel restores the provider from when Settings opened."
 };
 
+static void style_tab_button(lv_obj_t *btn, bool active) {
+    if (!btn) return;
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(btn, active ? TAB_ACTIVE_BG : TAB_IDLE_BG, 0);
+    lv_obj_set_style_text_color(btn, active ? ACCENT_COLOR : TAB_IDLE_FG, 0);
+    lv_obj_set_style_text_font(btn, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_radius(btn, 6, 0);
+    lv_obj_set_style_border_width(btn, active ? 2 : 0, 0);
+    lv_obj_set_style_border_color(btn, ACCENT_COLOR, 0);
+    lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_outline_width(btn, 0, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_pad_all(btn, 4, 0);
+    lv_obj_t *lab = lv_obj_get_child(btn, 0);
+    if (lab) {
+        lv_obj_set_style_text_color(lab, active ? ACCENT_COLOR : TAB_IDLE_FG, 0);
+        lv_obj_set_style_text_font(lab, &lv_font_montserrat_14, 0);
+    }
+}
+
+static void show_only_settings_tab(lv_obj_t *tv, uint32_t idx) {
+    if (!tv) return;
+    lv_obj_t *cont = lv_tabview_get_content(tv);
+    uint32_t n = lv_obj_get_child_count(cont);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *page = lv_obj_get_child(cont, i);
+        if (!page) continue;
+        // Stack pages at the same origin; hide inactive ones so nothing peeks
+        // from a neighboring horizontally-scrolled page.
+        lv_obj_set_pos(page, 0, 0);
+        lv_obj_set_size(page, lv_pct(100), lv_pct(100));
+        if (i == idx) lv_obj_clear_flag(page, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(page, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_scroll_to_x(cont, 0, LV_ANIM_OFF);
+    lv_obj_scroll_to_y(cont, 0, LV_ANIM_OFF);
+}
+
+static void refresh_tab_button_styles(lv_obj_t *tv) {
+    if (!tv) return;
+    uint32_t active = lv_tabview_get_tab_active(tv);
+    uint32_t n = lv_tabview_get_tab_count(tv);
+    for (uint32_t i = 0; i < n; i++) {
+        style_tab_button(lv_tabview_get_tab_button(tv, (int32_t)i), i == active);
+    }
+    show_only_settings_tab(tv, active);
+}
+
+static void on_tabview_changed(lv_event_t *e) {
+    lv_obj_t *tv = (lv_obj_t *)lv_event_get_user_data(e);
+    if (!tv) tv = lv_event_get_target_obj(e);
+    // Button click already updates tabview active index via LVGL; sync our
+    // stacked visibility + button chrome after it settles.
+    refresh_tab_button_styles(tv);
+}
+
 static void style_tabview(lv_obj_t *tv) {
     lv_obj_set_style_bg_opa(tv, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(tv, 0, 0);
@@ -723,21 +795,123 @@ static void style_tabview(lv_obj_t *tv) {
     for (uint32_t i = 0; i < n; i++) {
         lv_obj_t *btn = lv_tabview_get_tab_button(tv, (int32_t)i);
         if (!btn) continue;
-        lv_obj_set_style_bg_color(btn, ROW_BG, 0);
-        lv_obj_set_style_bg_color(btn, ACCENT_COLOR, LV_STATE_CHECKED);
-        lv_obj_set_style_text_color(btn, LABEL_COLOR, 0);
-        lv_obj_set_style_text_color(btn, lv_color_black(), LV_STATE_CHECKED);
-        lv_obj_set_style_text_font(btn, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_CHECKED);
+        lv_obj_set_style_bg_color(btn, TAB_IDLE_BG, 0);
+        lv_obj_set_style_bg_color(btn, TAB_ACTIVE_BG, LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(btn, TAB_IDLE_FG, 0);
+        lv_obj_set_style_text_color(btn, ACCENT_COLOR, LV_STATE_CHECKED);
         lv_obj_set_style_radius(btn, 6, 0);
         lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_border_width(btn, 2, LV_STATE_CHECKED);
+        lv_obj_set_style_border_color(btn, ACCENT_COLOR, LV_STATE_CHECKED);
+        lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_STATE_CHECKED);
+        lv_obj_set_style_outline_width(btn, 0, 0);
+        lv_obj_set_style_shadow_width(btn, 0, 0);
+        lv_obj_add_event_cb(btn, on_tabview_changed, LV_EVENT_CLICKED, tv);
     }
 
     lv_obj_t *cont = lv_tabview_get_content(tv);
+    lv_obj_set_style_pad_all(cont, 0, 0);
+    lv_obj_set_style_pad_column(cont, 0, 0);
+    lv_obj_set_style_pad_row(cont, 0, 0);
     lv_obj_set_style_bg_color(cont, BG_COLOR, 0);
     lv_obj_set_style_bg_opa(cont, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(cont, 0, 0);
-    lv_obj_set_style_pad_all(cont, 8, 0);
+    lv_obj_set_style_clip_corner(cont, true, 0);
+    // Disable sideways paging entirely — we show one stacked page at a time.
+    lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
     lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(cont, LV_DIR_NONE);
+    lv_obj_set_scroll_snap_x(cont, LV_SCROLL_SNAP_NONE);
+
+    refresh_tab_button_styles(tv);
+}
+
+// Read a short one-line file into out (trimmed). Returns false if empty/missing.
+static bool read_oneline(const char *path, char *out, size_t out_sz) {
+    if (!out || out_sz == 0) return false;
+    out[0] = '\0';
+    FILE *f = fopen(path, "r");
+    if (!f) return false;
+    if (!fgets(out, (int)out_sz, f)) {
+        fclose(f);
+        out[0] = '\0';
+        return false;
+    }
+    fclose(f);
+    size_t n = strlen(out);
+    while (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r' || out[n - 1] == '\0')) {
+        out[--n] = '\0';
+    }
+    // Device-tree model strings are often NUL-padded; already stopped at first NUL via fgets? 
+    // Actually fgets stops at NUL in the buffer when reading binary-ish — OK for model.
+    return out[0] != '\0';
+}
+
+static void fill_sysinfo(char *hw, size_t hw_sz, char *os, size_t os_sz,
+                         char *host, size_t host_sz, char *arch, size_t arch_sz) {
+    hw[0] = os[0] = host[0] = arch[0] = '\0';
+
+    // Prefer Pi model; else machine / virtualized host description.
+    if (!read_oneline("/proc/device-tree/model", hw, hw_sz) &&
+        !read_oneline("/sys/firmware/devicetree/base/model", hw, hw_sz)) {
+        struct utsname u {};
+        if (uname(&u) == 0) {
+            snprintf(hw, hw_sz, "%s (%s)", u.sysname, u.machine);
+        } else {
+            snprintf(hw, hw_sz, "unknown");
+        }
+    }
+
+    if (!read_oneline("/etc/os-release", os, os_sz)) {
+        snprintf(os, os_sz, "Linux");
+    } else {
+        // Prefer PRETTY_NAME="..."
+        char line[192];
+        FILE *f = fopen("/etc/os-release", "r");
+        os[0] = '\0';
+        if (f) {
+            while (fgets(line, sizeof(line), f)) {
+                if (strncmp(line, "PRETTY_NAME=", 12) == 0) {
+                    char *v = line + 12;
+                    if (*v == '"') v++;
+                    size_t len = strlen(v);
+                    while (len > 0 && (v[len - 1] == '\n' || v[len - 1] == '"' || v[len - 1] == '\r'))
+                        v[--len] = '\0';
+                    snprintf(os, os_sz, "%s", v);
+                    break;
+                }
+            }
+            fclose(f);
+        }
+        if (!os[0]) snprintf(os, os_sz, "Linux");
+    }
+
+    if (gethostname(host, host_sz) != 0 || !host[0])
+        snprintf(host, host_sz, "-");
+    host[host_sz - 1] = '\0';
+
+    struct utsname u {};
+    if (uname(&u) == 0) snprintf(arch, arch_sz, "%s", u.machine);
+    else snprintf(arch, arch_sz, "-");
+}
+
+static uint32_t system_uptime_s() {
+    FILE *f = fopen("/proc/uptime", "r");
+    if (!f) return 0;
+    double up = 0;
+    if (fscanf(f, "%lf", &up) != 1) up = 0;
+    fclose(f);
+    if (up < 0) up = 0;
+    return (uint32_t)up;
+}
+
+static void fmt_hms(char *out, size_t out_sz, uint32_t sec) {
+    snprintf(out, out_sz, "%02u:%02u:%02u",
+             (unsigned)(sec / 3600u),
+             (unsigned)((sec % 3600u) / 60u),
+             (unsigned)(sec % 60u));
 }
 
 void settings_init(lv_obj_t *parent) {
@@ -782,23 +956,22 @@ void settings_init(lv_obj_t *parent) {
 
     lv_obj_t *tab_display = lv_tabview_add_tab(_tabview, "Display");
     lv_obj_t *tab_services = lv_tabview_add_tab(_tabview, "Services");
-    lv_obj_t *tab_device = lv_tabview_add_tab(_tabview, "Device");
+    lv_obj_t *tab_system = lv_tabview_add_tab(_tabview, "System");
     style_tabview(_tabview);
 
     auto prep_tab = [](lv_obj_t *tab) {
-        // Opaque fill so map empty-state / other overlays cannot show through
-        // the active tab page (tabview content is otherwise transparent).
         lv_obj_set_style_bg_color(tab, BG_COLOR, 0);
         lv_obj_set_style_bg_opa(tab, LV_OPA_COVER, 0);
-        lv_obj_set_style_pad_all(tab, 4, 0);
+        lv_obj_set_style_pad_all(tab, 8, 0);
+        lv_obj_set_style_border_width(tab, 0, 0);
         lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
     };
     prep_tab(tab_display);
     prep_tab(tab_services);
-    prep_tab(tab_device);
+    prep_tab(tab_system);
 
     _cfg = storage_load_config();
-    const int field_w = 420;
+    const int field_w = 380;
 
     // --- Display: range presets, metric, brightness ---
     create_label(tab_display, "Range Presets (nm, 1-500)", 0, 4);
@@ -850,12 +1023,13 @@ void settings_init(lv_obj_t *parent) {
 
     lv_obj_t *disp_note = lv_label_create(tab_display);
     lv_label_set_text(disp_note,
-        "Range chip on the status bar cycles these presets. "
+        "Status-bar range chip cycles these presets. "
         "Map overlays (trails, tags, basemap) live under VIEW.");
     lv_obj_set_style_text_color(disp_note, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(disp_note, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(disp_note, 0, 200);
-    lv_obj_set_width(disp_note, body_w - 24);
+    lv_obj_set_width(disp_note, field_w);
+    lv_label_set_long_mode(disp_note, LV_LABEL_LONG_WRAP);
     lv_obj_clear_flag(disp_note, LV_OBJ_FLAG_CLICKABLE);
 
     // --- Services: traffic + keyed APIs ---
@@ -873,15 +1047,15 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_color(keys_hint, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(keys_hint, &lv_font_montserrat_14, 0);
     lv_obj_set_pos(keys_hint, 0, 78);
+    lv_obj_set_width(keys_hint, field_w + 80);
     lv_obj_clear_flag(keys_hint, LV_OBJ_FLAG_CLICKABLE);
 
-    // Shared Key / Valid / Enable rhythm for keyed services.
     create_label(tab_services, "AIRPORTDB.IO", 0, 110);
     make_help_btn(tab_services, 130, 106, HELP_AIRPORTDB);
-    _apt_key_val = create_inline_row(tab_services, "KEY", 0, 136, 70);
-    _apt_valid_val = create_inline_row(tab_services, "VALID", 220, 136, 70);
-    create_label(tab_services, "ENABLE", 460, 136);
-    _sw_apt_en = make_enable_switch(tab_services, 540, 132);
+    _apt_key_val = create_inline_row(tab_services, "KEY", 0, 136, 60);
+    _apt_valid_val = create_inline_row(tab_services, "VALID", 180, 136, 60);
+    create_label(tab_services, "ENABLE", 360, 136);
+    _sw_apt_en = make_enable_switch(tab_services, 430, 132);
 
     create_label(tab_services, "AERODATABOX", 0, 180);
     make_help_btn(tab_services, 140, 176, HELP_ADBOX);
@@ -894,32 +1068,32 @@ void settings_init(lv_obj_t *parent) {
                                                          ? _cfg.aerodatabox_provider : 0));
     lv_obj_add_event_cb(_dd_adbox_prov, on_adbox_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    _adbox_key_val = create_inline_row(tab_services, "KEY", 0, 276, 70);
-    _adbox_valid_val = create_inline_row(tab_services, "VALID", 220, 276, 70);
-    create_label(tab_services, "ENABLE", 460, 276);
-    _sw_adbox_en = make_enable_switch(tab_services, 540, 272);
-    _adbox_usage_val = create_inline_row(tab_services, "USAGE", 0, 308, 70);
-    lv_obj_set_width(_adbox_usage_val, body_w - 100);
+    _adbox_key_val = create_inline_row(tab_services, "KEY", 0, 276, 60);
+    _adbox_valid_val = create_inline_row(tab_services, "VALID", 180, 276, 60);
+    create_label(tab_services, "ENABLE", 360, 276);
+    _sw_adbox_en = make_enable_switch(tab_services, 430, 272);
+    _adbox_usage_val = create_inline_row(tab_services, "USAGE", 0, 308, 60);
+    lv_obj_set_width(_adbox_usage_val, field_w + 80);
 
     create_label(tab_services, "CARTO BASEMAP", 0, 350);
     make_help_btn(tab_services, 160, 346, HELP_CARTO);
-    _carto_key_val = create_inline_row(tab_services, "KEY", 0, 376, 70);
+    _carto_key_val = create_inline_row(tab_services, "KEY", 0, 376, 60);
 
-    // --- Device: version / OTA + diagnostics ---
-    create_label(tab_device, "DEVICE", 0, 4);
-    _ota_ver_val = create_inline_row(tab_device, "VERSION", 0, 28, 90);
+    // --- System: version / OTA, host info, diagnostics, destructive actions ---
+    create_label(tab_system, "UPDATE", 0, 0);
+    _ota_ver_val = create_inline_row(tab_system, "VERSION", 0, 22, 90);
     lv_label_set_text(_ota_ver_val, FIRMWARE_VERSION_STR);
-    _ota_status_lbl = lv_label_create(tab_device);
+    _ota_status_lbl = lv_label_create(tab_system);
     lv_label_set_text(_ota_status_lbl, "Tap to check");
     lv_obj_set_style_text_font(_ota_status_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_ota_status_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_ota_status_lbl, 0, 52);
-    lv_obj_set_width(_ota_status_lbl, field_w);
+    lv_obj_set_pos(_ota_status_lbl, 200, 22);
+    lv_obj_set_width(_ota_status_lbl, field_w - 200);
     lv_obj_clear_flag(_ota_status_lbl, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *ota_btn = lv_button_create(tab_device);
-    lv_obj_set_size(ota_btn, field_w, 34);
-    lv_obj_set_pos(ota_btn, 0, 76);
+    lv_obj_t *ota_btn = lv_button_create(tab_system);
+    lv_obj_set_size(ota_btn, field_w, 32);
+    lv_obj_set_pos(ota_btn, 0, 46);
     lv_obj_set_style_bg_color(ota_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(ota_btn, lv_color_hex(0x444466), 0);
     lv_obj_set_style_border_width(ota_btn, 1, 0);
@@ -932,22 +1106,37 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_add_event_cb(ota_btn, ota_btn_cb, LV_EVENT_CLICKED, nullptr);
     refresh_ota_ui();
 
-    create_label(tab_device, "DIAGNOSTICS", 0, 130);
-    _fetch_val = create_inline_row(tab_device, "FETCHES", 0, 156, 90);
-    _latency_val = create_inline_row(tab_device, "LATENCY", 0, 178, 90);
-    _uptime_val = create_inline_row(tab_device, "UPTIME", 0, 200, 90);
+    char hw[96], osname[96], host[64], arch[32];
+    fill_sysinfo(hw, sizeof(hw), osname, sizeof(osname), host, sizeof(host), arch, sizeof(arch));
+    create_label(tab_system, "HOST", 0, 90);
+    lv_obj_t *hw_val = create_inline_row(tab_system, "HARDWARE", 0, 110, 100);
+    lv_label_set_text(hw_val, hw);
+    lv_obj_set_width(hw_val, field_w - 8);
+    lv_obj_t *os_val = create_inline_row(tab_system, "OS", 0, 130, 100);
+    lv_label_set_text(os_val, osname);
+    lv_obj_set_width(os_val, field_w - 8);
+    lv_obj_t *host_val = create_inline_row(tab_system, "HOSTNAME", 0, 150, 100);
+    lv_label_set_text(host_val, host);
+    lv_obj_t *arch_val = create_inline_row(tab_system, "ARCH", 0, 170, 100);
+    lv_label_set_text(arch_val, arch);
+    _sys_uptime_val = create_inline_row(tab_system, "SYS UPTIME", 0, 190, 100);
 
-    create_label(tab_device, "ERRORS", 0, 236);
-    _err_count_lbl = lv_label_create(tab_device);
+    create_label(tab_system, "DIAGNOSTICS", 0, 220);
+    _fetch_val = create_inline_row(tab_system, "FETCHES", 0, 240, 100);
+    _latency_val = create_inline_row(tab_system, "LATENCY", 0, 260, 100);
+    _uptime_val = create_inline_row(tab_system, "APP UPTIME", 0, 280, 100);
+
+    create_label(tab_system, "ERRORS", 0, 306);
+    _err_count_lbl = lv_label_create(tab_system);
     lv_label_set_text(_err_count_lbl, "(0)");
     lv_obj_set_style_text_font(_err_count_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_count_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_err_count_lbl, 80, 236);
+    lv_obj_set_pos(_err_count_lbl, 80, 306);
     lv_obj_clear_flag(_err_count_lbl, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *clr_btn = lv_obj_create(tab_device);
+    lv_obj_t *clr_btn = lv_obj_create(tab_system);
     lv_obj_set_size(clr_btn, 40, 22);
-    lv_obj_set_pos(clr_btn, 130, 234);
+    lv_obj_set_pos(clr_btn, 130, 304);
     lv_obj_set_style_bg_color(clr_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_bg_opa(clr_btn, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(clr_btn, lv_color_hex(0x444466), 0);
@@ -962,18 +1151,46 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_color(clr_lbl, ERR_COLOR, 0);
     lv_obj_center(clr_lbl);
 
-    _err_list_lbl = lv_label_create(tab_device);
+    _err_list_lbl = lv_label_create(tab_system);
     lv_label_set_text(_err_list_lbl, "(none)");
     lv_obj_set_style_text_font(_err_list_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_list_lbl, ERR_COLOR, 0);
-    lv_obj_set_pos(_err_list_lbl, 0, 262);
-    lv_obj_set_width(_err_list_lbl, body_w - 24);
+    lv_obj_set_pos(_err_list_lbl, 180, 306);
+    lv_obj_set_width(_err_list_lbl, field_w - 180);
     lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *cache_btn = lv_button_create(tab_system);
+    lv_obj_set_size(cache_btn, field_w, 32);
+    lv_obj_set_pos(cache_btn, 0, 332);
+    lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
+    lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
+    lv_obj_set_style_border_width(cache_btn, 1, 0);
+    lv_obj_set_style_radius(cache_btn, 6, 0);
+    lv_obj_t *cache_lbl = lv_label_create(cache_btn);
+    lv_label_set_text(cache_lbl, "Clear all caches");
+    lv_obj_set_style_text_color(cache_lbl, lv_color_hex(0xffaa66), 0);
+    lv_obj_set_style_text_font(cache_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(cache_lbl);
+    lv_obj_add_event_cb(cache_btn, clear_all_caches_cb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t *factory_btn = lv_button_create(tab_system);
+    lv_obj_set_size(factory_btn, field_w, 32);
+    lv_obj_set_pos(factory_btn, 0, 370);
+    lv_obj_set_style_bg_color(factory_btn, lv_color_hex(0x2a1a1a), 0);
+    lv_obj_set_style_border_color(factory_btn, lv_color_hex(0x664444), 0);
+    lv_obj_set_style_border_width(factory_btn, 1, 0);
+    lv_obj_set_style_radius(factory_btn, 6, 0);
+    _factory_lbl = lv_label_create(factory_btn);
+    lv_label_set_text(_factory_lbl, "Reset to factory defaults");
+    lv_obj_set_style_text_color(_factory_lbl, ERR_COLOR, 0);
+    lv_obj_set_style_text_font(_factory_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(_factory_lbl);
+    lv_obj_add_event_cb(factory_btn, factory_reset_cb, LV_EVENT_CLICKED, nullptr);
 
     status_refresh(nullptr);
     lv_timer_create(status_refresh, 500, nullptr);
 
-    // Fixed action strip: Clear/Reset on the left; Cancel + Save on the right.
+    // Footer: Cancel + Save only.
     lv_obj_t *actions = lv_obj_create(_panel);
     lv_obj_set_size(actions, body_w, ACTION_H);
     lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -985,23 +1202,8 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_move_foreground(actions);
 
-    const int left_btn_w = 420;
     const int exit_btn_w = 110;
     const int exit_gap = 10;
-
-    lv_obj_t *cache_btn = lv_button_create(actions);
-    lv_obj_set_size(cache_btn, left_btn_w, 34);
-    lv_obj_set_pos(cache_btn, 0, 4);
-    lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
-    lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
-    lv_obj_set_style_border_width(cache_btn, 1, 0);
-    lv_obj_set_style_radius(cache_btn, 6, 0);
-    lv_obj_t *cache_lbl = lv_label_create(cache_btn);
-    lv_label_set_text(cache_lbl, "Clear all caches");
-    lv_obj_set_style_text_color(cache_lbl, lv_color_hex(0xffaa66), 0);
-    lv_obj_set_style_text_font(cache_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_center(cache_lbl);
-    lv_obj_add_event_cb(cache_btn, clear_all_caches_cb, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *cancel_btn = lv_button_create(actions);
     lv_obj_set_size(cancel_btn, exit_btn_w, 34);
@@ -1029,20 +1231,6 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_center(save_label);
     lv_obj_add_event_cb(save_btn, save_and_close, LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t *factory_btn = lv_button_create(actions);
-    lv_obj_set_size(factory_btn, left_btn_w, 34);
-    lv_obj_set_pos(factory_btn, 0, 46);
-    lv_obj_set_style_bg_color(factory_btn, lv_color_hex(0x2a1a1a), 0);
-    lv_obj_set_style_border_color(factory_btn, lv_color_hex(0x664444), 0);
-    lv_obj_set_style_border_width(factory_btn, 1, 0);
-    lv_obj_set_style_radius(factory_btn, 6, 0);
-    _factory_lbl = lv_label_create(factory_btn);
-    lv_label_set_text(_factory_lbl, "Reset to factory defaults");
-    lv_obj_set_style_text_color(_factory_lbl, ERR_COLOR, 0);
-    lv_obj_set_style_text_font(_factory_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_center(_factory_lbl);
-    lv_obj_add_event_cb(factory_btn, factory_reset_cb, LV_EVENT_CLICKED, nullptr);
-
     _keyboard = lv_keyboard_create(_overlay);
     lv_obj_set_size(_keyboard, lv_obj_get_width(parent), 200);
     lv_obj_align(_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -1061,8 +1249,12 @@ void settings_show() {
     _cfg_at_open = _cfg;
     apply_cfg_to_fields();
     start_key_validation();
-    if (_tabview) lv_tabview_set_active(_tabview, 0, LV_ANIM_OFF);
+    if (_tabview) {
+        lv_tabview_set_active(_tabview, 0, LV_ANIM_OFF);
+        refresh_tab_button_styles(_tabview);
+    }
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(_overlay);
 }
 
 void settings_hide() {
