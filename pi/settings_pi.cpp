@@ -257,12 +257,22 @@ static void refresh_key_presence_ui() {
     }
 
     if (_sw_apt_en) {
-        if (_apt_valid == KeyValid::Valid) lv_obj_clear_state(_sw_apt_en, LV_STATE_DISABLED);
-        else lv_obj_add_state(_sw_apt_en, LV_STATE_DISABLED);
+        if (_apt_valid == KeyValid::Valid) {
+            lv_obj_clear_state(_sw_apt_en, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(_sw_apt_en, LV_STATE_DISABLED);
+            lv_obj_clear_state(_sw_apt_en, LV_STATE_CHECKED);
+            _cfg.airportdb_enabled = false;
+        }
     }
     if (_sw_adbox_en) {
-        if (_adbox_valid == KeyValid::Valid) lv_obj_clear_state(_sw_adbox_en, LV_STATE_DISABLED);
-        else lv_obj_add_state(_sw_adbox_en, LV_STATE_DISABLED);
+        if (_adbox_valid == KeyValid::Valid) {
+            lv_obj_clear_state(_sw_adbox_en, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(_sw_adbox_en, LV_STATE_DISABLED);
+            lv_obj_clear_state(_sw_adbox_en, LV_STATE_CHECKED);
+            _cfg.aerodatabox_enabled = false;
+        }
     }
     refresh_adbox_usage_ui();
 }
@@ -723,7 +733,8 @@ static void style_tabview(lv_obj_t *tv) {
     }
 
     lv_obj_t *cont = lv_tabview_get_content(tv);
-    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(cont, BG_COLOR, 0);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_pad_all(cont, 8, 0);
     lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
@@ -775,7 +786,10 @@ void settings_init(lv_obj_t *parent) {
     style_tabview(_tabview);
 
     auto prep_tab = [](lv_obj_t *tab) {
-        lv_obj_set_style_bg_opa(tab, LV_OPA_TRANSP, 0);
+        // Opaque fill so map empty-state / other overlays cannot show through
+        // the active tab page (tabview content is otherwise transparent).
+        lv_obj_set_style_bg_color(tab, BG_COLOR, 0);
+        lv_obj_set_style_bg_opa(tab, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(tab, 4, 0);
         lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
     };
