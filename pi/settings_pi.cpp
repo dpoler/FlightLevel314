@@ -1,17 +1,9 @@
 // Scoped-down Pi implementation of src/ui/settings.h -- deliberately NOT
-// a port of src/ui/settings.cpp. That file is CONFIG (WiFi SSID/password,
-// Ethernet toggle + reboot-on-change, OTA firmware update) plus STATUS
-// (ESP32 heap/PSRAM/temperature/FreeRTOS task count/flash %) -- almost
-// none of which applies to a Pi whose networking, firmware updates, and
-// system stats work completely differently. Kept: range presets, metric
-// units (still meaningful config), optional API key status/enable toggles
-// (keys themselves are hand-edited in config.json), and a read-only status
-// strip using what's actually already real on Pi -- fetcher_get_stats() and
-// error_log.cpp, both ported for real (see project_pi_port memory).
-//
-// Dropped entirely for now: WiFi/Ethernet UI (Pi's networking is
-// OS-managed), heap/PSRAM/temp/tasks/flash (ESP32-specific). Online
-// app updates are implemented via GitHub Releases (ota_linux.cpp).
+// a port of src/ui/settings.cpp. Pi Settings is a three-tab panel:
+// Display (range presets, metric, brightness), Services (traffic source +
+// keyed API status/enable), Device (OTA + diagnostics). Keys are hand-edited
+// in config.json / set_api_keys.py; the UI only shows presence / validity /
+// enable. WiFi/Ethernet and ESP32 heap/PSRAM UI stay dropped.
 
 #include "../src/ui/settings.h"
 #include "../src/data/enrichment.h"
@@ -34,7 +26,7 @@
 
 static lv_obj_t *_overlay = nullptr;
 static lv_obj_t *_panel = nullptr;
-static lv_obj_t *_content = nullptr; // body above the action row (no scroll)
+static lv_obj_t *_tabview = nullptr; // Display | Services | Device
 static lv_obj_t *_keyboard = nullptr;
 static bool _visible = false;
 static uint32_t _shown_at_ms = 0;
@@ -79,19 +71,20 @@ static UserConfig _cfg;           // draft while Settings is open
 static UserConfig _cfg_at_open;   // snapshot for Cancel restore
 static settings_changed_cb_t _on_change = nullptr;
 
-// Wide enough for three columns on 1280x800 (fits under status bar + margin).
+// Fits under status bar on 1280x800. Body is a 3-tab view (not 3 columns).
 #define PANEL_W 1100
 #define PANEL_H 700
 #define TITLE_H 36
+#define TAB_BAR_H 42
 #define ACTION_H 100
-#define COL_GAP 20
-#define COL_W ((PANEL_W - 40 - 2 * COL_GAP) / 3) // pad_all ~20 each side
 #define LABEL_COLOR lv_color_hex(0x8888aa)
 #define BG_COLOR lv_color_hex(0x12122a)
 #define ACCENT_COLOR lv_color_hex(0x00cc66)
 #define SYS_COLOR lv_color_hex(0x44cc88)
 #define WARN_COLOR lv_color_hex(0xffaa44)
 #define ERR_COLOR lv_color_hex(0xff6666)
+#define ROW_BG lv_color_hex(0x1a1a3a)
+#define BORDER_COLOR lv_color_hex(0x333366)
 
 static const char *const ADBOX_PROVIDER_OPTS =
     "RapidAPI\nAPI.Market\nDirect (aerodatabox.com)";
@@ -619,6 +612,123 @@ static lv_obj_t *make_enable_switch(lv_obj_t *parent, int x, int y) {
     return sw;
 }
 
+static void style_dropdown(lv_obj_t *dd, int w) {
+    lv_obj_set_size(dd, w, 36);
+    lv_obj_set_style_bg_color(dd, ROW_BG, 0);
+    lv_obj_set_style_text_color(dd, lv_color_white(), 0);
+    lv_obj_set_style_text_font(dd, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_border_color(dd, BORDER_COLOR, 0);
+    lv_obj_set_style_border_width(dd, 1, 0);
+}
+
+static void style_textarea(lv_obj_t *ta) {
+    lv_obj_set_style_bg_color(ta, ROW_BG, 0);
+    lv_obj_set_style_text_color(ta, lv_color_white(), 0);
+    lv_obj_set_style_text_font(ta, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_border_color(ta, BORDER_COLOR, 0);
+    lv_obj_set_style_border_width(ta, 1, 0);
+    lv_obj_set_style_border_color(ta, ACCENT_COLOR, LV_STATE_FOCUSED);
+}
+
+static void help_btn_cb(lv_event_t *e) {
+    const char *const *pack = (const char *const *)lv_event_get_user_data(e);
+    if (!pack || !pack[0] || !pack[1] || !_overlay) return;
+
+    lv_obj_t *mbox = lv_msgbox_create(_overlay);
+    lv_obj_set_width(mbox, 520);
+    lv_obj_set_style_bg_color(mbox, BG_COLOR, 0);
+    lv_obj_set_style_border_color(mbox, BORDER_COLOR, 0);
+    lv_obj_set_style_border_width(mbox, 1, 0);
+    lv_obj_set_style_text_color(mbox, lv_color_white(), 0);
+    lv_obj_set_style_text_font(mbox, &lv_font_montserrat_14, 0);
+    lv_msgbox_add_title(mbox, pack[0]);
+    lv_obj_t *txt = lv_msgbox_add_text(mbox, pack[1]);
+    if (txt) {
+        lv_obj_set_style_text_color(txt, LABEL_COLOR, 0);
+        lv_label_set_long_mode(txt, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(txt, 480);
+    }
+    lv_msgbox_add_close_button(mbox);
+    lv_obj_center(mbox);
+}
+
+static lv_obj_t *make_help_btn(lv_obj_t *parent, int x, int y,
+                               const char *const *pack) {
+    lv_obj_t *btn = lv_button_create(parent);
+    lv_obj_set_size(btn, 28, 28);
+    lv_obj_set_pos(btn, x, y);
+    lv_obj_set_style_bg_color(btn, ROW_BG, 0);
+    lv_obj_set_style_border_color(btn, BORDER_COLOR, 0);
+    lv_obj_set_style_border_width(btn, 1, 0);
+    lv_obj_set_style_radius(btn, 14, 0);
+    lv_obj_t *lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, "?");
+    lv_obj_set_style_text_color(lbl, ACCENT_COLOR, 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(lbl);
+    lv_obj_add_event_cb(btn, help_btn_cb, LV_EVENT_CLICKED, (void *)pack);
+    return btn;
+}
+
+static const char *const HELP_AIRPORTDB[2] = {
+    "AirportDB.io",
+    "Optional runway / airport enrichment. Put the token in config via "
+    "tools/set_api_keys.py (or edit config.json). Enable only when VALID "
+    "shows yes."
+};
+
+static const char *const HELP_ADBOX[2] = {
+    "AeroDataBox",
+    "Detail-card origin/destination. USAGE is marketplace used-of-limit "
+    "(not a local card counter). Set renew day with "
+    "set_api_keys.py --adbox-renew-day N. Auto-off at 0 remaining, HTTP 429, "
+    "or soft-cap. Settings key check uses a free health endpoint (0 units)."
+};
+
+static const char *const HELP_CARTO[2] = {
+    "CARTO basemap",
+    "Free API key from carto.com/basemaps/apikey — needed for dark / voyager "
+    "styles. Set via tools/set_api_keys.py or config.json."
+};
+
+static const char *const HELP_TRAFFIC[2] = {
+    "Traffic source",
+    "Live ADS-B feed provider. Changes preview immediately; Save persists. "
+    "Cancel restores the provider from when Settings opened."
+};
+
+static void style_tabview(lv_obj_t *tv) {
+    lv_obj_set_style_bg_opa(tv, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(tv, 0, 0);
+    lv_obj_set_style_pad_all(tv, 0, 0);
+
+    lv_obj_t *bar = lv_tabview_get_tab_bar(tv);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x0e0e1c), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_pad_all(bar, 4, 0);
+    lv_obj_set_style_pad_gap(bar, 6, 0);
+
+    uint32_t n = lv_tabview_get_tab_count(tv);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *btn = lv_tabview_get_tab_button(tv, (int32_t)i);
+        if (!btn) continue;
+        lv_obj_set_style_bg_color(btn, ROW_BG, 0);
+        lv_obj_set_style_bg_color(btn, ACCENT_COLOR, LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(btn, LABEL_COLOR, 0);
+        lv_obj_set_style_text_color(btn, lv_color_black(), LV_STATE_CHECKED);
+        lv_obj_set_style_text_font(btn, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_radius(btn, 6, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+    }
+
+    lv_obj_t *cont = lv_tabview_get_content(tv);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(cont, 0, 0);
+    lv_obj_set_style_pad_all(cont, 8, 0);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+}
+
 void settings_init(lv_obj_t *parent) {
     _boot_time_ms = platform_millis();
 
@@ -632,7 +742,6 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
     // Dismiss only via Save or Cancel — tapping the dimmed backdrop does nothing.
-    // (Earlier: click-outside hid without saving and made Save ambiguous.)
 
     _panel = lv_obj_create(_overlay);
     lv_obj_set_size(_panel, PANEL_W, PANEL_H);
@@ -640,7 +749,7 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(_panel, BG_COLOR, 0);
     lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(_panel, 12, 0);
-    lv_obj_set_style_border_color(_panel, lv_color_hex(0x333366), 0);
+    lv_obj_set_style_border_color(_panel, BORDER_COLOR, 0);
     lv_obj_set_style_border_width(_panel, 1, 0);
     lv_obj_set_style_pad_all(_panel, 16, 0);
     lv_obj_clear_flag(_panel, LV_OBJ_FLAG_SCROLLABLE);
@@ -651,169 +760,61 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
     lv_obj_set_pos(title, 4, 0);
 
-    // Non-scrolling body above a fixed action strip. Content height ends
-    // strictly above the action strip (no overlap with Clear/Reset).
     const int content_h = PANEL_H - 32 /*pad*/ - TITLE_H - ACTION_H - 8 /*gap*/;
-    _content = lv_obj_create(_panel);
-    lv_obj_set_size(_content, PANEL_W - 32, content_h);
-    lv_obj_set_pos(_content, 0, TITLE_H);
-    lv_obj_set_style_bg_opa(_content, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(_content, 0, 0);
-    lv_obj_set_style_pad_all(_content, 4, 0);
-    lv_obj_set_style_pad_bottom(_content, 16, 0);
-    lv_obj_clear_flag(_content, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_clip_corner(_content, true, 0);
+    const int body_w = PANEL_W - 32;
+
+    _tabview = lv_tabview_create(_panel);
+    lv_obj_set_size(_tabview, body_w, content_h);
+    lv_obj_set_pos(_tabview, 0, TITLE_H);
+    lv_tabview_set_tab_bar_position(_tabview, LV_DIR_TOP);
+    lv_tabview_set_tab_bar_size(_tabview, TAB_BAR_H);
+
+    lv_obj_t *tab_display = lv_tabview_add_tab(_tabview, "Display");
+    lv_obj_t *tab_services = lv_tabview_add_tab(_tabview, "Services");
+    lv_obj_t *tab_device = lv_tabview_add_tab(_tabview, "Device");
+    style_tabview(_tabview);
+
+    auto prep_tab = [](lv_obj_t *tab) {
+        lv_obj_set_style_bg_opa(tab, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_pad_all(tab, 4, 0);
+        lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+    };
+    prep_tab(tab_display);
+    prep_tab(tab_services);
+    prep_tab(tab_device);
 
     _cfg = storage_load_config();
+    const int field_w = 420;
 
-    const int col0 = 0;
-    const int col1 = COL_W + COL_GAP;
-    const int col2 = 2 * (COL_W + COL_GAP);
-
-    // --- Column 0 (left): ranges + metric + traffic + status ---
-    create_label(_content, "Range Presets (nm, 1-500)", col0, 0);
+    // --- Display: range presets, metric, brightness ---
+    create_label(tab_display, "Range Presets (nm, 1-500)", 0, 4);
     for (int i = 0; i < 4; i++) {
         char rbuf[8];
         snprintf(rbuf, sizeof(rbuf), "%d", _cfg.radius_presets[i]);
-        _ta_radius[i] = lv_textarea_create(_content);
-        lv_obj_set_size(_ta_radius[i], 70, 36);
-        lv_obj_set_pos(_ta_radius[i], col0 + i * 78, 22);
+        _ta_radius[i] = lv_textarea_create(tab_display);
+        lv_obj_set_size(_ta_radius[i], 80, 36);
+        lv_obj_set_pos(_ta_radius[i], i * 90, 28);
         lv_textarea_set_one_line(_ta_radius[i], true);
         lv_textarea_set_text(_ta_radius[i], rbuf);
-        lv_obj_set_style_bg_color(_ta_radius[i], lv_color_hex(0x1a1a3a), 0);
-        lv_obj_set_style_text_color(_ta_radius[i], lv_color_white(), 0);
-        lv_obj_set_style_text_font(_ta_radius[i], &lv_font_montserrat_14, 0);
-        lv_obj_set_style_border_color(_ta_radius[i], lv_color_hex(0x333366), 0);
-        lv_obj_set_style_border_width(_ta_radius[i], 1, 0);
-        lv_obj_set_style_border_color(_ta_radius[i], ACCENT_COLOR, LV_STATE_FOCUSED);
+        style_textarea(_ta_radius[i]);
         lv_obj_add_event_cb(_ta_radius[i], ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
     }
 
-    create_label(_content, "Metric Units", col0, 72);
-    _sw_metric = make_enable_switch(_content, col0 + 120, 70);
+    create_label(tab_display, "Metric Units", 0, 84);
+    _sw_metric = make_enable_switch(tab_display, 130, 82);
     if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
 
-    create_label(_content, "TRAFFIC SOURCE", col0, 108);
-    _dd_traffic_prov = lv_dropdown_create(_content);
-    lv_dropdown_set_options(_dd_traffic_prov, TRAFFIC_PROVIDER_OPTS);
-    lv_obj_set_size(_dd_traffic_prov, COL_W - 8, 36);
-    lv_obj_set_pos(_dd_traffic_prov, col0, 128);
-    lv_obj_set_style_bg_color(_dd_traffic_prov, lv_color_hex(0x1a1a3a), 0);
-    lv_obj_set_style_text_color(_dd_traffic_prov, lv_color_white(), 0);
-    lv_obj_set_style_text_font(_dd_traffic_prov, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_border_color(_dd_traffic_prov, lv_color_hex(0x333366), 0);
-    lv_obj_set_style_border_width(_dd_traffic_prov, 1, 0);
-    lv_dropdown_set_selected(_dd_traffic_prov, (uint16_t)(_cfg.traffic_provider == 1 ? 1 : 0));
-    lv_obj_add_event_cb(_dd_traffic_prov, on_traffic_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
-
-    int sy = 180;
-    create_label(_content, "STATUS", col0, sy);
-    _fetch_val = create_inline_row(_content, "FETCHES", col0, sy + 22, 90);
-    _latency_val = create_inline_row(_content, "LATENCY", col0, sy + 42, 90);
-    _uptime_val = create_inline_row(_content, "UPTIME", col0, sy + 62, 90);
-
-    // --- Column 1 (middle): API keys ---
-    create_label(_content, "API KEYS", col1, 0);
-    lv_obj_t *hint = lv_label_create(_content);
-    lv_label_set_text(hint, "Keys: tools/set_api_keys.py (or edit config.json)");
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x666688), 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(hint, col1, 20);
-    lv_obj_set_width(hint, COL_W - 8);
-    lv_obj_clear_flag(hint, LV_OBJ_FLAG_CLICKABLE);
-
-    create_label(_content, "AIRPORTDB.IO", col1, 48);
-    _apt_key_val = create_inline_row(_content, "KEY", col1, 70, 70);
-    _apt_valid_val = create_inline_row(_content, "VALID", col1, 90, 70);
-    create_label(_content, "ENABLE", col1, 112);
-    _sw_apt_en = make_enable_switch(_content, col1 + 80, 110);
-
-    create_label(_content, "AERODATABOX", col1, 156);
-    create_label(_content, "PROVIDER", col1, 178);
-    _dd_adbox_prov = lv_dropdown_create(_content);
-    lv_dropdown_set_options(_dd_adbox_prov, ADBOX_PROVIDER_OPTS);
-    lv_obj_set_size(_dd_adbox_prov, COL_W - 8, 36);
-    lv_obj_set_pos(_dd_adbox_prov, col1, 198);
-    lv_obj_set_style_bg_color(_dd_adbox_prov, lv_color_hex(0x1a1a3a), 0);
-    lv_obj_set_style_text_color(_dd_adbox_prov, lv_color_white(), 0);
-    lv_obj_set_style_text_font(_dd_adbox_prov, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_border_color(_dd_adbox_prov, lv_color_hex(0x333366), 0);
-    lv_obj_set_style_border_width(_dd_adbox_prov, 1, 0);
-    lv_dropdown_set_selected(_dd_adbox_prov, (uint16_t)(_cfg.aerodatabox_provider >= 0 && _cfg.aerodatabox_provider <= 2
-                                                         ? _cfg.aerodatabox_provider : 0));
-    lv_obj_add_event_cb(_dd_adbox_prov, on_adbox_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
-
-    _adbox_key_val = create_inline_row(_content, "KEY", col1, 246, 70);
-    _adbox_valid_val = create_inline_row(_content, "VALID", col1, 266, 70);
-    _adbox_usage_val = create_inline_row(_content, "USAGE", col1, 286, 70);
-    create_label(_content, "ENABLE", col1, 308);
-    _sw_adbox_en = make_enable_switch(_content, col1 + 80, 306);
-
-    lv_obj_t *quota_note = lv_label_create(_content);
-    // Show marketplace used/limit when headers exist; auto-off at 0
-    // remaining (see adbox_note_rate_limit). Local soft-cap / 429 still apply.
-    // Renewal day is user-set (not from API headers).
-    lv_label_set_text(quota_note,
-        "USAGE: used of limit | resets ~Nth of every month "
-        "(set_api_keys --adbox-renew-day N). "
-        "Auto-off at 0 remaining / 429 / soft-cap. "
-        "Key check cached across restarts.");
-    lv_obj_set_style_text_color(quota_note, lv_color_hex(0x666688), 0);
-    lv_obj_set_style_text_font(quota_note, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(quota_note, col1, 340);
-    lv_obj_set_width(quota_note, COL_W - 8);
-    lv_obj_clear_flag(quota_note, LV_OBJ_FLAG_CLICKABLE);
-
-    create_label(_content, "CARTO BASEMAP", col1, 430);
-    _carto_key_val = create_inline_row(_content, "KEY", col1, 452, 70);
-    lv_obj_t *carto_hint = lv_label_create(_content);
-    lv_label_set_text(carto_hint, "Free key: carto.com/basemaps/apikey\n"
-                                  "(needed for dark/voyager styles)");
-    lv_obj_set_style_text_color(carto_hint, lv_color_hex(0x666688), 0);
-    lv_obj_set_style_text_font(carto_hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(carto_hint, col1, 474);
-    lv_obj_set_width(carto_hint, COL_W - 8);
-    lv_obj_clear_flag(carto_hint, LV_OBJ_FLAG_CLICKABLE);
-
-    // --- Column 2 (right): DEVICE + ERRORS ---
-    create_label(_content, "DEVICE", col2, 0);
-    _ota_ver_val = create_inline_row(_content, "VERSION", col2, 22, 90);
-    lv_label_set_text(_ota_ver_val, FIRMWARE_VERSION_STR);
-    _ota_status_lbl = lv_label_create(_content);
-    lv_label_set_text(_ota_status_lbl, "Tap to check");
-    lv_obj_set_style_text_font(_ota_status_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(_ota_status_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_ota_status_lbl, col2, 44);
-    lv_obj_set_width(_ota_status_lbl, COL_W - 8);
-    lv_obj_clear_flag(_ota_status_lbl, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t *ota_btn = lv_button_create(_content);
-    lv_obj_set_size(ota_btn, COL_W - 8, 34);
-    lv_obj_set_pos(ota_btn, col2, 68);
-    lv_obj_set_style_bg_color(ota_btn, lv_color_hex(0x1a1a2a), 0);
-    lv_obj_set_style_border_color(ota_btn, lv_color_hex(0x444466), 0);
-    lv_obj_set_style_border_width(ota_btn, 1, 0);
-    lv_obj_set_style_radius(ota_btn, 6, 0);
-    _ota_btn_lbl = lv_label_create(ota_btn);
-    lv_label_set_text(_ota_btn_lbl, "Check for update");
-    lv_obj_set_style_text_color(_ota_btn_lbl, ACCENT_COLOR, 0);
-    lv_obj_set_style_text_font(_ota_btn_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_center(_ota_btn_lbl);
-    lv_obj_add_event_cb(ota_btn, ota_btn_cb, LV_EVENT_CLICKED, nullptr);
-    refresh_ota_ui();
-
-    // Brightness — live-applies via sysfs; persisted on Save (and slider release).
-    create_label(_content, "Brightness", col2, 112);
-    _bright_label = lv_label_create(_content);
+    create_label(tab_display, "Brightness", 0, 130);
+    _bright_label = lv_label_create(tab_display);
     lv_label_set_text_fmt(_bright_label, "%d%%", _cfg.display_brightness_pct);
     lv_obj_set_style_text_font(_bright_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_bright_label, SYS_COLOR, 0);
-    lv_obj_set_pos(_bright_label, col2 + COL_W - 56, 112);
+    lv_obj_set_pos(_bright_label, field_w - 48, 130);
     lv_obj_clear_flag(_bright_label, LV_OBJ_FLAG_CLICKABLE);
 
-    _bright_slider = lv_slider_create(_content);
-    lv_obj_set_size(_bright_slider, COL_W - 8, 12);
-    lv_obj_set_pos(_bright_slider, col2, 136);
+    _bright_slider = lv_slider_create(tab_display);
+    lv_obj_set_size(_bright_slider, field_w, 12);
+    lv_obj_set_pos(_bright_slider, 0, 158);
     lv_slider_set_range(_bright_slider, 10, 100);
     {
         int b = _cfg.display_brightness_pct;
@@ -830,22 +831,109 @@ void settings_init(lv_obj_t *parent) {
         if (v > 100) v = 100;
         _cfg.display_brightness_pct = v;
         if (_bright_label) lv_label_set_text_fmt(_bright_label, "%d%%", v);
-        // Preview only — persist on Save; Cancel restores _cfg_at_open.
         backlight_set_percent(v);
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    const int ey = 168;
-    create_label(_content, "ERRORS", col2, ey);
-    _err_count_lbl = lv_label_create(_content);
+    lv_obj_t *disp_note = lv_label_create(tab_display);
+    lv_label_set_text(disp_note,
+        "Range chip on the status bar cycles these presets. "
+        "Map overlays (trails, tags, basemap) live under VIEW.");
+    lv_obj_set_style_text_color(disp_note, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(disp_note, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(disp_note, 0, 200);
+    lv_obj_set_width(disp_note, body_w - 24);
+    lv_obj_clear_flag(disp_note, LV_OBJ_FLAG_CLICKABLE);
+
+    // --- Services: traffic + keyed APIs ---
+    create_label(tab_services, "TRAFFIC SOURCE", 0, 4);
+    make_help_btn(tab_services, 150, 0, HELP_TRAFFIC);
+    _dd_traffic_prov = lv_dropdown_create(tab_services);
+    lv_dropdown_set_options(_dd_traffic_prov, TRAFFIC_PROVIDER_OPTS);
+    style_dropdown(_dd_traffic_prov, field_w);
+    lv_obj_set_pos(_dd_traffic_prov, 0, 28);
+    lv_dropdown_set_selected(_dd_traffic_prov, (uint16_t)(_cfg.traffic_provider == 1 ? 1 : 0));
+    lv_obj_add_event_cb(_dd_traffic_prov, on_traffic_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    lv_obj_t *keys_hint = lv_label_create(tab_services);
+    lv_label_set_text(keys_hint, "API keys: tools/set_api_keys.py  (or edit config.json)");
+    lv_obj_set_style_text_color(keys_hint, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(keys_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(keys_hint, 0, 78);
+    lv_obj_clear_flag(keys_hint, LV_OBJ_FLAG_CLICKABLE);
+
+    // Shared Key / Valid / Enable rhythm for keyed services.
+    create_label(tab_services, "AIRPORTDB.IO", 0, 110);
+    make_help_btn(tab_services, 130, 106, HELP_AIRPORTDB);
+    _apt_key_val = create_inline_row(tab_services, "KEY", 0, 136, 70);
+    _apt_valid_val = create_inline_row(tab_services, "VALID", 220, 136, 70);
+    create_label(tab_services, "ENABLE", 460, 136);
+    _sw_apt_en = make_enable_switch(tab_services, 540, 132);
+
+    create_label(tab_services, "AERODATABOX", 0, 180);
+    make_help_btn(tab_services, 140, 176, HELP_ADBOX);
+    create_label(tab_services, "PROVIDER", 0, 206);
+    _dd_adbox_prov = lv_dropdown_create(tab_services);
+    lv_dropdown_set_options(_dd_adbox_prov, ADBOX_PROVIDER_OPTS);
+    style_dropdown(_dd_adbox_prov, field_w);
+    lv_obj_set_pos(_dd_adbox_prov, 0, 228);
+    lv_dropdown_set_selected(_dd_adbox_prov, (uint16_t)(_cfg.aerodatabox_provider >= 0 && _cfg.aerodatabox_provider <= 2
+                                                         ? _cfg.aerodatabox_provider : 0));
+    lv_obj_add_event_cb(_dd_adbox_prov, on_adbox_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    _adbox_key_val = create_inline_row(tab_services, "KEY", 0, 276, 70);
+    _adbox_valid_val = create_inline_row(tab_services, "VALID", 220, 276, 70);
+    create_label(tab_services, "ENABLE", 460, 276);
+    _sw_adbox_en = make_enable_switch(tab_services, 540, 272);
+    _adbox_usage_val = create_inline_row(tab_services, "USAGE", 0, 308, 70);
+    lv_obj_set_width(_adbox_usage_val, body_w - 100);
+
+    create_label(tab_services, "CARTO BASEMAP", 0, 350);
+    make_help_btn(tab_services, 160, 346, HELP_CARTO);
+    _carto_key_val = create_inline_row(tab_services, "KEY", 0, 376, 70);
+
+    // --- Device: version / OTA + diagnostics ---
+    create_label(tab_device, "DEVICE", 0, 4);
+    _ota_ver_val = create_inline_row(tab_device, "VERSION", 0, 28, 90);
+    lv_label_set_text(_ota_ver_val, FIRMWARE_VERSION_STR);
+    _ota_status_lbl = lv_label_create(tab_device);
+    lv_label_set_text(_ota_status_lbl, "Tap to check");
+    lv_obj_set_style_text_font(_ota_status_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_ota_status_lbl, LABEL_COLOR, 0);
+    lv_obj_set_pos(_ota_status_lbl, 0, 52);
+    lv_obj_set_width(_ota_status_lbl, field_w);
+    lv_obj_clear_flag(_ota_status_lbl, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *ota_btn = lv_button_create(tab_device);
+    lv_obj_set_size(ota_btn, field_w, 34);
+    lv_obj_set_pos(ota_btn, 0, 76);
+    lv_obj_set_style_bg_color(ota_btn, lv_color_hex(0x1a1a2a), 0);
+    lv_obj_set_style_border_color(ota_btn, lv_color_hex(0x444466), 0);
+    lv_obj_set_style_border_width(ota_btn, 1, 0);
+    lv_obj_set_style_radius(ota_btn, 6, 0);
+    _ota_btn_lbl = lv_label_create(ota_btn);
+    lv_label_set_text(_ota_btn_lbl, "Check for update");
+    lv_obj_set_style_text_color(_ota_btn_lbl, ACCENT_COLOR, 0);
+    lv_obj_set_style_text_font(_ota_btn_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(_ota_btn_lbl);
+    lv_obj_add_event_cb(ota_btn, ota_btn_cb, LV_EVENT_CLICKED, nullptr);
+    refresh_ota_ui();
+
+    create_label(tab_device, "DIAGNOSTICS", 0, 130);
+    _fetch_val = create_inline_row(tab_device, "FETCHES", 0, 156, 90);
+    _latency_val = create_inline_row(tab_device, "LATENCY", 0, 178, 90);
+    _uptime_val = create_inline_row(tab_device, "UPTIME", 0, 200, 90);
+
+    create_label(tab_device, "ERRORS", 0, 236);
+    _err_count_lbl = lv_label_create(tab_device);
     lv_label_set_text(_err_count_lbl, "(0)");
     lv_obj_set_style_text_font(_err_count_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_count_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_err_count_lbl, col2 + 70, ey);
+    lv_obj_set_pos(_err_count_lbl, 80, 236);
     lv_obj_clear_flag(_err_count_lbl, LV_OBJ_FLAG_CLICKABLE);
 
-    lv_obj_t *clr_btn = lv_obj_create(_content);
+    lv_obj_t *clr_btn = lv_obj_create(tab_device);
     lv_obj_set_size(clr_btn, 40, 22);
-    lv_obj_set_pos(clr_btn, col2 + 120, ey - 2);
+    lv_obj_set_pos(clr_btn, 130, 234);
     lv_obj_set_style_bg_color(clr_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_bg_opa(clr_btn, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(clr_btn, lv_color_hex(0x444466), 0);
@@ -860,21 +948,20 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_color(clr_lbl, ERR_COLOR, 0);
     lv_obj_center(clr_lbl);
 
-    _err_list_lbl = lv_label_create(_content);
+    _err_list_lbl = lv_label_create(tab_device);
     lv_label_set_text(_err_list_lbl, "(none)");
     lv_obj_set_style_text_font(_err_list_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_list_lbl, ERR_COLOR, 0);
-    lv_obj_set_pos(_err_list_lbl, col2, ey + 24);
-    lv_obj_set_width(_err_list_lbl, COL_W - 8);
+    lv_obj_set_pos(_err_list_lbl, 0, 262);
+    lv_obj_set_width(_err_list_lbl, body_w - 24);
     lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     status_refresh(nullptr);
     lv_timer_create(status_refresh, 500, nullptr);
 
-    // Fixed action strip: Clear/Reset span col0+col1; Cancel + Save on the right.
-    // Opaque band + clipped content prevent bleed-through.
+    // Fixed action strip: Clear/Reset on the left; Cancel + Save on the right.
     lv_obj_t *actions = lv_obj_create(_panel);
-    lv_obj_set_size(actions, PANEL_W - 32, ACTION_H);
+    lv_obj_set_size(actions, body_w, ACTION_H);
     lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(actions, BG_COLOR, 0);
     lv_obj_set_style_bg_opa(actions, LV_OPA_COVER, 0);
@@ -884,9 +971,7 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_clear_flag(actions, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_move_foreground(actions);
 
-    // Span first two columns for Clear/Reset; leave a gap before Cancel/Save.
-    const int left_btn_w = 2 * COL_W + COL_GAP;
-    const int actions_inner_w = PANEL_W - 32;
+    const int left_btn_w = 420;
     const int exit_btn_w = 110;
     const int exit_gap = 10;
 
@@ -906,7 +991,7 @@ void settings_init(lv_obj_t *parent) {
 
     lv_obj_t *cancel_btn = lv_button_create(actions);
     lv_obj_set_size(cancel_btn, exit_btn_w, 34);
-    lv_obj_set_pos(cancel_btn, actions_inner_w - 2 * exit_btn_w - exit_gap, 4);
+    lv_obj_set_pos(cancel_btn, body_w - 2 * exit_btn_w - exit_gap, 4);
     lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(cancel_btn, lv_color_hex(0x666688), 0);
     lv_obj_set_style_border_width(cancel_btn, 1, 0);
@@ -920,7 +1005,7 @@ void settings_init(lv_obj_t *parent) {
 
     lv_obj_t *save_btn = lv_button_create(actions);
     lv_obj_set_size(save_btn, exit_btn_w, 34);
-    lv_obj_set_pos(save_btn, actions_inner_w - exit_btn_w, 4);
+    lv_obj_set_pos(save_btn, body_w - exit_btn_w, 4);
     lv_obj_set_style_bg_color(save_btn, ACCENT_COLOR, 0);
     lv_obj_set_style_radius(save_btn, 8, 0);
     lv_obj_t *save_label = lv_label_create(save_btn);
@@ -962,6 +1047,7 @@ void settings_show() {
     _cfg_at_open = _cfg;
     apply_cfg_to_fields();
     start_key_validation();
+    if (_tabview) lv_tabview_set_active(_tabview, 0, LV_ANIM_OFF);
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
