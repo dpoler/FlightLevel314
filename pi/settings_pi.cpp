@@ -77,7 +77,7 @@ static settings_changed_cb_t _on_change = nullptr;
 
 // Fits under status bar on 1280x800. Narrow — each tab is a single column.
 #define PANEL_W 560
-#define PANEL_H 580
+#define PANEL_H 620
 #define TITLE_H 36
 #define TAB_BAR_H 40
 #define ACTION_H 52
@@ -959,16 +959,21 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_t *tab_system = lv_tabview_add_tab(_tabview, "System");
     style_tabview(_tabview);
 
-    auto prep_tab = [](lv_obj_t *tab) {
+    auto prep_tab = [](lv_obj_t *tab, bool scrollable) {
         lv_obj_set_style_bg_color(tab, BG_COLOR, 0);
         lv_obj_set_style_bg_opa(tab, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(tab, 8, 0);
+        lv_obj_set_style_pad_bottom(tab, 16, 0);
         lv_obj_set_style_border_width(tab, 0, 0);
-        lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+        // Display fits; Services/System can overrun the page — allow vertical
+        // scroll so CARTO / factory-reset aren't clipped by the footer.
+        if (scrollable) lv_obj_add_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+        else lv_obj_clear_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scroll_dir(tab, LV_DIR_VER);
     };
-    prep_tab(tab_display);
-    prep_tab(tab_services);
-    prep_tab(tab_system);
+    prep_tab(tab_display, false);
+    prep_tab(tab_services, true);
+    prep_tab(tab_system, true);
 
     _cfg = storage_load_config();
     const int field_w = 380;
@@ -1078,22 +1083,30 @@ void settings_init(lv_obj_t *parent) {
     create_label(tab_services, "CARTO BASEMAP", 0, 350);
     make_help_btn(tab_services, 160, 346, HELP_CARTO);
     _carto_key_val = create_inline_row(tab_services, "KEY", 0, 376, 60);
+    lv_obj_t *carto_hint = lv_label_create(tab_services);
+    lv_label_set_text(carto_hint, "Free key: carto.com/basemaps/apikey");
+    lv_obj_set_style_text_color(carto_hint, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(carto_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(carto_hint, 0, 404);
+    lv_obj_set_width(carto_hint, field_w + 80);
+    lv_obj_clear_flag(carto_hint, LV_OBJ_FLAG_CLICKABLE);
 
     // --- System: version / OTA, host info, diagnostics, destructive actions ---
+    // Compact vertical rhythm so Clear/Factory fit above the footer on 620px.
     create_label(tab_system, "UPDATE", 0, 0);
-    _ota_ver_val = create_inline_row(tab_system, "VERSION", 0, 22, 90);
+    _ota_ver_val = create_inline_row(tab_system, "VERSION", 0, 20, 90);
     lv_label_set_text(_ota_ver_val, FIRMWARE_VERSION_STR);
     _ota_status_lbl = lv_label_create(tab_system);
     lv_label_set_text(_ota_status_lbl, "Tap to check");
     lv_obj_set_style_text_font(_ota_status_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_ota_status_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_ota_status_lbl, 200, 22);
+    lv_obj_set_pos(_ota_status_lbl, 200, 20);
     lv_obj_set_width(_ota_status_lbl, field_w - 200);
     lv_obj_clear_flag(_ota_status_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *ota_btn = lv_button_create(tab_system);
-    lv_obj_set_size(ota_btn, field_w, 32);
-    lv_obj_set_pos(ota_btn, 0, 46);
+    lv_obj_set_size(ota_btn, field_w, 30);
+    lv_obj_set_pos(ota_btn, 0, 42);
     lv_obj_set_style_bg_color(ota_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(ota_btn, lv_color_hex(0x444466), 0);
     lv_obj_set_style_border_width(ota_btn, 1, 0);
@@ -1108,35 +1121,35 @@ void settings_init(lv_obj_t *parent) {
 
     char hw[96], osname[96], host[64], arch[32];
     fill_sysinfo(hw, sizeof(hw), osname, sizeof(osname), host, sizeof(host), arch, sizeof(arch));
-    create_label(tab_system, "HOST", 0, 90);
-    lv_obj_t *hw_val = create_inline_row(tab_system, "HARDWARE", 0, 110, 100);
+    create_label(tab_system, "HOST", 0, 82);
+    lv_obj_t *hw_val = create_inline_row(tab_system, "HARDWARE", 0, 100, 100);
     lv_label_set_text(hw_val, hw);
     lv_obj_set_width(hw_val, field_w - 8);
-    lv_obj_t *os_val = create_inline_row(tab_system, "OS", 0, 130, 100);
+    lv_obj_t *os_val = create_inline_row(tab_system, "OS", 0, 118, 100);
     lv_label_set_text(os_val, osname);
     lv_obj_set_width(os_val, field_w - 8);
-    lv_obj_t *host_val = create_inline_row(tab_system, "HOSTNAME", 0, 150, 100);
+    lv_obj_t *host_val = create_inline_row(tab_system, "HOSTNAME", 0, 136, 100);
     lv_label_set_text(host_val, host);
-    lv_obj_t *arch_val = create_inline_row(tab_system, "ARCH", 0, 170, 100);
+    lv_obj_t *arch_val = create_inline_row(tab_system, "ARCH", 0, 154, 100);
     lv_label_set_text(arch_val, arch);
-    _sys_uptime_val = create_inline_row(tab_system, "SYS UPTIME", 0, 190, 100);
+    _sys_uptime_val = create_inline_row(tab_system, "SYS UPTIME", 0, 172, 100);
 
-    create_label(tab_system, "DIAGNOSTICS", 0, 220);
-    _fetch_val = create_inline_row(tab_system, "FETCHES", 0, 240, 100);
-    _latency_val = create_inline_row(tab_system, "LATENCY", 0, 260, 100);
-    _uptime_val = create_inline_row(tab_system, "APP UPTIME", 0, 280, 100);
+    create_label(tab_system, "DIAGNOSTICS", 0, 200);
+    _fetch_val = create_inline_row(tab_system, "FETCHES", 0, 218, 100);
+    _latency_val = create_inline_row(tab_system, "LATENCY", 0, 236, 100);
+    _uptime_val = create_inline_row(tab_system, "APP UPTIME", 0, 254, 100);
 
-    create_label(tab_system, "ERRORS", 0, 306);
+    create_label(tab_system, "ERRORS", 0, 278);
     _err_count_lbl = lv_label_create(tab_system);
     lv_label_set_text(_err_count_lbl, "(0)");
     lv_obj_set_style_text_font(_err_count_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_count_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_err_count_lbl, 80, 306);
+    lv_obj_set_pos(_err_count_lbl, 80, 278);
     lv_obj_clear_flag(_err_count_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *clr_btn = lv_obj_create(tab_system);
     lv_obj_set_size(clr_btn, 40, 22);
-    lv_obj_set_pos(clr_btn, 130, 304);
+    lv_obj_set_pos(clr_btn, 130, 276);
     lv_obj_set_style_bg_color(clr_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_bg_opa(clr_btn, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(clr_btn, lv_color_hex(0x444466), 0);
@@ -1155,13 +1168,13 @@ void settings_init(lv_obj_t *parent) {
     lv_label_set_text(_err_list_lbl, "(none)");
     lv_obj_set_style_text_font(_err_list_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_list_lbl, ERR_COLOR, 0);
-    lv_obj_set_pos(_err_list_lbl, 180, 306);
+    lv_obj_set_pos(_err_list_lbl, 180, 278);
     lv_obj_set_width(_err_list_lbl, field_w - 180);
     lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *cache_btn = lv_button_create(tab_system);
-    lv_obj_set_size(cache_btn, field_w, 32);
-    lv_obj_set_pos(cache_btn, 0, 332);
+    lv_obj_set_size(cache_btn, field_w, 30);
+    lv_obj_set_pos(cache_btn, 0, 308);
     lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
     lv_obj_set_style_border_width(cache_btn, 1, 0);
@@ -1174,8 +1187,8 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_add_event_cb(cache_btn, clear_all_caches_cb, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *factory_btn = lv_button_create(tab_system);
-    lv_obj_set_size(factory_btn, field_w, 32);
-    lv_obj_set_pos(factory_btn, 0, 370);
+    lv_obj_set_size(factory_btn, field_w, 30);
+    lv_obj_set_pos(factory_btn, 0, 344);
     lv_obj_set_style_bg_color(factory_btn, lv_color_hex(0x2a1a1a), 0);
     lv_obj_set_style_border_color(factory_btn, lv_color_hex(0x664444), 0);
     lv_obj_set_style_border_width(factory_btn, 1, 0);
