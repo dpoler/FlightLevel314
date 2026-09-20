@@ -59,8 +59,8 @@ AircraftEnrichment *enrichment_get_cached(const char *icao_hex);
 // Drop all cached enrichment entries (e.g. after toggling AeroDataBox on).
 void enrichment_clear_cache();
 
-// Async RapidAPI key check against AeroDataBox (airport lookup). Same
-// request/result shape as locations_request_verify_token().
+// Async AeroDataBox key check via FREE TIER health endpoint (0 API units).
+// Same request/result shape as locations_request_verify_token().
 void aerodatabox_request_verify();
 bool aerodatabox_verify_result(bool *ok, char *err, size_t err_size);
 
@@ -69,11 +69,11 @@ bool aerodatabox_verify_result(bool *ok, char *err, size_t err_size);
 // Soft-limit / AUTO-OFF still key off the local HTTP counter + HTTP 429.
 void aerodatabox_usage_snapshot(int *yyyymm, int *count, int *soft_limit, bool *rate_limited);
 
-// Last marketplace quota observed on an AeroDataBox response (flight search
-// or Settings verify). Hydrated from persisted snapshot at startup; returns
-// false until at least one response carried recognizable rate-limit headers
-// (or a prior snapshot was saved). Billing renewal day is separate
-// (UserConfig.adbox_renew_day).
+// Last marketplace quota observed on an AeroDataBox response (flight search;
+// Settings verify uses a free healthcheck and usually does not move units).
+// Hydrated from persisted snapshot at startup; returns false until at least
+// one response carried recognizable rate-limit headers (or a prior snapshot
+// was saved). Billing renewal day is separate (UserConfig.adbox_renew_day).
 bool aerodatabox_marketplace_quota(int *units_remaining, int *units_limit,
                                    int *requests_remaining, int *requests_limit);
 
