@@ -77,7 +77,7 @@ static settings_changed_cb_t _on_change = nullptr;
 
 // Fits under status bar on 1280x800. Narrow — each tab is a single column.
 #define PANEL_W 560
-#define PANEL_H 620
+#define PANEL_H 640
 #define TITLE_H 36
 #define TAB_BAR_H 40
 #define ACTION_H 52
@@ -263,24 +263,31 @@ static void refresh_key_presence_ui() {
         }
     }
 
-    if (_sw_apt_en) {
-        if (_apt_valid == KeyValid::Valid) {
-            lv_obj_clear_state(_sw_apt_en, LV_STATE_DISABLED);
+    // While Checking, keep the draft Enable state and only lock the switch.
+    // Previously we cleared CHECKED + _cfg.*_enabled on every non-Valid poll,
+    // which left g_config still enabled — UI showed Off while APIs kept running.
+    auto sync_enable_sw = [](lv_obj_t *sw, KeyValid v, bool *draft_en, bool *live_en,
+                             bool clear_enrich_on_force_off) {
+        if (!sw || !draft_en || !live_en) return;
+        if (v == KeyValid::Valid) {
+            lv_obj_clear_state(sw, LV_STATE_DISABLED);
+        } else if (v == KeyValid::Checking || v == KeyValid::Unknown) {
+            lv_obj_add_state(sw, LV_STATE_DISABLED);
         } else {
-            lv_obj_add_state(_sw_apt_en, LV_STATE_DISABLED);
-            lv_obj_clear_state(_sw_apt_en, LV_STATE_CHECKED);
-            _cfg.airportdb_enabled = false;
+            // Missing / Invalid — force off in UI, draft, and live config.
+            lv_obj_add_state(sw, LV_STATE_DISABLED);
+            lv_obj_clear_state(sw, LV_STATE_CHECKED);
+            const bool was_live = *live_en;
+            *draft_en = false;
+            *live_en = false;
+            if (clear_enrich_on_force_off && was_live) enrichment_clear_cache();
+            return;
         }
-    }
-    if (_sw_adbox_en) {
-        if (_adbox_valid == KeyValid::Valid) {
-            lv_obj_clear_state(_sw_adbox_en, LV_STATE_DISABLED);
-        } else {
-            lv_obj_add_state(_sw_adbox_en, LV_STATE_DISABLED);
-            lv_obj_clear_state(_sw_adbox_en, LV_STATE_CHECKED);
-            _cfg.aerodatabox_enabled = false;
-        }
-    }
+        if (*draft_en) lv_obj_add_state(sw, LV_STATE_CHECKED);
+        else lv_obj_clear_state(sw, LV_STATE_CHECKED);
+    };
+    sync_enable_sw(_sw_apt_en, _apt_valid, &_cfg.airportdb_enabled, &g_config.airportdb_enabled, false);
+    sync_enable_sw(_sw_adbox_en, _adbox_valid, &_cfg.aerodatabox_enabled, &g_config.aerodatabox_enabled, true);
     refresh_adbox_usage_ui();
 }
 
@@ -342,6 +349,38 @@ static void on_traffic_provider_changed(lv_event_t *e) {
     // Live preview only — disk write is on Save (Settings requires Save or
     // Cancel to dismiss). Cancel restores the provider from open.
     fetcher_request_immediate_fetch();
+}
+
+// Enable toggles preview live (like traffic); Save persists, Cancel reverts.
+static void on_service_enable_changed(lv_event_t *e) {
+    lv_obj_t *sw = lv_event_get_target_obj(e);
+    if (!sw) return;
+    bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
+
+    if (sw == _sw_apt_en) {
+        if (on && _apt_valid != KeyValid::Valid) {
+            lv_obj_clear_state(sw, LV_STATE_CHECKED);
+            return;
+        }
+        _cfg.airportdb_enabled = on;
+        g_config.airportdb_enabled = on;
+        return;
+    }
+    if (sw == _sw_adbox_en) {
+        if (on && _adbox_valid != KeyValid::Valid) {
+            lv_obj_clear_state(sw, LV_STATE_CHECKED);
+            return;
+        }
+        const bool was = g_config.aerodatabox_enabled;
+        _cfg.aerodatabox_enabled = on;
+        g_config.aerodatabox_enabled = on;
+        if (on && g_config.adbox_rate_limited) {
+            aerodatabox_clear_rate_limit();
+            _cfg.adbox_rate_limited = false;
+            g_config.adbox_rate_limited = false;
+        }
+        if (was != on) enrichment_clear_cache();
+    }
 }
 
 static void poll_key_validation() {
@@ -423,7 +462,7 @@ static void status_refresh(lv_timer_t *t) {
 
     if (_factory_confirm_until_ms && platform_millis() > _factory_confirm_until_ms) {
         _factory_confirm_until_ms = 0;
-        if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
+        if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to defaults");
     }
 }
 
@@ -463,15 +502,21 @@ static void apply_cfg_to_fields() {
 static void cancel_and_close(lv_event_t *e) {
     (void)e;
     // Revert anything previewed live while the panel was open (brightness,
-    // traffic/ADB provider). Disk is untouched for draft fields; brightness
-    // may have been preview-only (no mid-edit writes).
+    // traffic/ADB provider, service Enable). Disk is untouched for draft
+    // fields; brightness may have been preview-only (no mid-edit writes).
     const int live_traffic = g_config.traffic_provider;
+    const bool live_adbox = g_config.aerodatabox_enabled;
     g_config.display_brightness_pct = _cfg_at_open.display_brightness_pct;
     g_config.traffic_provider = _cfg_at_open.traffic_provider;
     g_config.aerodatabox_provider = _cfg_at_open.aerodatabox_provider;
+    g_config.airportdb_enabled = _cfg_at_open.airportdb_enabled;
+    g_config.aerodatabox_enabled = _cfg_at_open.aerodatabox_enabled;
+    g_config.adbox_rate_limited = _cfg_at_open.adbox_rate_limited;
     backlight_set_percent(g_config.display_brightness_pct);
     if (live_traffic != g_config.traffic_provider)
         fetcher_request_immediate_fetch();
+    if (live_adbox != g_config.aerodatabox_enabled)
+        enrichment_clear_cache();
     _cfg = _cfg_at_open;
     settings_hide();
 }
@@ -610,7 +655,7 @@ static void factory_reset_cb(lv_event_t *e) {
     }
 
     _factory_confirm_until_ms = 0;
-    if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
+    if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to defaults");
 
     storage_factory_reset();
     locations_factory_reset();
@@ -698,29 +743,27 @@ static lv_obj_t *make_help_btn(lv_obj_t *parent, int x, int y,
 
 static const char *const HELP_AIRPORTDB[2] = {
     "AirportDB.io",
-    "Optional runway / airport enrichment. Put the token in config via "
-    "tools/set_api_keys.py (or edit config.json). Enable only when VALID "
-    "shows yes."
+    "Optional runway and airport details when adding locations. "
+    "Turn Enable on only when VALID shows yes."
 };
 
 static const char *const HELP_ADBOX[2] = {
     "AeroDataBox",
-    "Detail-card origin/destination. USAGE is marketplace used-of-limit "
-    "(not a local card counter). Set renew day with "
-    "set_api_keys.py --adbox-renew-day N. Auto-off at 0 remaining, HTTP 429, "
-    "or soft-cap. Settings key check uses a free health endpoint (0 units)."
+    "Provides origin/destination in the detail pop-up. "
+    "600 calls/month (each lookup uses 2). "
+    "Billing month starts on signup; set renew day with "
+    "set_api_keys.py --adbox-renew-day N."
 };
 
 static const char *const HELP_CARTO[2] = {
     "CARTO basemap",
-    "Free API key from carto.com/basemaps/apikey — needed for dark / voyager "
-    "styles. Set via tools/set_api_keys.py or config.json."
+    "Needed for dark / voyager basemap styles. "
+    "Free key at carto.com/basemaps/apikey."
 };
 
 static const char *const HELP_TRAFFIC[2] = {
     "Traffic source",
-    "Live ADS-B feed provider. Changes preview immediately; Save persists. "
-    "Cancel restores the provider from when Settings opened."
+    "Selects the ADS-B feed provider for live traffic."
 };
 
 static void style_tab_button(lv_obj_t *btn, bool active) {
@@ -1026,70 +1069,54 @@ void settings_init(lv_obj_t *parent) {
         backlight_set_percent(v);
     }, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    lv_obj_t *disp_note = lv_label_create(tab_display);
-    lv_label_set_text(disp_note,
-        "Status-bar range chip cycles these presets. "
-        "Map overlays (trails, tags, basemap) live under VIEW.");
-    lv_obj_set_style_text_color(disp_note, lv_color_hex(0x666688), 0);
-    lv_obj_set_style_text_font(disp_note, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(disp_note, 0, 200);
-    lv_obj_set_width(disp_note, field_w);
-    lv_label_set_long_mode(disp_note, LV_LABEL_LONG_WRAP);
-    lv_obj_clear_flag(disp_note, LV_OBJ_FLAG_CLICKABLE);
-
-    // --- Services: traffic + keyed APIs ---
-    create_label(tab_services, "TRAFFIC SOURCE", 0, 4);
-    make_help_btn(tab_services, 150, 0, HELP_TRAFFIC);
-    _dd_traffic_prov = lv_dropdown_create(tab_services);
-    lv_dropdown_set_options(_dd_traffic_prov, TRAFFIC_PROVIDER_OPTS);
-    style_dropdown(_dd_traffic_prov, field_w);
-    lv_obj_set_pos(_dd_traffic_prov, 0, 28);
-    lv_dropdown_set_selected(_dd_traffic_prov, (uint16_t)(_cfg.traffic_provider == 1 ? 1 : 0));
-    lv_obj_add_event_cb(_dd_traffic_prov, on_traffic_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
-
+    // --- Services: traffic + keyed APIs (roomier vertical rhythm) ---
     lv_obj_t *keys_hint = lv_label_create(tab_services);
-    lv_label_set_text(keys_hint, "API keys: tools/set_api_keys.py  (or edit config.json)");
+    lv_label_set_text(keys_hint, "API keys are set with set_api_keys.py");
     lv_obj_set_style_text_color(keys_hint, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(keys_hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(keys_hint, 0, 78);
+    lv_obj_set_pos(keys_hint, 0, 0);
     lv_obj_set_width(keys_hint, field_w + 80);
     lv_obj_clear_flag(keys_hint, LV_OBJ_FLAG_CLICKABLE);
 
-    create_label(tab_services, "AIRPORTDB.IO", 0, 110);
-    make_help_btn(tab_services, 130, 106, HELP_AIRPORTDB);
-    _apt_key_val = create_inline_row(tab_services, "KEY", 0, 136, 60);
-    _apt_valid_val = create_inline_row(tab_services, "VALID", 180, 136, 60);
-    create_label(tab_services, "ENABLE", 360, 136);
-    _sw_apt_en = make_enable_switch(tab_services, 430, 132);
+    create_label(tab_services, "TRAFFIC SOURCE", 0, 32);
+    make_help_btn(tab_services, 150, 28, HELP_TRAFFIC);
+    _dd_traffic_prov = lv_dropdown_create(tab_services);
+    lv_dropdown_set_options(_dd_traffic_prov, TRAFFIC_PROVIDER_OPTS);
+    style_dropdown(_dd_traffic_prov, field_w);
+    lv_obj_set_pos(_dd_traffic_prov, 0, 58);
+    lv_dropdown_set_selected(_dd_traffic_prov, (uint16_t)(_cfg.traffic_provider == 1 ? 1 : 0));
+    lv_obj_add_event_cb(_dd_traffic_prov, on_traffic_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    create_label(tab_services, "AERODATABOX", 0, 180);
-    make_help_btn(tab_services, 140, 176, HELP_ADBOX);
-    create_label(tab_services, "PROVIDER", 0, 206);
+    create_label(tab_services, "AIRPORTDB.IO", 0, 112);
+    make_help_btn(tab_services, 130, 108, HELP_AIRPORTDB);
+    _apt_key_val = create_inline_row(tab_services, "KEY", 0, 140, 60);
+    _apt_valid_val = create_inline_row(tab_services, "VALID", 180, 140, 60);
+    create_label(tab_services, "ENABLE", 360, 140);
+    _sw_apt_en = make_enable_switch(tab_services, 430, 136);
+    lv_obj_add_event_cb(_sw_apt_en, on_service_enable_changed, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    create_label(tab_services, "AERODATABOX", 0, 188);
+    make_help_btn(tab_services, 140, 184, HELP_ADBOX);
+    create_label(tab_services, "PROVIDER", 0, 216);
     _dd_adbox_prov = lv_dropdown_create(tab_services);
     lv_dropdown_set_options(_dd_adbox_prov, ADBOX_PROVIDER_OPTS);
     style_dropdown(_dd_adbox_prov, field_w);
-    lv_obj_set_pos(_dd_adbox_prov, 0, 228);
+    lv_obj_set_pos(_dd_adbox_prov, 0, 240);
     lv_dropdown_set_selected(_dd_adbox_prov, (uint16_t)(_cfg.aerodatabox_provider >= 0 && _cfg.aerodatabox_provider <= 2
                                                          ? _cfg.aerodatabox_provider : 0));
     lv_obj_add_event_cb(_dd_adbox_prov, on_adbox_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    _adbox_key_val = create_inline_row(tab_services, "KEY", 0, 276, 60);
-    _adbox_valid_val = create_inline_row(tab_services, "VALID", 180, 276, 60);
-    create_label(tab_services, "ENABLE", 360, 276);
-    _sw_adbox_en = make_enable_switch(tab_services, 430, 272);
-    _adbox_usage_val = create_inline_row(tab_services, "USAGE", 0, 308, 60);
+    _adbox_key_val = create_inline_row(tab_services, "KEY", 0, 292, 60);
+    _adbox_valid_val = create_inline_row(tab_services, "VALID", 180, 292, 60);
+    create_label(tab_services, "ENABLE", 360, 292);
+    _sw_adbox_en = make_enable_switch(tab_services, 430, 288);
+    lv_obj_add_event_cb(_sw_adbox_en, on_service_enable_changed, LV_EVENT_VALUE_CHANGED, nullptr);
+    _adbox_usage_val = create_inline_row(tab_services, "USAGE", 0, 328, 60);
     lv_obj_set_width(_adbox_usage_val, field_w + 80);
 
-    create_label(tab_services, "CARTO BASEMAP", 0, 350);
-    make_help_btn(tab_services, 160, 346, HELP_CARTO);
-    _carto_key_val = create_inline_row(tab_services, "KEY", 0, 376, 60);
-    lv_obj_t *carto_hint = lv_label_create(tab_services);
-    lv_label_set_text(carto_hint, "Free key: carto.com/basemaps/apikey");
-    lv_obj_set_style_text_color(carto_hint, lv_color_hex(0x666688), 0);
-    lv_obj_set_style_text_font(carto_hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(carto_hint, 0, 404);
-    lv_obj_set_width(carto_hint, field_w + 80);
-    lv_obj_clear_flag(carto_hint, LV_OBJ_FLAG_CLICKABLE);
+    create_label(tab_services, "CARTO BASEMAP", 0, 376);
+    make_help_btn(tab_services, 160, 372, HELP_CARTO);
+    _carto_key_val = create_inline_row(tab_services, "KEY", 0, 404, 60);
 
     // --- System: version / OTA, host info, diagnostics, destructive actions ---
     // Compact vertical rhythm so Clear/Factory fit above the footer on 620px.
@@ -1173,28 +1200,29 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *cache_btn = lv_button_create(tab_system);
-    lv_obj_set_size(cache_btn, field_w, 30);
+    const int half_w = (field_w - 10) / 2;
+    lv_obj_set_size(cache_btn, half_w, 34);
     lv_obj_set_pos(cache_btn, 0, 308);
     lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
     lv_obj_set_style_border_width(cache_btn, 1, 0);
     lv_obj_set_style_radius(cache_btn, 6, 0);
     lv_obj_t *cache_lbl = lv_label_create(cache_btn);
-    lv_label_set_text(cache_lbl, "Clear all caches");
+    lv_label_set_text(cache_lbl, "Clear caches");
     lv_obj_set_style_text_color(cache_lbl, lv_color_hex(0xffaa66), 0);
     lv_obj_set_style_text_font(cache_lbl, &lv_font_montserrat_14, 0);
     lv_obj_center(cache_lbl);
     lv_obj_add_event_cb(cache_btn, clear_all_caches_cb, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t *factory_btn = lv_button_create(tab_system);
-    lv_obj_set_size(factory_btn, field_w, 30);
-    lv_obj_set_pos(factory_btn, 0, 344);
+    lv_obj_set_size(factory_btn, half_w, 34);
+    lv_obj_set_pos(factory_btn, half_w + 10, 308);
     lv_obj_set_style_bg_color(factory_btn, lv_color_hex(0x2a1a1a), 0);
     lv_obj_set_style_border_color(factory_btn, lv_color_hex(0x664444), 0);
     lv_obj_set_style_border_width(factory_btn, 1, 0);
     lv_obj_set_style_radius(factory_btn, 6, 0);
     _factory_lbl = lv_label_create(factory_btn);
-    lv_label_set_text(_factory_lbl, "Reset to factory defaults");
+    lv_label_set_text(_factory_lbl, "Reset to defaults");
     lv_obj_set_style_text_color(_factory_lbl, ERR_COLOR, 0);
     lv_obj_set_style_text_font(_factory_lbl, &lv_font_montserrat_14, 0);
     lv_obj_center(_factory_lbl);
@@ -1257,7 +1285,7 @@ void settings_show() {
     _visible = true;
     _shown_at_ms = platform_millis();
     _factory_confirm_until_ms = 0;
-    if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
+    if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to defaults");
     _cfg = storage_load_config();
     _cfg_at_open = _cfg;
     apply_cfg_to_fields();
@@ -1276,7 +1304,7 @@ void settings_hide() {
     _apt_verify_pending = false;
     _adbox_verify_pending = false;
     _factory_confirm_until_ms = 0;
-    if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to factory defaults");
+    if (_factory_lbl) lv_label_set_text(_factory_lbl, "Reset to defaults");
     lv_obj_add_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
 }
