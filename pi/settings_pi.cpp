@@ -77,7 +77,7 @@ static settings_changed_cb_t _on_change = nullptr;
 
 // Fits under status bar on 1280x800. Narrow — each tab is a single column.
 #define PANEL_W 560
-#define PANEL_H 640
+#define PANEL_H 660
 #define TITLE_H 36
 #define TAB_BAR_H 40
 #define ACTION_H 52
@@ -1078,45 +1078,45 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_width(keys_hint, field_w + 80);
     lv_obj_clear_flag(keys_hint, LV_OBJ_FLAG_CLICKABLE);
 
-    create_label(tab_services, "TRAFFIC SOURCE", 0, 32);
-    make_help_btn(tab_services, 150, 28, HELP_TRAFFIC);
+    create_label(tab_services, "TRAFFIC SOURCE", 0, 36);
+    make_help_btn(tab_services, 150, 32, HELP_TRAFFIC);
     _dd_traffic_prov = lv_dropdown_create(tab_services);
     lv_dropdown_set_options(_dd_traffic_prov, TRAFFIC_PROVIDER_OPTS);
     style_dropdown(_dd_traffic_prov, field_w);
-    lv_obj_set_pos(_dd_traffic_prov, 0, 58);
+    lv_obj_set_pos(_dd_traffic_prov, 0, 64);
     lv_dropdown_set_selected(_dd_traffic_prov, (uint16_t)(_cfg.traffic_provider == 1 ? 1 : 0));
     lv_obj_add_event_cb(_dd_traffic_prov, on_traffic_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    create_label(tab_services, "AIRPORTDB.IO", 0, 112);
-    make_help_btn(tab_services, 130, 108, HELP_AIRPORTDB);
-    _apt_key_val = create_inline_row(tab_services, "KEY", 0, 140, 60);
-    _apt_valid_val = create_inline_row(tab_services, "VALID", 180, 140, 60);
-    create_label(tab_services, "ENABLE", 360, 140);
-    _sw_apt_en = make_enable_switch(tab_services, 430, 136);
+    create_label(tab_services, "AIRPORTDB.IO", 0, 124);
+    make_help_btn(tab_services, 130, 120, HELP_AIRPORTDB);
+    _apt_key_val = create_inline_row(tab_services, "KEY", 0, 156, 60);
+    _apt_valid_val = create_inline_row(tab_services, "VALID", 180, 156, 60);
+    create_label(tab_services, "ENABLE", 360, 156);
+    _sw_apt_en = make_enable_switch(tab_services, 430, 152);
     lv_obj_add_event_cb(_sw_apt_en, on_service_enable_changed, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    create_label(tab_services, "AERODATABOX", 0, 188);
-    make_help_btn(tab_services, 140, 184, HELP_ADBOX);
-    create_label(tab_services, "PROVIDER", 0, 216);
+    create_label(tab_services, "AERODATABOX", 0, 208);
+    make_help_btn(tab_services, 140, 204, HELP_ADBOX);
+    create_label(tab_services, "PROVIDER", 0, 240);
     _dd_adbox_prov = lv_dropdown_create(tab_services);
     lv_dropdown_set_options(_dd_adbox_prov, ADBOX_PROVIDER_OPTS);
     style_dropdown(_dd_adbox_prov, field_w);
-    lv_obj_set_pos(_dd_adbox_prov, 0, 240);
+    lv_obj_set_pos(_dd_adbox_prov, 0, 264);
     lv_dropdown_set_selected(_dd_adbox_prov, (uint16_t)(_cfg.aerodatabox_provider >= 0 && _cfg.aerodatabox_provider <= 2
                                                          ? _cfg.aerodatabox_provider : 0));
     lv_obj_add_event_cb(_dd_adbox_prov, on_adbox_provider_changed, LV_EVENT_VALUE_CHANGED, nullptr);
 
-    _adbox_key_val = create_inline_row(tab_services, "KEY", 0, 292, 60);
-    _adbox_valid_val = create_inline_row(tab_services, "VALID", 180, 292, 60);
-    create_label(tab_services, "ENABLE", 360, 292);
-    _sw_adbox_en = make_enable_switch(tab_services, 430, 288);
+    _adbox_key_val = create_inline_row(tab_services, "KEY", 0, 320, 60);
+    _adbox_valid_val = create_inline_row(tab_services, "VALID", 180, 320, 60);
+    create_label(tab_services, "ENABLE", 360, 320);
+    _sw_adbox_en = make_enable_switch(tab_services, 430, 316);
     lv_obj_add_event_cb(_sw_adbox_en, on_service_enable_changed, LV_EVENT_VALUE_CHANGED, nullptr);
-    _adbox_usage_val = create_inline_row(tab_services, "USAGE", 0, 328, 60);
+    _adbox_usage_val = create_inline_row(tab_services, "USAGE", 0, 356, 60);
     lv_obj_set_width(_adbox_usage_val, field_w + 80);
 
-    create_label(tab_services, "CARTO BASEMAP", 0, 376);
-    make_help_btn(tab_services, 160, 372, HELP_CARTO);
-    _carto_key_val = create_inline_row(tab_services, "KEY", 0, 404, 60);
+    create_label(tab_services, "CARTO BASEMAP", 0, 412);
+    make_help_btn(tab_services, 160, 408, HELP_CARTO);
+    _carto_key_val = create_inline_row(tab_services, "KEY", 0, 444, 60);
 
     // --- System: version / OTA, host info, diagnostics, destructive actions ---
     // Compact vertical rhythm so Clear/Factory fit above the footer on 620px.
