@@ -31,7 +31,10 @@ Current product: **FlightLevel314** (Pi). Historical ESP32 branch: `dpoler/adsb`
   jc1060 **paused**. Keep for cherry-picks / archaeology.
 
 ### Cloud-agent / GitHub App caveat (important)
+A **cloud** agent started from `dpoler/adsb` gets an installation token
+scoped to **adsb only**. Even when the GitHub App has Read/Write on
 FlightLevel314 in the GitHub UI, that adsb-scoped run **cannot** `git push` to
+FlightLevel314 (403 from the app bot). Workarounds: start the cloud agent from
 **FlightLevel314**, or have Dan push from his Mac (auth already works there).
 The Pi (`dap@adsb`) often has no GitHub credentials — don’t send him through
 PAT/SSH setup unless he asks; push from Mac instead.
@@ -42,11 +45,13 @@ PAT/SSH setup unless he asks; push from Mac instead.
    Screenshots in `docs/screenshots/` (panel photos + current Settings). Some
    gallery shots still show older nav labels **ARR / STATS**; current UI is
    **MAP / RADAR / LIST / INFO**. Landed on FlightLevel314 `master` by Dan
+   after cherry-pick from `adsb` `readme-cleanup` branch (`69941ef`).
 2. **Pi DRM hard freeze fix** — UI painted one frame then froze (touch dead,
    update counter stuck, only `kill -9`). Cause: LVGL v9.5.0
    `lv_linux_drm.c` — dangling non-NULL `req` after failed atomic commit +
    infinite `poll(-1)`. Fix: `pi/patches/apply_lvgl_drm_patch.py` (runs at
    CMake configure), plus blank VC4 hardware cursor in `pi/display_drm.cpp`.
+   Commit on adsb: `0a01252`. Dan
    rebuilt DRM on the Pi; freeze addressed.
 
 ### Runtime facts
@@ -111,6 +116,9 @@ then reverted same day after Dan preferred draft-until-Save.)
   commands on separate lines.
 
 ### Transfer branches on adsb (history only once FL314 has the commits)
+- README cleanup (PR #8)
+- DRM freeze (PR #9)
+- original Pi extraction
 
 ---
 
@@ -293,7 +301,8 @@ stacks/TLS buffers/SDIO driver allocations use).
 with a Waveshare 10.1" DSI capacitive touch panel (1280x800, resolves an earlier
 open "is it 3B or 3B+" question — confirmed 3B+ once real hardware arrived),
 to unlock functionality the ESP32 fundamentally can't do (real aircraft photos,
-richer maps/charts, more compute). Architecture plan doc:
+richer maps/charts, more compute). Architecture plan doc
+was kept locally (not in the repo).
 
 ### Key architecture decisions
 - **Data source**: stays on remote adsb.lol for now, same as ESP32. An
@@ -324,6 +333,7 @@ richer maps/charts, more compute). Architecture plan doc:
   has a fresh reimplementation, `pi/platform_linux/datasource_remote.cpp`
   (same adsb.lol JSON schema, independent code — a known drift risk if the
   schema changes, accepted).
+- **No SSH access from the agent** to the Pi — all hardware bring-up work happens
   by handing the user exact copy-paste command bundles; standing operating mode
   for all `pi/` hardware work.
 
@@ -926,6 +936,8 @@ decommissioned runways that still carry valid coordinates.
 
 ## 12. User preferences / how to work in this project (feedback memory)
 
+- **Never add AI-tool `Co-Authored-By` trailers to commits.** No exceptions. Past
+  violations caused a bot to appear as a GitHub contributor, which the user
   found unacceptable. Also: do not commit or push without explicit permission
   — make changes, then wait to be told to commit. Treat "no Co-Authored-By" as
   a hard checklist item on every single commit, not a one-time preference.

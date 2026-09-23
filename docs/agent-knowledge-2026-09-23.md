@@ -1,5 +1,6 @@
 # FlightLevel314 — Agent Knowledge Dump
 
+> Generated **2026-09-23** for handoff. Complements the longer
 > historical archive in [`project-knowledge.md`](project-knowledge.md)
 > (ESP32 / CrowPanel / early Pi port). Prefer **this file** for current
 > product facts; verify against code before trusting any “done” claim.
@@ -73,8 +74,8 @@ cmake -S . -B build -DPI_DISPLAY_BACKEND=DRM
 Deps: `cmake`, `libcurl4-openssl-dev`, `libsdl2-dev` (SDL); plus
 `libdrm-dev`, `libinput-dev` (DRM).
 
-an SDL build. No C++ unit tests / lint; CI builds SDL on version tags.
-Verification signal = clean CMake SDL build (+ UI when Computer Use / display
+No C++ unit tests / lint; CI builds SDL on version tags.
+Verification signal = clean CMake SDL build (+ UI when a display is
 available).
 
 **Standing preference:** user handles builds unless asked — prefer writing
@@ -281,6 +282,7 @@ adsb.fi provider; CARTO key path; etc.
    - Enable live-gate bugfix; Services spacing; diagnostics labels
    - AirportDB help shortened; CARTO em-dash tofu fixed
 
+Branch naming: `<topic>/<descriptive-name>`.
 
 ---
 

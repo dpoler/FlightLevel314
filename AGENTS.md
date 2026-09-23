@@ -1,5 +1,6 @@
 # AGENTS.md
 
+## Project instructions
 
 This repo is **FlightLevel314** — a Raspberry Pi / Linux ADS-B display
 (CMake + LVGL SDL simulator or DRM). It was forked from `dpoler/adsb`'s Pi
@@ -23,9 +24,8 @@ cmake -S . -B build -DPI_DISPLAY_BACKEND=SDL
 cmake --build build -j$(nproc)
 ./build/pi/flightlevel314
 ```
-Headless Cloud VMs can compile the SDL binary; interactive display may need
-Computer Use / a display. Real Pi DRM (`-DPI_DISPLAY_BACKEND=DRM`) is out of
-scope for this cloud environment.
+Headless VMs can compile the SDL binary; interactive use needs a display.
+Real Pi DRM (`-DPI_DISPLAY_BACKEND=DRM`) needs the actual panel.
 
 ### Lint / tests
 No C++ unit tests and no lint config. CI builds the SDL binary on version
