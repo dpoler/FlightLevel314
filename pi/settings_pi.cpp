@@ -717,6 +717,7 @@ static void help_btn_cb(lv_event_t *e) {
     const int title_h = 28;
 
     lv_obj_t *dlg = lv_obj_create(_overlay);
+    lv_obj_remove_style_all(dlg);
     lv_obj_set_width(dlg, dlg_w);
     lv_obj_set_style_bg_color(dlg, BG_COLOR, 0);
     lv_obj_set_style_bg_opa(dlg, LV_OPA_COVER, 0);
@@ -1192,39 +1193,39 @@ void settings_init(lv_obj_t *parent) {
 
     char hw[96], osname[96], host[64], arch[32];
     fill_sysinfo(hw, sizeof(hw), osname, sizeof(osname), host, sizeof(host), arch, sizeof(arch));
-    // Gap after OTA button (ends ~y=72) before HOST block.
-    create_label(tab_system, "HOST", 0, 100);
-    lv_obj_t *hw_val = create_inline_row(tab_system, "HARDWARE", 0, 120, 100);
+    // Comfortable gap after OTA button (y=42..72) before HOST.
+    create_label(tab_system, "HOST", 0, 112);
+    lv_obj_t *hw_val = create_inline_row(tab_system, "HARDWARE", 0, 132, 100);
     lv_label_set_text(hw_val, hw);
     lv_obj_set_width(hw_val, field_w - 8);
-    lv_obj_t *os_val = create_inline_row(tab_system, "OS", 0, 138, 100);
+    lv_obj_t *os_val = create_inline_row(tab_system, "OS", 0, 150, 100);
     lv_label_set_text(os_val, osname);
     lv_obj_set_width(os_val, field_w - 8);
-    lv_obj_t *host_val = create_inline_row(tab_system, "HOSTNAME", 0, 156, 100);
+    lv_obj_t *host_val = create_inline_row(tab_system, "HOSTNAME", 0, 168, 100);
     lv_label_set_text(host_val, host);
-    lv_obj_t *arch_val = create_inline_row(tab_system, "ARCH", 0, 174, 100);
+    lv_obj_t *arch_val = create_inline_row(tab_system, "ARCH", 0, 186, 100);
     lv_label_set_text(arch_val, arch);
-    _sys_uptime_val = create_inline_row(tab_system, "SYS UPTIME", 0, 192, 100);
+    _sys_uptime_val = create_inline_row(tab_system, "SYS UPTIME", 0, 204, 100);
 
     // ADS-B feed poll stats (RemoteApiDataSource), not enrichment / map tiles.
-    create_label(tab_system, "DIAGNOSTICS", 0, 224);
-    _fetch_val = create_inline_row(tab_system, "ADS-B POLLS", 0, 244, 120);
-    _latency_val = create_inline_row(tab_system, "LAST POLL", 0, 262, 120);
-    _uptime_val = create_inline_row(tab_system, "APP UPTIME", 0, 280, 120);
+    create_label(tab_system, "DIAGNOSTICS", 0, 236);
+    _fetch_val = create_inline_row(tab_system, "ADS-B POLLS", 0, 256, 120);
+    _latency_val = create_inline_row(tab_system, "LAST POLL", 0, 274, 120);
+    _uptime_val = create_inline_row(tab_system, "APP UPTIME", 0, 292, 120);
 
     // Ring buffer of app/ops errors (airlines load, airport add/refresh) —
     // not the ADS-B poll fail counter above.
-    create_label(tab_system, "APP ERRORS", 0, 308);
+    create_label(tab_system, "APP ERRORS", 0, 320);
     _err_count_lbl = lv_label_create(tab_system);
     lv_label_set_text(_err_count_lbl, "(0)");
     lv_obj_set_style_text_font(_err_count_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_count_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_err_count_lbl, 110, 308);
+    lv_obj_set_pos(_err_count_lbl, 110, 320);
     lv_obj_clear_flag(_err_count_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *clr_btn = lv_obj_create(tab_system);
     lv_obj_set_size(clr_btn, 40, 22);
-    lv_obj_set_pos(clr_btn, 160, 306);
+    lv_obj_set_pos(clr_btn, 160, 318);
     lv_obj_set_style_bg_color(clr_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_bg_opa(clr_btn, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(clr_btn, lv_color_hex(0x444466), 0);
@@ -1243,7 +1244,7 @@ void settings_init(lv_obj_t *parent) {
     lv_label_set_text(err_hint, "Airlines load, airport add / runway refresh");
     lv_obj_set_style_text_color(err_hint, lv_color_hex(0x666688), 0);
     lv_obj_set_style_text_font(err_hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(err_hint, 0, 330);
+    lv_obj_set_pos(err_hint, 0, 342);
     lv_obj_set_width(err_hint, field_w + 80);
     lv_obj_clear_flag(err_hint, LV_OBJ_FLAG_CLICKABLE);
 
@@ -1251,14 +1252,14 @@ void settings_init(lv_obj_t *parent) {
     lv_label_set_text(_err_list_lbl, "(none)");
     lv_obj_set_style_text_font(_err_list_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_list_lbl, ERR_COLOR, 0);
-    lv_obj_set_pos(_err_list_lbl, 0, 350);
+    lv_obj_set_pos(_err_list_lbl, 0, 362);
     lv_obj_set_width(_err_list_lbl, field_w);
     lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *cache_btn = lv_button_create(tab_system);
     const int half_w = (field_w - 10) / 2;
     lv_obj_set_size(cache_btn, half_w, 34);
-    lv_obj_set_pos(cache_btn, 0, 390);
+    lv_obj_set_pos(cache_btn, 0, 402);
     lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
     lv_obj_set_style_border_width(cache_btn, 1, 0);
@@ -1272,7 +1273,7 @@ void settings_init(lv_obj_t *parent) {
 
     lv_obj_t *factory_btn = lv_button_create(tab_system);
     lv_obj_set_size(factory_btn, half_w, 34);
-    lv_obj_set_pos(factory_btn, half_w + 10, 390);
+    lv_obj_set_pos(factory_btn, half_w + 10, 402);
     lv_obj_set_style_bg_color(factory_btn, lv_color_hex(0x2a1a1a), 0);
     lv_obj_set_style_border_color(factory_btn, lv_color_hex(0x664444), 0);
     lv_obj_set_style_border_width(factory_btn, 1, 0);
