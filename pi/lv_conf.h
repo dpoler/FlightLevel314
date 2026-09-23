@@ -51,6 +51,8 @@
 #define LV_USE_DROPDOWN 1
 #define LV_USE_CHECKBOX 1
 #define LV_USE_SPINNER 1
+#define LV_USE_BUTTONMATRIX 1
+#define LV_USE_TABVIEW 1
 
 /* Animations */
 #define LV_USE_ANIM 1
