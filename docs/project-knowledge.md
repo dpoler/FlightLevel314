@@ -69,7 +69,6 @@ See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - Detail card: AeroDataBox STD/ATD/STA/ATA + diverted; reclaim blank
   telemetry rows; card can grow taller / better centered (2026-08-31)
-- Enrichment O/D: hide implausible low-altitude routes at airport views
 - Satellite basemap style (Esri or Mapbox; API key OK)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
@@ -594,8 +593,8 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   footgun, `--show`, and Settings VALID/ENABLE. Still no on-screen typing
   of secrets. Future satellite keys can use the same script/path.
 
-- **Enrichment O/D — hide implausible low routes at airport views (Dan,
-  2026-08-10)**: when O/D was looked up, **don’t print** FROM/TO if:
+- ~~**Enrichment O/D — hide implausible low routes at airport views (Dan,
+  2026-08-10)**~~ **removed 2026-09-22 (Dan)** — not doing. Original idea: when O/D was looked up, **don’t print** FROM/TO if:
   (1) active location is an airport (ICAO set; not a waypoint);
   (2) aircraft is in the LOW band (`agl <= 10000` ft, airborne ground);
   (3) neither origin nor dest is the view airport or an airport within
@@ -853,7 +852,7 @@ Header-based reset ETA removed (requests-reset ≠ billing anniversary);
 `adbox_renew_day` via `set_api_keys.py --adbox-renew-day`
 (USAGE uses ASCII `|`, not `·` — montserrat tofu).
 
-**Backlog (Dan, 2026-08-10):** further O/D display hygiene when enrichment
+**Dropped (Dan, 2026-09-22; proposed 2026-08-10):** further O/D display hygiene when enrichment
 already has a route — **do not show** FROM/TO on the detail card if all of:
 (1) active location is an **airport** (has ICAO; not a lat/lon waypoint);
 (2) aircraft altitude meets the **LOW** filter band (`agl <= 10000` ft,
@@ -864,7 +863,7 @@ already has a route — **do not show** FROM/TO on the detail card if all of:
 Rationale: low near an airport that isn’t on the published route → schedule
 pick is probably wrong; better blank than misleading. Display-only filter
 (don’t need to re-hit AeroDataBox); still show O/D when HIGH / at waypoints /
-when route touches the local airport set. See §7.1.
+when route touches the local airport set.
 
 ---
 

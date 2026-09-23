@@ -212,9 +212,6 @@ identity, Planespotters photo, AeroDataBox route when `adbox_allowed()`.
 Route pick prefers live-looking flights (EnRoute/Approaching/…) vs first
 row with airports. CallSign-first search; commercial filter gates API.
 
-Open hygiene backlog (display-only): hide implausible low-altitude O/D near
-an airport that isn’t on the published route (see project-knowledge §8).
-
 ---
 
 ## 10. Basemap & weather
@@ -244,7 +241,6 @@ Highest-signal leftovers (verify §7.1 in project-knowledge before acting):
 
 - **Follow Mode** — hold; design notes only
 - Detail card: STD/ATD/STA/ATA + diverted; reclaim blank telemetry rows
-- Enrichment O/D low-altitude hygiene near airports (display filter)
 - Satellite basemap style (Esri/Mapbox; key OK)
 - Optional fresher README LIST/INFO screenshots
 - QoL themes / font size
