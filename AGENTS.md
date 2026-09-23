@@ -7,7 +7,9 @@ port; the ESP32 / JC1060 PlatformIO target is **not** built here.
 
 **Deeper project knowledge** (history, backlog, design decisions — including
 archived ESP32 notes): see [`docs/project-knowledge.md`](docs/project-knowledge.md).
-Treat it as point-in-time — verify against current code before relying on
+**Current product/runtime snapshot (2026-09-23):**
+[`docs/agent-knowledge-2026-09-23.md`](docs/agent-knowledge-2026-09-23.md).
+Treat both as point-in-time — verify against current code before relying on
 specific "done" claims or file:line references. Private / not-for-GitHub
 scratch (API quota ideas, etc.): `docs/local-notes.md` if present — it is
 **gitignored**; do not commit it or copy its contents into tracked docs.
