@@ -701,26 +701,71 @@ static void style_textarea(lv_obj_t *ta) {
     lv_obj_set_style_border_color(ta, ACCENT_COLOR, LV_STATE_FOCUSED);
 }
 
+static void help_close_cb(lv_event_t *e) {
+    lv_obj_t *dlg = (lv_obj_t *)lv_event_get_user_data(e);
+    if (dlg) lv_obj_delete(dlg);
+}
+
+// Dark help dialog matching Settings chrome — avoid LVGL msgbox's default
+// light/tall title bar + blue close control.
 static void help_btn_cb(lv_event_t *e) {
     const char *const *pack = (const char *const *)lv_event_get_user_data(e);
     if (!pack || !pack[0] || !pack[1] || !_overlay) return;
 
-    lv_obj_t *mbox = lv_msgbox_create(_overlay);
-    lv_obj_set_width(mbox, 520);
-    lv_obj_set_style_bg_color(mbox, BG_COLOR, 0);
-    lv_obj_set_style_border_color(mbox, BORDER_COLOR, 0);
-    lv_obj_set_style_border_width(mbox, 1, 0);
-    lv_obj_set_style_text_color(mbox, lv_color_white(), 0);
-    lv_obj_set_style_text_font(mbox, &lv_font_montserrat_14, 0);
-    lv_msgbox_add_title(mbox, pack[0]);
-    lv_obj_t *txt = lv_msgbox_add_text(mbox, pack[1]);
-    if (txt) {
-        lv_obj_set_style_text_color(txt, LABEL_COLOR, 0);
-        lv_label_set_long_mode(txt, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(txt, 480);
-    }
-    lv_msgbox_add_close_button(mbox);
-    lv_obj_center(mbox);
+    const int dlg_w = 460;
+    const int pad = 12;
+    const int title_h = 28;
+
+    lv_obj_t *dlg = lv_obj_create(_overlay);
+    lv_obj_set_width(dlg, dlg_w);
+    lv_obj_set_style_bg_color(dlg, BG_COLOR, 0);
+    lv_obj_set_style_bg_opa(dlg, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(dlg, BORDER_COLOR, 0);
+    lv_obj_set_style_border_width(dlg, 1, 0);
+    lv_obj_set_style_radius(dlg, 8, 0);
+    lv_obj_set_style_pad_all(dlg, pad, 0);
+    lv_obj_clear_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(dlg, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *title = lv_label_create(dlg);
+    lv_label_set_text(title, pack[0]);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_set_pos(title, 0, 2);
+    lv_obj_set_width(title, dlg_w - pad * 2 - 36);
+    lv_obj_clear_flag(title, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *close = lv_button_create(dlg);
+    lv_obj_set_size(close, 28, 28);
+    lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, -2);
+    lv_obj_set_style_bg_color(close, ROW_BG, 0);
+    lv_obj_set_style_bg_opa(close, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(close, BORDER_COLOR, 0);
+    lv_obj_set_style_border_width(close, 1, 0);
+    lv_obj_set_style_radius(close, 6, 0);
+    lv_obj_set_style_pad_all(close, 0, 0);
+    lv_obj_t *xl = lv_label_create(close);
+    lv_label_set_text(xl, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_color(xl, LABEL_COLOR, 0);
+    lv_obj_set_style_text_font(xl, &lv_font_montserrat_14, 0);
+    lv_obj_center(xl);
+    lv_obj_add_event_cb(close, help_close_cb, LV_EVENT_CLICKED, dlg);
+
+    lv_obj_t *body = lv_label_create(dlg);
+    lv_label_set_text(body, pack[1]);
+    lv_obj_set_style_text_color(body, LABEL_COLOR, 0);
+    lv_obj_set_style_text_font(body, &lv_font_montserrat_14, 0);
+    lv_obj_set_width(body, dlg_w - pad * 2);
+    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(body, 0, title_h + 4);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_update_layout(body);
+    int body_h = (int)lv_obj_get_height(body);
+    if (body_h < 20) body_h = 20;
+    lv_obj_set_height(dlg, pad * 2 + title_h + 4 + body_h);
+    lv_obj_center(dlg);
+    lv_obj_move_foreground(dlg);
 }
 
 static lv_obj_t *make_help_btn(lv_obj_t *parent, int x, int y,
@@ -743,8 +788,7 @@ static lv_obj_t *make_help_btn(lv_obj_t *parent, int x, int y,
 
 static const char *const HELP_AIRPORTDB[2] = {
     "AirportDB.io",
-    "Optional runway and airport details when adding locations. "
-    "Turn Enable on only when VALID shows yes."
+    "Optional runway and airport details when adding locations."
 };
 
 static const char *const HELP_ADBOX[2] = {
@@ -1148,35 +1192,39 @@ void settings_init(lv_obj_t *parent) {
 
     char hw[96], osname[96], host[64], arch[32];
     fill_sysinfo(hw, sizeof(hw), osname, sizeof(osname), host, sizeof(host), arch, sizeof(arch));
-    create_label(tab_system, "HOST", 0, 82);
-    lv_obj_t *hw_val = create_inline_row(tab_system, "HARDWARE", 0, 100, 100);
+    // Gap after OTA button (ends ~y=72) before HOST block.
+    create_label(tab_system, "HOST", 0, 100);
+    lv_obj_t *hw_val = create_inline_row(tab_system, "HARDWARE", 0, 120, 100);
     lv_label_set_text(hw_val, hw);
     lv_obj_set_width(hw_val, field_w - 8);
-    lv_obj_t *os_val = create_inline_row(tab_system, "OS", 0, 118, 100);
+    lv_obj_t *os_val = create_inline_row(tab_system, "OS", 0, 138, 100);
     lv_label_set_text(os_val, osname);
     lv_obj_set_width(os_val, field_w - 8);
-    lv_obj_t *host_val = create_inline_row(tab_system, "HOSTNAME", 0, 136, 100);
+    lv_obj_t *host_val = create_inline_row(tab_system, "HOSTNAME", 0, 156, 100);
     lv_label_set_text(host_val, host);
-    lv_obj_t *arch_val = create_inline_row(tab_system, "ARCH", 0, 154, 100);
+    lv_obj_t *arch_val = create_inline_row(tab_system, "ARCH", 0, 174, 100);
     lv_label_set_text(arch_val, arch);
-    _sys_uptime_val = create_inline_row(tab_system, "SYS UPTIME", 0, 172, 100);
+    _sys_uptime_val = create_inline_row(tab_system, "SYS UPTIME", 0, 192, 100);
 
-    create_label(tab_system, "DIAGNOSTICS", 0, 200);
-    _fetch_val = create_inline_row(tab_system, "FETCHES", 0, 218, 100);
-    _latency_val = create_inline_row(tab_system, "LATENCY", 0, 236, 100);
-    _uptime_val = create_inline_row(tab_system, "APP UPTIME", 0, 254, 100);
+    // ADS-B feed poll stats (RemoteApiDataSource), not enrichment / map tiles.
+    create_label(tab_system, "DIAGNOSTICS", 0, 224);
+    _fetch_val = create_inline_row(tab_system, "ADS-B POLLS", 0, 244, 120);
+    _latency_val = create_inline_row(tab_system, "LAST POLL", 0, 262, 120);
+    _uptime_val = create_inline_row(tab_system, "APP UPTIME", 0, 280, 120);
 
-    create_label(tab_system, "ERRORS", 0, 278);
+    // Ring buffer of app/ops errors (airlines load, airport add/refresh) —
+    // not the ADS-B poll fail counter above.
+    create_label(tab_system, "APP ERRORS", 0, 308);
     _err_count_lbl = lv_label_create(tab_system);
     lv_label_set_text(_err_count_lbl, "(0)");
     lv_obj_set_style_text_font(_err_count_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_count_lbl, LABEL_COLOR, 0);
-    lv_obj_set_pos(_err_count_lbl, 80, 278);
+    lv_obj_set_pos(_err_count_lbl, 110, 308);
     lv_obj_clear_flag(_err_count_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *clr_btn = lv_obj_create(tab_system);
     lv_obj_set_size(clr_btn, 40, 22);
-    lv_obj_set_pos(clr_btn, 130, 276);
+    lv_obj_set_pos(clr_btn, 160, 306);
     lv_obj_set_style_bg_color(clr_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_bg_opa(clr_btn, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(clr_btn, lv_color_hex(0x444466), 0);
@@ -1191,18 +1239,26 @@ void settings_init(lv_obj_t *parent) {
     lv_obj_set_style_text_color(clr_lbl, ERR_COLOR, 0);
     lv_obj_center(clr_lbl);
 
+    lv_obj_t *err_hint = lv_label_create(tab_system);
+    lv_label_set_text(err_hint, "Airlines load, airport add / runway refresh");
+    lv_obj_set_style_text_color(err_hint, lv_color_hex(0x666688), 0);
+    lv_obj_set_style_text_font(err_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(err_hint, 0, 330);
+    lv_obj_set_width(err_hint, field_w + 80);
+    lv_obj_clear_flag(err_hint, LV_OBJ_FLAG_CLICKABLE);
+
     _err_list_lbl = lv_label_create(tab_system);
     lv_label_set_text(_err_list_lbl, "(none)");
     lv_obj_set_style_text_font(_err_list_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_err_list_lbl, ERR_COLOR, 0);
-    lv_obj_set_pos(_err_list_lbl, 180, 278);
-    lv_obj_set_width(_err_list_lbl, field_w - 180);
+    lv_obj_set_pos(_err_list_lbl, 0, 350);
+    lv_obj_set_width(_err_list_lbl, field_w);
     lv_obj_clear_flag(_err_list_lbl, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *cache_btn = lv_button_create(tab_system);
     const int half_w = (field_w - 10) / 2;
     lv_obj_set_size(cache_btn, half_w, 34);
-    lv_obj_set_pos(cache_btn, 0, 308);
+    lv_obj_set_pos(cache_btn, 0, 390);
     lv_obj_set_style_bg_color(cache_btn, lv_color_hex(0x1a1a2a), 0);
     lv_obj_set_style_border_color(cache_btn, lv_color_hex(0x444466), 0);
     lv_obj_set_style_border_width(cache_btn, 1, 0);
@@ -1216,7 +1272,7 @@ void settings_init(lv_obj_t *parent) {
 
     lv_obj_t *factory_btn = lv_button_create(tab_system);
     lv_obj_set_size(factory_btn, half_w, 34);
-    lv_obj_set_pos(factory_btn, half_w + 10, 308);
+    lv_obj_set_pos(factory_btn, half_w + 10, 390);
     lv_obj_set_style_bg_color(factory_btn, lv_color_hex(0x2a1a1a), 0);
     lv_obj_set_style_border_color(factory_btn, lv_color_hex(0x664444), 0);
     lv_obj_set_style_border_width(factory_btn, 1, 0);
