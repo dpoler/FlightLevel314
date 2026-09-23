@@ -5,12 +5,18 @@
 > **FlightLevel314** and jc1060 development was paused. Keep ESP32 history
 > here for optional cherry-picks; new work targets Pi/Linux only unless
 > explicitly asked otherwise. Day-to-day agent rules live in `AGENTS.md`.
+>
+> **Current snapshot (2026-09-23):** start with
+> [`docs/agent-knowledge-2026-09-23.md`](agent-knowledge-2026-09-23.md)
+> for product/runtime/Settings facts after PRs #37–#38. This file remains
+> the long historical archive (backlog §7, ESP32, CrowPanel, early Pi port).
 
 
 Generated 2026-08-07 from accumulated cross-session memory; FlightLevel314
 fork notes added 2026-08-08; handoff refreshed **2026-08-09**; backlog status
-refreshed **2026-08-09** (Dan). Point-in-time snapshot — verify against
-current code before treating any specific claim as still true.
+refreshed **2026-08-09** (Dan); current-facts dump added **2026-09-23**.
+Point-in-time snapshot — verify against current code before treating any
+specific claim as still true.
 
 Current product: **FlightLevel314** (Pi). Historical ESP32 branch: `dpoler/adsb`.
 
