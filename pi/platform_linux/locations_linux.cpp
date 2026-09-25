@@ -134,7 +134,7 @@ void json_to_loc(JsonObjectConst obj, Location &loc) {
 
 // Caller must hold _mutex.
 void save_all_locked() {
-    mkdir(config_dir().c_str(), 0755);
+    platform_mkdirs(config_dir().c_str());
 
     JsonDocument doc;
     JsonArray arr = doc["locations"].to<JsonArray>();
@@ -149,15 +149,12 @@ void save_all_locked() {
         }
     }
 
-    FILE *f = fopen(locations_file_path().c_str(), "w");
-    if (!f) {
-        platform_log_error("Locations: failed to open %s for writing\n", locations_file_path().c_str());
-        return;
-    }
+    // Atomic replace so a power cut can't truncate the saved-locations file.
     std::string out;
     serializeJson(doc, out);
-    fwrite(out.data(), 1, out.size(), f);
-    fclose(f);
+    if (!platform_write_file_atomic(locations_file_path().c_str(), out.data(), out.size())) {
+        platform_log_error("Locations: failed to write %s\n", locations_file_path().c_str());
+    }
 }
 
 void load_all_locked() {

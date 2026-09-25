@@ -3,11 +3,59 @@
 #include <mutex>
 #include <cstdio>
 #include <cstdarg>
+#include <cerrno>
+#include <string>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 // HTTP GET (libcurl) and config storage land separately -- see
 // pi/platform_linux/storage_linux.cpp for config storage (task #4 of the
 // Pi port; see project_pi_port memory) and task #5 for fetcher.cpp's real
 // libcurl-backed platform_http_get().
+
+bool platform_mkdirs(const char *path) {
+    if (!path || !path[0]) return false;
+    std::string cur;
+    const std::string p(path);
+    for (size_t i = 0; i < p.size(); i++) {
+        cur.push_back(p[i]);
+        if ((p[i] == '/' && cur.size() > 1) || i + 1 == p.size()) {
+            if (mkdir(cur.c_str(), 0755) != 0 && errno != EEXIST) return false;
+        }
+    }
+    struct stat st {};
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+bool platform_write_file_atomic(const char *path, const void *data, size_t len) {
+    if (!path || !path[0]) return false;
+    const std::string tmp = std::string(path) + ".tmp";
+    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) return false;
+    const char *p = static_cast<const char *>(data);
+    size_t left = len;
+    while (left > 0) {
+        ssize_t w = write(fd, p, left);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            unlink(tmp.c_str());
+            return false;
+        }
+        p += w;
+        left -= (size_t)w;
+    }
+    if (fsync(fd) != 0 || close(fd) != 0) {
+        unlink(tmp.c_str());
+        return false;
+    }
+    if (rename(tmp.c_str(), path) != 0) {
+        unlink(tmp.c_str());
+        return false;
+    }
+    return true;
+}
 
 uint32_t platform_millis() {
     using namespace std::chrono;

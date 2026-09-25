@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <sys/stat.h>
 
@@ -214,8 +215,14 @@ UserConfig storage_load_config() {
     return cfg;
 }
 
+// Saves come from the UI thread and background threads (AeroDataBox
+// counters / verify, quota headers) -- serialize them so two writers can't
+// interleave the disk-key read and the rename.
+static std::mutex _save_mutex;
+
 void storage_save_config(const UserConfig &cfg) {
-    mkdir(config_dir().c_str(), 0755); // ignores EEXIST -- fine either way
+    std::lock_guard<std::mutex> save_lock(_save_mutex);
+    platform_mkdirs(config_dir().c_str());
 
     // API keys (and the billing renew day) are only ever written by
     // tools/set_api_keys.py -- the app never edits them. Take them from the
@@ -297,15 +304,14 @@ void storage_save_config(const UserConfig &cfg) {
     doc["last_rng"] = cfg.last_range_idx;
     doc["last_loc"] = cfg.last_location_name;
 
-    FILE *f = fopen(config_file_path().c_str(), "w");
-    if (!f) {
-        platform_log_error("Storage: failed to open %s for writing\n", config_file_path().c_str());
-        return;
-    }
+    // Atomic replace: a power cut mid-save used to leave a truncated file,
+    // which loads as defaults -- losing every API key.
     std::string out;
     serializeJson(doc, out);
-    fwrite(out.data(), 1, out.size(), f);
-    fclose(f);
+    if (!platform_write_file_atomic(config_file_path().c_str(), out.data(), out.size())) {
+        platform_log_error("Storage: failed to write %s\n", config_file_path().c_str());
+        return;
+    }
     platform_log_debug("Storage: config saved to %s\n", config_file_path().c_str());
 }
 

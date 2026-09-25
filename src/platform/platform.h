@@ -54,6 +54,16 @@ bool platform_http_get_ex(const char *url, char *out, size_t out_size, size_t *o
 bool platform_config_load(const char *key, void *buf, size_t buf_size, size_t *out_len);
 bool platform_config_save(const char *key, const void *buf, size_t len);
 
+// Create `path` and any missing parent directories (mkdir -p). True if the
+// directory exists afterwards.
+bool platform_mkdirs(const char *path);
+
+// Replace `path` with `len` bytes atomically: write `path`.tmp, fsync, then
+// rename over the original. A crash or power cut leaves either the old file
+// or the new one, never a truncated file. Returns false on any failure
+// (the original is left untouched).
+bool platform_write_file_atomic(const char *path, const void *data, size_t len);
+
 // --- Log ---
 // Levels: DEBUG < INFO < WARN < ERROR. Default minimum is INFO (quiet kiosk
 // journal). WARN/ERROR go to stderr; DEBUG/INFO to stdout (both → journald).
