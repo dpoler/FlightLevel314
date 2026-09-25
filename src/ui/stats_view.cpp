@@ -190,9 +190,9 @@ static void refresh_stats(lv_timer_t *t) {
 
     static int _wx_last_loc = -2;
     int wx_loc = locations_active_index();
-    // Do not blank weather on location change — metar/atis poll restore from
-    // cache synchronously (or set FETCHING). Blanking here raced the cache
-    // restore and made every switch look like a cold refetch.
+    // Weather follows metar/atis status: they restore a fresh cache entry
+    // immediately on a switch, or set FETCHING with empty text on a cold one,
+    // and only ever publish results for the location on screen.
     if (wx_loc != _wx_last_loc) _wx_last_loc = wx_loc;
 
     if (_metar_lbl) {
@@ -209,7 +209,15 @@ static void refresh_stats(lv_timer_t *t) {
                 lv_label_set_text(_metar_lbl, "");
                 break;
             case METAR_FETCHING:
+                // Cold switch: don't leave the previous airport's METAR up.
+                lv_label_set_text(_metar_lbl, "Fetching...");
+                lv_obj_set_style_text_color(_metar_lbl, DIM_COLOR, 0);
+                break;
             case METAR_ERROR:
+                // Keep this location's last good text if it has one; after a
+                // cold switch metar_raw is empty, so this clears the old one.
+                lv_label_set_text(_metar_lbl, metar_raw);
+                lv_obj_set_style_text_color(_metar_lbl, DIM_COLOR, 0);
                 break;
         }
 
