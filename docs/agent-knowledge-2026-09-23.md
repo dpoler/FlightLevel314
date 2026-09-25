@@ -244,7 +244,6 @@ never claim “up to date” falsely.
 Highest-signal leftovers (verify §7.1 in project-knowledge before acting):
 
 - **Follow Mode** — hold; design notes only
-- Bug: editing the active range preset desyncs Map vs range chip
 - VIEW toggle to hide runway lines + labels (zoomed satellite); open
   question: per location, or per location + per view?
 - Per-location range presets (KDEN ~3 nm vs KLGA ~1 nm)

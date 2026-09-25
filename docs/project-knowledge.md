@@ -67,7 +67,6 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
-- Bug: editing the active range preset in Settings desyncs map vs range chip
 - VIEW toggle to hide runway lines + labels (clearer zoomed-in satellite)
 - Per-location range presets (e.g. KDEN max 3 nm, KLGA 1 nm)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
@@ -685,13 +684,13 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   already landed 2026-08-09 — this entry is the remaining ESP32/history/
   known-issues depth, not a from-scratch rewrite.
 
-- **Bug — changing the active range preset desyncs the Map (Dan,
-  2026-09-25)**: on a 5 nm view, change that preset to 2 nm (Settings →
-  Display → Range Presets) → the display jumps to some other range
-  (maybe 20 nm?) while the range chip still reads 5 nm. Cycling the range
-  chip eventually recovers. Suspect the active range is tracked by preset
-  index vs value, and chip text / projection / basemap request aren't all
-  refreshed from the new value on Save. Reproduce in SDL first.
+- ~~**Bug — changing the active range preset desyncs the Map (Dan,
+  2026-09-25)**~~ **done 2026-09-25** — Settings save snapped to
+  `radius_nm` (the *widest* preset) and never refreshed the range chip.
+  Now `range_set_levels()` keeps the current range if still a preset, else
+  its slot; `main.cpp` follows an edited active preset to its new value
+  even if its rank changed (5 -> 30); status bar re-syncs the chip label
+  each refresh.
 
 - **VIEW — hide runway lines + labels (Dan, 2026-09-25)**: a VIEW toggle
   (Map only) to skip runway geometry and runway-end / airport ID labels
@@ -707,8 +706,8 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   larger tightest zoom (KDEN ~3 nm) and small ones a tighter one (KLGA
   ~1 nm). Likely: optional per-location preset array in `locations.json`,
   falling back to the global Settings presets when unset; edit from the
-  location picker details panel. Interacts with the preset bug above —
-  fix that first.
+  location picker details panel. (Preset-edit bug above is fixed; keep
+  its keep-current-range behavior when presets become per-location.)
 
 ### 7.1b Deferred (Dan, 2026-08-09 — do not start)
 
