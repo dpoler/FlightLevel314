@@ -498,10 +498,9 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
         if (views_get_active_index() != VIEW_ARRIVALS) return;
         if (views_swipe_active()) { views_clear_swipe(); return; }
 
-        if (detail_card_is_visible()) {
-            detail_card_hide();
-            return;
-        }
+        // Tapping a row opens (or switches an open card to) that aircraft;
+        // anything else closes an open card.
+        auto miss = []() { if (detail_card_is_visible()) detail_card_hide(); };
 
         lv_point_t point;
         lv_indev_get_point(lv_indev_active(), &point);
@@ -513,10 +512,9 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
         lv_area_t board;
         lv_obj_get_coords(_board_container, &board);
         int ty = point.y - board.y1;
-        if (ty < HEADER_H) return; // title / column headers
+        if (ty < HEADER_H) { miss(); return; } // title / column headers
         int row = (ty - HEADER_H) / ROW_H;
-        if (row < 0 || row >= MAX_ROWS) return;
-        if (!_rows[row].active) return;
+        if (row < 0 || row >= MAX_ROWS || !_rows[row].active) { miss(); return; }
 
         // Look up aircraft by ICAO hex
         if (!_list->lock(pdMS_TO_TICKS(10))) return;
@@ -529,6 +527,7 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
             }
         }
         _list->unlock();
+        miss(); // row's aircraft already gone from the list
     }, LV_EVENT_CLICKED, nullptr);
 
     // Title bar

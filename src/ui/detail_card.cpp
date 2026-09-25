@@ -899,18 +899,22 @@ void detail_card_show(const Aircraft *ac) {
 
     render_grid(ac);
 
-    // === Slide in ===
+    // === Slide in === (skip when switching an already-open card to another
+    // aircraft -- contents were just replaced above, no need to re-animate)
+    const bool was_visible = _visible;
     _visible = true;
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, _card);
-    lv_anim_set_values(&a, LCD_V_RES, LCD_V_RES - CARD_H);
-    lv_anim_set_duration(&a, 300);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-    lv_anim_set_exec_cb(&a, [](void *obj, int32_t v) {
-        lv_obj_set_y((lv_obj_t *)obj, v);
-    });
-    lv_anim_start(&a);
+    if (!was_visible) {
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, _card);
+        lv_anim_set_values(&a, LCD_V_RES, LCD_V_RES - CARD_H);
+        lv_anim_set_duration(&a, 300);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+        lv_anim_set_exec_cb(&a, [](void *obj, int32_t v) {
+            lv_obj_set_y((lv_obj_t *)obj, v);
+        });
+        lv_anim_start(&a);
+    }
 
     // Start live update timer
     lv_timer_resume(_update_timer);

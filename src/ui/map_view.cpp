@@ -1300,14 +1300,10 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         int tx = point.x;
         int ty = point.y;
 
-        if (detail_card_is_visible()) {
-            detail_card_hide();
-            // Keep _tracked_hex — circle stays after closing detail card
-            return;
-        }
-
         // Hit test against aircraft (30px hit radius) -- same filter/hide_ground
         // gating as draw_aircraft(), so a hidden aircraft can't be tapped.
+        // Done before any card-close so tapping another aircraft while a card
+        // is open switches the card to it (used to just close the card).
         if (!_list->lock(pdMS_TO_TICKS(10))) return;
         for (int i = 0; i < _list->count; i++) {
             if (!aircraft_passes_filter(_list->aircraft[i])) continue;
@@ -1326,7 +1322,12 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
             }
         }
         _list->unlock();
-        // Tapped empty space — clear tracking
+        // Tapped empty space: close an open card (tracking circle stays),
+        // otherwise clear tracking.
+        if (detail_card_is_visible()) {
+            detail_card_hide();
+            return;
+        }
         _tracked_hex[0] = '\0';
     }, LV_EVENT_CLICKED, nullptr);
 

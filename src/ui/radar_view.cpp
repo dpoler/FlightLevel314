@@ -773,11 +773,6 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
         int tx = point.x;
         int ty = point.y;
 
-        if (detail_card_is_visible()) {
-            detail_card_hide();
-            return;
-        }
-
         // Hit test (30px radius) -- same filter/hide_ground gating as
         // draw_blips(), so a hidden aircraft can't be tapped.
         if (!_list->lock(pdMS_TO_TICKS(10))) return;
@@ -791,12 +786,14 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
                 if (dx * dx + dy * dy < 900) {
                     Aircraft ac_copy = _list->aircraft[i];
                     _list->unlock();
-                    detail_card_show(&ac_copy);
+                    detail_card_show(&ac_copy); // switches an open card too
                     return;
                 }
             }
         }
         _list->unlock();
+        // Tapped empty space: close an open card.
+        if (detail_card_is_visible()) detail_card_hide();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Filter toggle buttons — vertical stack on right edge (same layout as
