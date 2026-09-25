@@ -249,6 +249,7 @@ Highest-signal leftovers (verify §7.1 in project-knowledge before acting):
 - Test suite (host unit tests for pure logic + CI compile check)
 - Code review 2026-09-26: remaining findings listed in project-knowledge §7.1
 - Satellite with labels (Esri labels overlay) -- project-knowledge §7.1
+- Nearby-airports "eye" -> checkbox in location edit form -- project-knowledge §7.1
 - Optional fresher README LIST/INFO screenshots
 - QoL themes / font size
 

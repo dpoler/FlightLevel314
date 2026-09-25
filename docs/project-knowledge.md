@@ -71,6 +71,7 @@ See §7.1. Highest-signal open items:
 - Test suite (host unit tests for pure logic + CI compile check)
 - Code review 2026-09-26: remaining findings (see §7.1)
 - Satellite with labels (Esri labels overlay composited on imagery)
+- Move the picker's nearby-airports "eye" into the location edit form
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -785,6 +786,15 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   (<=600, fine against 2M/month). Attribution adds the overlay's credits
   (Esri, HERE, Garmin, (c) OpenStreetMap contributors). Labels are baked
   at tile resolution, so they warp with the imagery like CARTO's do.
+
+- **Nearby-airports toggle into location settings (Dan, 2026-09-26)**:
+  remove the "eye" icon from each row of the location picker and make it a
+  checkbox in that location's edit form, e.g. "Show detail of nearby
+  airports" (wording TBD with Dan). It is already per-location
+  (`nearby_enabled` in locations.json); this is UI only. Also offer it on
+  the Add Location form / the post-add airport form. Keep the "+N nearby"
+  badge in the row (or show the setting in the details panel) so it's still
+  visible which locations have it on.
 
 ### 7.1b Deferred (Dan, 2026-08-09 — do not start)
 
