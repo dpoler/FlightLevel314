@@ -47,6 +47,12 @@ void fetcher_request_immediate_fetch() {
     _fetch_cv.notify_all();
 }
 
+void fetcher_wake() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _fetch_wake = true;
+    _fetch_cv.notify_all();
+}
+
 // Called by pi/main.cpp's fetch_loop() in place of a flat
 // std::this_thread::sleep_for(seconds(20)) -- returns early if
 // fetcher_request_immediate_fetch() is called mid-wait.

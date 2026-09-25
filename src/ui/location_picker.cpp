@@ -1107,7 +1107,9 @@ static void edit_save_click_cb(lv_event_t *e) {
             range_apply_edited_presets(old_eff, new_eff);
             g_config.last_range_idx = range_get_index();
             storage_save_config(g_config);
-            fetcher_request_immediate_fetch(); // query radius may have changed
+            // Same site, maybe a new query radius: fetch now but keep the
+            // aircraft list (request_immediate_fetch clears it, dropping trails).
+            fetcher_wake();
         }
         if (moved) {
             map_view_center_on(lat, lon);

@@ -23,6 +23,11 @@ uint32_t fetcher_last_update();
 // before fetcher_init() (a no-op until the semaphore it signals exists).
 void fetcher_request_immediate_fetch();
 
+// Wake the fetch loop now WITHOUT clearing the aircraft list -- for changes
+// at the same site (e.g. a new query radius), where existing traffic and
+// trails stay valid.
+void fetcher_wake();
+
 // Network stats
 struct FetcherStats {
     uint32_t fetch_ok;
