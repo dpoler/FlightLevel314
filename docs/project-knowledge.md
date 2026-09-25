@@ -67,7 +67,9 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
-- Satellite basemap style (Esri or Mapbox; API key OK)
+- Bug: editing the active range preset in Settings desyncs map vs range chip
+- VIEW toggle to hide runway lines + labels (clearer zoomed-in satellite)
+- Per-location range presets (e.g. KDEN max 3 nm, KLGA 1 nm)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -622,20 +624,21 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   Invalid draw buffer; soft-fail patch + `lv_draw_buf_init` bind + abort
   handler. See §6.
 
-- **Satellite basemap style (Dan, 2026-08-12)**: add a VIEW basemap option
-  for satellite/aerial under traffic (same XYZ → mosaic → opacity pipeline).
-  Provider survey (free + API key OK, reasonable limits for baked mosaics
-  + ~30d disk cache, ≤300 tiles/rebuild):
-  - **Prefer Esri World Imagery** via ArcGIS Location Platform (~2M free
-    tiles/mo) or **Mapbox Satellite** (~750k free raster tiles/mo). Both
-    global XYZ + token; attribution required. Do **not** rely on legacy
-    keyless `server.arcgisonline.com` World_Imagery long-term.
-  - MapTiler Satellite: easier signup, but free = non‑commercial + logo
-    and only ~100k requests/mo (tight if Rebuild is thrashed).
-  - USGS NAIP / TNM: free US-only, WMS/ImageServer — more work than XYZ.
-  - Skip Google/Bing/Azure for now.
-  Key in `config.json` (same secrets story as `adbox_key` / provisioning
-  backlog). Do not start unless asked.
+- ~~**Satellite basemap style (Dan, 2026-08-12)**~~ **done 2026-09-25** —
+  VIEW → Basemap → **Satellite** = Esri World Imagery via the ArcGIS basemap
+  layer service (`ibasemaps-api.arcgis.com/.../World_Imagery/MapServer/
+  tile/{z}/{y}/{x}?token=`; 256px JPEG) through the normal mosaic / 30d
+  cache / per-style opacity path. Chose Esri over Mapbox (no selector):
+  2M vs 750k free tiles/mo, text-only attribution (Mapbox needs logo +
+  feedback link), and Mapbox's 12h cache / SDK-offline rules fit the baked
+  mosaic worse. Esri's newer static-tiles service has no plain imagery
+  style (labels overlay only). Key: `esri_key` via `set_api_keys.py
+  --esri-key` (Location Platform key, Basemaps privilege); Settings →
+  Services shows present/missing only — as of 2026-09-24 the endpoint
+  served real tiles even with a bogus token, so a VALID check isn't
+  possible. No key → dark paper + note, no fetch. Same change added a Map
+  credit line (lower-right) for every style + RainViewer; Esri credit text
+  from the service's copyrightText ("Vantor" = ex-Maxar).
 
 - **Map/Radar bullseye declutter**: ~~remove Map range rings; quiet Radar
   (no airport/runway drawing; VIEW "Other Airports" Map-only)~~ —
@@ -681,6 +684,31 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   and that this is a two-repo story). Note: a proper FlightLevel314 README
   already landed 2026-08-09 — this entry is the remaining ESP32/history/
   known-issues depth, not a from-scratch rewrite.
+
+- **Bug — changing the active range preset desyncs the Map (Dan,
+  2026-09-25)**: on a 5 nm view, change that preset to 2 nm (Settings →
+  Display → Range Presets) → the display jumps to some other range
+  (maybe 20 nm?) while the range chip still reads 5 nm. Cycling the range
+  chip eventually recovers. Suspect the active range is tracked by preset
+  index vs value, and chip text / projection / basemap request aren't all
+  refreshed from the new value on Save. Reproduce in SDL first.
+
+- **VIEW — hide runway lines + labels (Dan, 2026-09-25)**: a VIEW toggle
+  (Map only) to skip runway geometry and runway-end / airport ID labels
+  from the nearby-runways cache. Main use: a tightly zoomed satellite view
+  where the imagery already shows the runways. Per-view flag stored like
+  the other VIEW toggles. **Open question (Dan):** should the setting be
+  per location, or per location *and* per view (Map vs Radar)? Decide
+  before implementing. Note: Radar draws no runways today (by design), so
+  "per view" only matters if that changes.
+
+- **Per-location range presets (Dan, 2026-09-25)**: move range presets
+  from one global set to per saved location / airport. Big airports want a
+  larger tightest zoom (KDEN ~3 nm) and small ones a tighter one (KLGA
+  ~1 nm). Likely: optional per-location preset array in `locations.json`,
+  falling back to the global Settings presets when unset; edit from the
+  location picker details panel. Interacts with the preset bug above —
+  fix that first.
 
 ### 7.1b Deferred (Dan, 2026-08-09 — do not start)
 

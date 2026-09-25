@@ -222,6 +222,10 @@ map. Rebuild on location/range/style change; cache on disk.
 Weather radar overlay optional (`pi/weather.cpp`); intensity floor tweaks
 have landed in recent PRs.
 
+Satellite style (2026-09-25): Esri World Imagery, `esri_key` via
+`set_api_keys.py --esri-key`; Map draws a provider credit line lower-right.
+Details in project-knowledge §7.1.
+
 **Follow Mode** (not built): tracking a flight would fight mosaic-recenter
 vs ADS-B query-center — design notes in project-knowledge §7.1; **hold**.
 
@@ -240,7 +244,10 @@ never claim “up to date” falsely.
 Highest-signal leftovers (verify §7.1 in project-knowledge before acting):
 
 - **Follow Mode** — hold; design notes only
-- Satellite basemap style (Esri/Mapbox; key OK)
+- Bug: editing the active range preset desyncs Map vs range chip
+- VIEW toggle to hide runway lines + labels (zoomed satellite); open
+  question: per location, or per location + per view?
+- Per-location range presets (KDEN ~3 nm vs KLGA ~1 nm)
 - Optional fresher README LIST/INFO screenshots
 - QoL themes / font size
 
