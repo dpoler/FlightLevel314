@@ -77,20 +77,22 @@ const char *map_basemap_style_name() {
     case MAP_BASEMAP_STYLE_LIGHT:          return "Light";
     case MAP_BASEMAP_STYLE_LIGHT_NOLABELS: return "Light (no labels)";
     case MAP_BASEMAP_STYLE_TOPO:           return "Topo";
+    case MAP_BASEMAP_STYLE_SATELLITE:      return "Satellite";
     case MAP_BASEMAP_STYLE_DARK:
     default:                               return "Dark";
     }
 }
 
 void map_basemap_style_cycle() {
-    // Dark → Dark NL → Light → Light NL → Topo → Sectional → …
+    // Dark → Dark NL → Light → Light NL → Topo → Satellite → Sectional → …
     // Indices 0–3 kept stable so older saved styles still resolve.
     switch (g_config.map_basemap_style) {
     case MAP_BASEMAP_STYLE_DARK:           g_config.map_basemap_style = MAP_BASEMAP_STYLE_DARK_NOLABELS; break;
     case MAP_BASEMAP_STYLE_DARK_NOLABELS:  g_config.map_basemap_style = MAP_BASEMAP_STYLE_LIGHT; break;
     case MAP_BASEMAP_STYLE_LIGHT:          g_config.map_basemap_style = MAP_BASEMAP_STYLE_LIGHT_NOLABELS; break;
     case MAP_BASEMAP_STYLE_LIGHT_NOLABELS: g_config.map_basemap_style = MAP_BASEMAP_STYLE_TOPO; break;
-    case MAP_BASEMAP_STYLE_TOPO:            g_config.map_basemap_style = MAP_BASEMAP_STYLE_SECTIONAL; break;
+    case MAP_BASEMAP_STYLE_TOPO:            g_config.map_basemap_style = MAP_BASEMAP_STYLE_SATELLITE; break;
+    case MAP_BASEMAP_STYLE_SATELLITE:       g_config.map_basemap_style = MAP_BASEMAP_STYLE_SECTIONAL; break;
     case MAP_BASEMAP_STYLE_SECTIONAL:
     default:                               g_config.map_basemap_style = MAP_BASEMAP_STYLE_DARK; break;
     }
@@ -111,11 +113,12 @@ static const int k_style_dropdown_order[MAP_BASEMAP_STYLE_COUNT] = {
     MAP_BASEMAP_STYLE_LIGHT,
     MAP_BASEMAP_STYLE_LIGHT_NOLABELS,
     MAP_BASEMAP_STYLE_TOPO,
+    MAP_BASEMAP_STYLE_SATELLITE,
     MAP_BASEMAP_STYLE_SECTIONAL,
 };
 
 const char *map_basemap_style_dropdown_opts() {
-    return "Dark\nDark (no labels)\nLight\nLight (no labels)\nTopo\nVFR Sectional (US)";
+    return "Dark\nDark (no labels)\nLight\nLight (no labels)\nTopo\nSatellite\nVFR Sectional (US)";
 }
 
 int map_basemap_style_to_dropdown_index(int style) {

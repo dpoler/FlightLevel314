@@ -36,6 +36,11 @@ bool basemap_sectional_covered(float lat, float lon);
 // (e.g. sectional outside the US). LVGL-thread safe; string is static.
 const char *basemap_unavailable_message(void);
 
+// Credit line required by the active style's tile provider (ASCII "(c)" --
+// Montserrat has no U+00A9). Empty when the basemap is hidden or unavailable.
+// LVGL-thread safe; string is static.
+const char *basemap_attribution(void);
+
 // True while a network/build is in progress for the current request
 // (not shown for instant disk-cache hits). *out_pct is 0..100 best-effort
 // progress; pass nullptr if unused. LVGL-thread safe.

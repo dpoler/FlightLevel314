@@ -1112,6 +1112,30 @@ static void draw_filter_label(lv_layer_t *layer) {
     lv_draw_label(layer, &lbl, &la);
 }
 
+#if !defined(ARDUINO)
+// Tile-provider credit, bottom-right (left of it is the legend). Required by
+// CARTO / OpenStreetMap / OpenTopoMap / Esri / RainViewer terms.
+static void draw_basemap_attribution(lv_layer_t *layer) {
+    char buf[200];
+    const char *bm = basemap_attribution();
+    const char *wx = map_weather_shown() ? "Weather: RainViewer" : "";
+    snprintf(buf, sizeof(buf), "%s%s%s", bm, (bm[0] && wx[0]) ? " | " : "", wx);
+    if (!buf[0]) return;
+
+    lv_draw_label_dsc_t lbl;
+    lv_draw_label_dsc_init(&lbl);
+    lbl.color = map_basemap_light_paper() ? lv_color_hex(0x333344) : lv_color_hex(0xaaaacc);
+    lbl.font = &lv_font_montserrat_10;
+    lbl.opa = LV_OPA_80;
+    lbl.align = LV_TEXT_ALIGN_RIGHT;
+    lbl.text = buf;
+    lbl.text_local = 1;
+    lv_area_t la = {(lv_coord_t)(LEGEND_X0 + LEGEND_W + 16), (lv_coord_t)(LCD_V_RES - 16),
+                    (lv_coord_t)(CANVAS_W - 8), (lv_coord_t)(LCD_V_RES - 2)};
+    lv_draw_label(layer, &lbl, &la);
+}
+#endif
+
 #if HAS_STATIC_MAP
 static lv_image_dsc_t _static_map_dscs[STATIC_MAP_COUNT];
 static bool _static_maps_inited = false;
@@ -1205,6 +1229,9 @@ static void canvas_draw_cb(lv_event_t *e) {
     draw_icon_legend(layer);
     draw_altitude_legend(layer);
     draw_filter_label(layer);
+#if !defined(ARDUINO)
+    draw_basemap_attribution(layer);
+#endif
 }
 
 void map_view_init(lv_obj_t *parent, AircraftList *list) {

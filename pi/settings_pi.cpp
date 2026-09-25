@@ -58,6 +58,7 @@ static lv_obj_t *_sw_adbox_en = nullptr;
 static lv_obj_t *_dd_adbox_prov = nullptr;
 static lv_obj_t *_adbox_usage_val = nullptr;
 static lv_obj_t *_carto_key_val = nullptr;
+static lv_obj_t *_esri_key_val = nullptr;
 static lv_obj_t *_ota_ver_val = nullptr;
 static lv_obj_t *_ota_status_lbl = nullptr;
 static lv_obj_t *_ota_btn_lbl = nullptr;
@@ -260,6 +261,15 @@ static void refresh_key_presence_ui() {
         } else {
             lv_obj_set_style_text_color(_carto_key_val, WARN_COLOR, 0);
             lv_label_set_text(_carto_key_val, "missing");
+        }
+    }
+    if (_esri_key_val) {
+        if (_cfg.esri_basemap_key[0]) {
+            lv_obj_set_style_text_color(_esri_key_val, SYS_COLOR, 0);
+            lv_label_set_text(_esri_key_val, "present");
+        } else {
+            lv_obj_set_style_text_color(_esri_key_val, WARN_COLOR, 0);
+            lv_label_set_text(_esri_key_val, "missing");
         }
     }
 
@@ -806,6 +816,13 @@ static const char *const HELP_CARTO[2] = {
     "Free key at carto.com/basemaps/apikey."
 };
 
+static const char *const HELP_ESRI[2] = {
+    "Esri satellite",
+    "Needed for the Satellite basemap style (Esri World Imagery). "
+    "Free ArcGIS Location Platform key with the Basemaps privilege "
+    "at location.arcgis.com (2M tiles/month free)."
+};
+
 static const char *const HELP_TRAFFIC[2] = {
     "Traffic source",
     "Selects the ADS-B feed provider for live traffic."
@@ -1162,6 +1179,10 @@ void settings_init(lv_obj_t *parent) {
     create_label(tab_services, "CARTO BASEMAP", 0, 412);
     make_help_btn(tab_services, 160, 408, HELP_CARTO);
     _carto_key_val = create_inline_row(tab_services, "KEY", 0, 444, 60);
+
+    create_label(tab_services, "ESRI SATELLITE", 0, 496);
+    make_help_btn(tab_services, 160, 492, HELP_ESRI);
+    _esri_key_val = create_inline_row(tab_services, "KEY", 0, 528, 60);
 
     // --- System: version / OTA, host info, diagnostics, destructive actions ---
     // Compact vertical rhythm so Clear/Factory fit above the footer on 620px.

@@ -129,7 +129,8 @@ the running kiosk — the service uses `/opt/flightlevel314/.config/…`.
 sudo python3 tools/set_api_keys.py \
   --apt-tok 'YOUR_AIRPORTDB_TOKEN' \
   --adbox-key 'YOUR_AERODATABOX_KEY' \
-  --carto-key 'YOUR_CARTO_BASEMAP_KEY'
+  --carto-key 'YOUR_CARTO_BASEMAP_KEY' \
+  --esri-key 'YOUR_ARCGIS_LOCATION_PLATFORM_KEY'
 
 # Optional gateway: 0=RapidAPI, 1=API.Market, 2=Direct
 sudo python3 tools/set_api_keys.py --adbox-prov 0
@@ -150,6 +151,14 @@ with “API key required”. After setting `carto_key`, use **VIEW → Basemap �
 Rebuild map** (or restart) so old watermarked mosaics are replaced. OpenTopo
 and FAA VFR sectional styles do not use this key.
 
+**Esri key (required for the Satellite style):** create a free
+[ArcGIS Location Platform](https://location.arcgis.com/) account and an API
+key with the **Basemaps** privilege (2M basemap tiles/month free; a map
+rebuild uses at most ~300). After setting `esri_key`, restart and pick
+**VIEW → Basemap → Satellite**. Without a key the style shows a note instead
+of fetching tiles. Tile-provider credits appear in the Map's lower-right
+corner.
+
 Then open **Settings** (gear) → **API KEYS** → confirm VALID → ENABLE
 AirportDB / AeroDataBox. Or restart the service:
 
@@ -169,6 +178,7 @@ sudo -u flightlevel314 nano /opt/flightlevel314/.config/flightlevel314/config.js
   "adbox_key": "your-aerodatabox-key",
   "adbox_prov": 0,
   "carto_key": "your-carto-basemap-key",
+  "esri_key": "your-arcgis-location-platform-key",
   "traffic_prov": 0
 }
 ```

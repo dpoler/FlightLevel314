@@ -38,14 +38,16 @@ void secondary_locations_toggle();
 // stored per style (each remembers its own). map_basemap_opa_set() does not
 // persist — caller saves on slider release (same split as trails_amount_set).
 // Styles: 0=dark, 1=dark no labels, 2=sectional, 3=light (Carto Voyager cream),
-// 4=light no labels, 5=OpenTopoMap (labels baked into tiles).
+// 4=light no labels, 5=OpenTopoMap (labels baked into tiles),
+// 6=Esri World Imagery satellite (needs esri_key).
 #define MAP_BASEMAP_STYLE_DARK 0
 #define MAP_BASEMAP_STYLE_DARK_NOLABELS 1
 #define MAP_BASEMAP_STYLE_SECTIONAL 2
 #define MAP_BASEMAP_STYLE_LIGHT 3
 #define MAP_BASEMAP_STYLE_LIGHT_NOLABELS 4
 #define MAP_BASEMAP_STYLE_TOPO 5
-#define MAP_BASEMAP_STYLE_COUNT 6
+#define MAP_BASEMAP_STYLE_SATELLITE 6
+#define MAP_BASEMAP_STYLE_COUNT 7
 
 bool map_basemap_shown();
 void map_basemap_toggle();

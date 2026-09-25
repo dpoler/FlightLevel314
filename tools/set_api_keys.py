@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Merge AirportDB / AeroDataBox / CARTO API keys into FlightLevel314 config.json.
+"""Merge AirportDB / AeroDataBox / CARTO / Esri API keys into FlightLevel314 config.json.
 
 Secrets are never typed on the touchscreen. This script is the supported
-SSH/kiosk path for putting apt_tok / adbox_key / carto_key onto the Pi.
+SSH/kiosk path for putting apt_tok / adbox_key / carto_key / esri_key onto the Pi.
 Also sets optional AeroDataBox billing renewal day (adbox_renew_day).
 
 Default target (systemd kiosk):
@@ -11,6 +11,7 @@ Default target (systemd kiosk):
 Examples:
   sudo python3 tools/set_api_keys.py --apt-tok TOKEN --adbox-key KEY
   sudo python3 tools/set_api_keys.py --carto-key KEY
+  sudo python3 tools/set_api_keys.py --esri-key KEY
   sudo python3 tools/set_api_keys.py --adbox-renew-day 9
   sudo python3 tools/set_api_keys.py --config /path/to/config.json --apt-tok TOKEN
   python3 tools/set_api_keys.py --print-path
@@ -22,6 +23,10 @@ CARTO: free key from https://carto.com/basemaps/apikey — required for
 dark / voyager raster basemap styles (otherwise tiles are watermarked
 "API key required"). Then VIEW → Basemap → Rebuild map (or wait for
 cache miss) so watermarked mosaics are replaced.
+
+Esri: free ArcGIS Location Platform API key (location.arcgis.com) with the
+Basemaps privilege — required for the Satellite basemap style (Esri World
+Imagery, 2M tiles/month free). Restart, then VIEW → Basemap → Satellite.
 """
 
 from __future__ import annotations
@@ -95,6 +100,11 @@ def main() -> int:
         help="CARTO basemap API key → carto_key (free: carto.com/basemaps/apikey)",
     )
     ap.add_argument(
+        "--esri-key",
+        help="ArcGIS Location Platform API key (Basemaps privilege) → esri_key "
+        "for the Satellite basemap (free: location.arcgis.com)",
+    )
+    ap.add_argument(
         "--adbox-prov",
         type=int,
         choices=(0, 1, 2),
@@ -129,10 +139,12 @@ def main() -> int:
         apt = bool(doc.get("apt_tok"))
         adb = bool(doc.get("adbox_key"))
         carto = bool(doc.get("carto_key"))
+        esri = bool(doc.get("esri_key"))
         print(f"{path}")
         print(f"  apt_tok:   {'present' if apt else 'missing'}")
         print(f"  adbox_key: {'present' if adb else 'missing'}")
         print(f"  carto_key: {'present' if carto else 'missing'}")
+        print(f"  esri_key:  {'present' if esri else 'missing'}")
         if "adbox_prov" in doc:
             print(f"  adbox_prov: {doc.get('adbox_prov')}")
         renew = doc.get("adbox_renew_day", 0)
@@ -144,10 +156,11 @@ def main() -> int:
         and args.adbox_key is None
         and args.adbox_prov is None
         and args.carto_key is None
+        and args.esri_key is None
         and args.adbox_renew_day is None
     ):
         ap.error(
-            "pass --apt-tok / --adbox-key / --carto-key / --adbox-renew-day "
+            "pass --apt-tok / --adbox-key / --carto-key / --esri-key / --adbox-renew-day "
             "(and optional --adbox-prov), or use --show / --print-path"
         )
 
@@ -160,6 +173,8 @@ def main() -> int:
         doc["adbox_key"] = args.adbox_key.strip()
     if args.carto_key is not None:
         doc["carto_key"] = args.carto_key.strip()
+    if args.esri_key is not None:
+        doc["esri_key"] = args.esri_key.strip()
     if args.adbox_prov is not None:
         doc["adbox_prov"] = args.adbox_prov
     if args.adbox_renew_day is not None:
@@ -177,12 +192,15 @@ def main() -> int:
     print(f"  apt_tok:   {'set' if doc.get('apt_tok') else 'empty'}")
     print(f"  adbox_key: {'set' if doc.get('adbox_key') else 'empty'}")
     print(f"  carto_key: {'set' if doc.get('carto_key') else 'empty'}")
+    print(f"  esri_key:  {'set' if doc.get('esri_key') else 'empty'}")
     renew = doc.get("adbox_renew_day", 0)
     print(f"  adbox_renew_day: {renew if renew else 'unset'}")
     print("Next: open Settings → API KEYS (VALID / ENABLE), or:")
     print("  sudo systemctl restart flightlevel314")
     if doc.get("carto_key"):
         print("For basemap: VIEW → Basemap → Rebuild map (clears watermarked cache).")
+    if args.esri_key:
+        print("For satellite: restart, then VIEW → Basemap → Satellite.")
     return 0
 
 

@@ -74,8 +74,9 @@ static UserConfig defaults() {
         cfg.view_show_secondary_locations[i] = true;
     }
     cfg.carto_basemap_key[0] = '\0';
+    cfg.esri_basemap_key[0] = '\0';
     cfg.map_basemap_enabled = true;
-    for (int i = 0; i < 6; i++) cfg.map_basemap_opa[i] = 50;
+    for (int i = 0; i < 7; i++) cfg.map_basemap_opa[i] = 50;
     cfg.map_basemap_style = 0;
     cfg.map_weather_enabled = false;
     cfg.map_weather_opa = 60;
@@ -171,12 +172,14 @@ UserConfig storage_load_config() {
     cfg.view_show_secondary_locations[1] = doc["show2loc1"] | cfg.view_show_secondary_locations[1];
     strlcpy(cfg.carto_basemap_key, doc["carto_key"] | cfg.carto_basemap_key,
             sizeof(cfg.carto_basemap_key));
+    strlcpy(cfg.esri_basemap_key, doc["esri_key"] | cfg.esri_basemap_key,
+            sizeof(cfg.esri_basemap_key));
     cfg.map_basemap_enabled = doc["bm_on"] | cfg.map_basemap_enabled;
     // Legacy single bm_opa seeds all styles if per-style keys are absent.
     int legacy_opa = doc["bm_opa"] | 50;
     if (legacy_opa < 10) legacy_opa = 10;
     if (legacy_opa > 100) legacy_opa = 100;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         char key[12];
         snprintf(key, sizeof(key), "bm_opa%d", i);
         cfg.map_basemap_opa[i] = doc[key] | legacy_opa;
@@ -185,7 +188,7 @@ UserConfig storage_load_config() {
     }
     cfg.map_basemap_style = doc["bm_style"] | cfg.map_basemap_style;
     if (cfg.map_basemap_style < 0) cfg.map_basemap_style = 0;
-    if (cfg.map_basemap_style > 5) cfg.map_basemap_style = 5;
+    if (cfg.map_basemap_style > 6) cfg.map_basemap_style = 6;
     cfg.map_weather_enabled = doc["wx_on"] | cfg.map_weather_enabled;
     cfg.map_weather_opa = doc["wx_opa"] | cfg.map_weather_opa;
     if (cfg.map_weather_opa < 10) cfg.map_weather_opa = 10;
@@ -256,8 +259,9 @@ void storage_save_config(const UserConfig &cfg) {
     doc["show2loc0"] = cfg.view_show_secondary_locations[0];
     doc["show2loc1"] = cfg.view_show_secondary_locations[1];
     doc["carto_key"] = cfg.carto_basemap_key;
+    doc["esri_key"] = cfg.esri_basemap_key;
     doc["bm_on"] = cfg.map_basemap_enabled;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         char key[12];
         snprintf(key, sizeof(key), "bm_opa%d", i);
         doc[key] = cfg.map_basemap_opa[i];

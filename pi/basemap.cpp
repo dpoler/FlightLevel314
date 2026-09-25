@@ -122,6 +122,7 @@ const char *style_cache_tag(int style) {
     case MAP_BASEMAP_STYLE_LIGHT:          return "voyager";
     case MAP_BASEMAP_STYLE_LIGHT_NOLABELS: return "voyagernl";
     case MAP_BASEMAP_STYLE_TOPO:           return "opentopo";
+    case MAP_BASEMAP_STYLE_SATELLITE:      return "esriimg";
     case MAP_BASEMAP_STYLE_DARK:
     default:                               return "dark";
     }
@@ -134,6 +135,9 @@ int style_cache_ttl_days(int style) {
         return 40;
     case MAP_BASEMAP_STYLE_TOPO:
         // Contours/landcover move slowly; same ballpark as OSM.
+        return 30;
+    case MAP_BASEMAP_STYLE_SATELLITE:
+        // Imagery refreshes are infrequent; OSM-like TTL.
         return 30;
     case MAP_BASEMAP_STYLE_DARK:
     case MAP_BASEMAP_STYLE_DARK_NOLABELS:
@@ -414,6 +418,16 @@ void format_tile_url(char *buf, size_t buflen, int style, int z, int x, int y) {
                  "https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/"
                  "VFR_Sectional/MapServer/tile/%d/%d/%d",
                  z, y, x);
+        break;
+    case MAP_BASEMAP_STYLE_SATELLITE:
+        // Esri World Imagery via the ArcGIS basemap layer service (256px
+        // JPEG, /tile/{z}/{y}/{x}). Billed against the Location Platform
+        // key's free 2M basemap tiles/month. basemap_request() refuses this
+        // style without a key, so there is always a token here.
+        snprintf(buf, buflen,
+                 "https://ibasemaps-api.arcgis.com/arcgis/rest/services/"
+                 "World_Imagery/MapServer/tile/%d/%d/%d?token=%s",
+                 z, y, x, g_config.esri_basemap_key);
         break;
     case MAP_BASEMAP_STYLE_DARK:
     default:
@@ -741,7 +755,7 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
             int wtx = tx % n;
             if (wtx < 0) wtx += n;
             TileFetch job;
-            char url[320];
+            char url[768]; // Esri Location Platform tokens can be ~300 chars
             format_tile_url(url, sizeof(url), slot.style, z, wtx, ty);
             job.url = url;
             job.dst_x = (tx - tx0) * TILE_PX;
@@ -926,8 +940,13 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     }
 
     // FAA VFR sectionals only cover US chart areas — don't fetch empty tiles
-    // (gray paper after a pointless progress bar) for EGLL / etc.
-    if (style == MAP_BASEMAP_STYLE_SECTIONAL && !basemap_sectional_covered(lat, lon)) {
+    // (gray paper after a pointless progress bar) for EGLL / etc. Satellite
+    // needs an Esri key; without one, show a note instead of fetching.
+    const bool sectional_oob =
+        style == MAP_BASEMAP_STYLE_SECTIONAL && !basemap_sectional_covered(lat, lon);
+    const bool satellite_nokey =
+        style == MAP_BASEMAP_STYLE_SATELLITE && !g_config.esri_basemap_key[0];
+    if (sectional_oob || satellite_nokey) {
         std::lock_guard<std::mutex> lock(g_mu);
         g_req_lat = lat;
         g_req_lon = lon;
@@ -943,8 +962,12 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
         g_unavailable = true;
         g_prog_visible = false;
         g_prog_pct = 0;
-        platform_log_info("Basemap: VFR sectional not available at %.2f,%.2f — skip fetch\n",
-                     lat, lon);
+        if (sectional_oob)
+            platform_log_info("Basemap: VFR sectional not available at %.2f,%.2f — skip fetch\n",
+                         lat, lon);
+        else
+            platform_log_warn("Basemap: satellite needs an Esri key "
+                         "(tools/set_api_keys.py --esri-key) — skip fetch\n");
         return;
     }
 
@@ -996,10 +1019,11 @@ bool basemap_poll_swap(void) {
 void basemap_draw(lv_layer_t *layer) {
     if (!map_basemap_shown()) return;
 
-    if (g_unavailable && g_req_style == MAP_BASEMAP_STYLE_SECTIONAL) {
-        // Static chart-paper fill + corner note (no tile fetch).
+    if (g_unavailable) {
+        // Static paper fill + corner note (no tile fetch).
+        const bool sectional = g_req_style == MAP_BASEMAP_STYLE_SECTIONAL;
         uint8_t pr, pg, pb;
-        style_paper_rgb(MAP_BASEMAP_STYLE_SECTIONAL, pr, pg, pb);
+        style_paper_rgb(g_req_style, pr, pg, pb);
         lv_draw_rect_dsc_t rd;
         lv_draw_rect_dsc_init(&rd);
         rd.bg_color = lv_color_make(pr, pg, pb);
@@ -1010,12 +1034,15 @@ void basemap_draw(lv_layer_t *layer) {
 
         lv_draw_label_dsc_t ld;
         lv_draw_label_dsc_init(&ld);
-        ld.color = lv_color_hex(0x333322);
+        ld.color = sectional ? lv_color_hex(0x333322) : lv_color_hex(0xaaaacc);
         ld.font = &lv_font_montserrat_14;
         ld.align = LV_TEXT_ALIGN_LEFT;
         ld.opa = LV_OPA_COVER;
-        ld.text = "VFR sectional basemap not available outside of US.\n"
-                  "Select another basemap for this location.";
+        ld.text = sectional
+            ? "VFR sectional basemap not available outside of US.\n"
+              "Select another basemap for this location."
+            : "Satellite basemap needs an Esri API key.\n"
+              "Set it with tools/set_api_keys.py --esri-key.";
         // Upper-left of the map canvas (above legend at bottom).
         lv_area_t ta = {12, 12,
                         (lv_coord_t)(g_req_w - 12), 68};
@@ -1056,7 +1083,29 @@ const char *basemap_unavailable_message(void) {
     if (!g_unavailable) return nullptr;
     if (g_req_style == MAP_BASEMAP_STYLE_SECTIONAL)
         return "VFR sectional not available outside US";
+    if (g_req_style == MAP_BASEMAP_STYLE_SATELLITE)
+        return "Satellite needs Esri API key";
     return nullptr;
+}
+
+const char *basemap_attribution(void) {
+    if (!map_basemap_shown() || g_unavailable) return "";
+    switch (g_req_style) {
+    case MAP_BASEMAP_STYLE_SATELLITE:
+        // Esri requires "Powered by Esri" plus the service's copyrightText.
+        return "Powered by Esri | Source: Esri, Vantor, Earthstar Geographics, "
+               "and the GIS User Community";
+    case MAP_BASEMAP_STYLE_TOPO:
+        return "(c) OpenStreetMap contributors, SRTM | (c) OpenTopoMap (CC-BY-SA)";
+    case MAP_BASEMAP_STYLE_SECTIONAL:
+        return "Charts: FAA";
+    case MAP_BASEMAP_STYLE_DARK:
+    case MAP_BASEMAP_STYLE_DARK_NOLABELS:
+    case MAP_BASEMAP_STYLE_LIGHT:
+    case MAP_BASEMAP_STYLE_LIGHT_NOLABELS:
+    default:
+        return "(c) OpenStreetMap contributors (c) CARTO";
+    }
 }
 
 bool basemap_ready(void) {

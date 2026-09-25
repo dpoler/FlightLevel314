@@ -97,14 +97,18 @@ struct UserConfig {
     // Radar but kept in the shared UserConfig JSON schema.
     // Defaults: on at 50% opacity, Carto dark_all.
     // Style: 0=Carto dark, 1=Carto dark (no labels), 2=FAA VFR sectional,
-    // 3=Carto voyager (cream light), 4=voyager no labels, 5=OpenTopoMap.
+    // 3=Carto voyager (cream light), 4=voyager no labels, 5=OpenTopoMap,
+    // 6=Esri World Imagery (satellite).
     // Opacity is per-style.
     // Carto raster tiles require a free API key (carto.com/basemaps/apikey)
     // or they return PNGs watermarked "API key required". Not used for
     // OpenTopo / FAA sectional.
     char carto_basemap_key[80];
+    // ArcGIS Location Platform API key (Basemaps privilege) for the
+    // satellite style. Location Platform keys can run ~300 chars.
+    char esri_basemap_key[512];
     bool map_basemap_enabled;
-    int map_basemap_opa[6];         // 10-100 percent per style (default 50)
+    int map_basemap_opa[7];         // 10-100 percent per style (default 50)
     int map_basemap_style;          // see display_prefs / basemap styles
 
     // Pi Map weather overlay (RainViewer precip radar). Unused on Radar
