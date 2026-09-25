@@ -98,7 +98,7 @@ struct UserConfig {
     // Defaults: on at 50% opacity, Carto dark_all.
     // Style: 0=Carto dark, 1=Carto dark (no labels), 2=FAA VFR sectional,
     // 3=Carto voyager (cream light), 4=voyager no labels, 5=OpenTopoMap,
-    // 6=Esri World Imagery (satellite).
+    // 6=Esri World Imagery (satellite), 7=satellite + Esri labels.
     // Opacity is per-style.
     // Carto raster tiles require a free API key (carto.com/basemaps/apikey)
     // or they return PNGs watermarked "API key required". Not used for
@@ -108,7 +108,7 @@ struct UserConfig {
     // satellite style. Location Platform keys can run ~300 chars.
     char esri_basemap_key[512];
     bool map_basemap_enabled;
-    int map_basemap_opa[7];         // 10-100 percent per style (default 50)
+    int map_basemap_opa[8];         // 10-100 percent per style (default 50)
     int map_basemap_style;          // see display_prefs / basemap styles
 
     // Pi Map weather overlay (RainViewer precip radar). Unused on Radar

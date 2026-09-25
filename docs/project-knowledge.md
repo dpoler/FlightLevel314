@@ -70,7 +70,6 @@ See §7.1. Highest-signal open items:
 - VIEW toggle to hide runway lines + labels (clearer zoomed-in satellite)
 - Test suite (host unit tests for pure logic + CI compile check)
 - Code review 2026-09-26: remaining findings (see §7.1)
-- Satellite with labels (Esri labels overlay composited on imagery)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -760,7 +759,12 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
     Wi-Fi icon always green; chip label stale after factory reset;
     /dev/dri/card0 hardcoded.
 
-- **Satellite with labels (Dan, 2026-09-26)**: add "Satellite (labels)"
+- ~~**Satellite with labels (Dan, 2026-09-26)**~~ **done 2026-09-26** --
+  style 7 "Satellite (labels)": imagery as style 6 + labels from the static
+  basemap tiles service `arcgis/imagery/labels` (512px, level z-1), fetched
+  into an overlay and composited after the blur; label failures show
+  imagery but skip caching. (ibasemaps-api Reference layer = 404 with a
+  real key, confirmed 2026-09-26.) Original note: add "Satellite (labels)"
   next to plain Satellite, like Dark / Dark (no labels). Esri publishes a
   transparent labels-only overlay for World Imagery:
   - Basemap layer service `.../Reference/World_Boundaries_and_Places/

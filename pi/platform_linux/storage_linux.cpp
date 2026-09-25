@@ -77,7 +77,7 @@ static UserConfig defaults() {
     cfg.carto_basemap_key[0] = '\0';
     cfg.esri_basemap_key[0] = '\0';
     cfg.map_basemap_enabled = true;
-    for (int i = 0; i < 7; i++) cfg.map_basemap_opa[i] = 50;
+    for (int i = 0; i < 8; i++) cfg.map_basemap_opa[i] = 50;
     cfg.map_basemap_style = 0;
     cfg.map_weather_enabled = false;
     cfg.map_weather_opa = 60;
@@ -176,7 +176,7 @@ static LoadResult load_file(UserConfig &cfg) {
     int legacy_opa = doc["bm_opa"] | 50;
     if (legacy_opa < 10) legacy_opa = 10;
     if (legacy_opa > 100) legacy_opa = 100;
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
         char key[12];
         snprintf(key, sizeof(key), "bm_opa%d", i);
         cfg.map_basemap_opa[i] = doc[key] | legacy_opa;
@@ -185,7 +185,7 @@ static LoadResult load_file(UserConfig &cfg) {
     }
     cfg.map_basemap_style = doc["bm_style"] | cfg.map_basemap_style;
     if (cfg.map_basemap_style < 0) cfg.map_basemap_style = 0;
-    if (cfg.map_basemap_style > 6) cfg.map_basemap_style = 6;
+    if (cfg.map_basemap_style > 7) cfg.map_basemap_style = 7;
     cfg.map_weather_enabled = doc["wx_on"] | cfg.map_weather_enabled;
     cfg.map_weather_opa = doc["wx_opa"] | cfg.map_weather_opa;
     if (cfg.map_weather_opa < 10) cfg.map_weather_opa = 10;
@@ -291,7 +291,7 @@ void storage_save_config(const UserConfig &cfg) {
     doc["carto_key"] = keys.carto_basemap_key;
     doc["esri_key"] = keys.esri_basemap_key;
     doc["bm_on"] = cfg.map_basemap_enabled;
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
         char key[12];
         snprintf(key, sizeof(key), "bm_opa%d", i);
         doc[key] = cfg.map_basemap_opa[i];

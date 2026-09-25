@@ -126,6 +126,7 @@ const char *style_cache_tag(int style) {
     case MAP_BASEMAP_STYLE_LIGHT_NOLABELS: return "voyagernl";
     case MAP_BASEMAP_STYLE_TOPO:           return "opentopo";
     case MAP_BASEMAP_STYLE_SATELLITE:      return "esriimg";
+    case MAP_BASEMAP_STYLE_SATELLITE_LABELS: return "esriimgl";
     case MAP_BASEMAP_STYLE_DARK:
     default:                               return "dark";
     }
@@ -140,6 +141,7 @@ int style_cache_ttl_days(int style) {
         // Contours/landcover move slowly; same ballpark as OSM.
         return 30;
     case MAP_BASEMAP_STYLE_SATELLITE:
+    case MAP_BASEMAP_STYLE_SATELLITE_LABELS:
         // Imagery refreshes are infrequent; OSM-like TTL.
         return 30;
     case MAP_BASEMAP_STYLE_DARK:
@@ -216,6 +218,7 @@ struct TileFetch {
     std::string url;
     int dst_x = 0;
     int dst_y = 0;
+    int tile_px = TILE_PX; // decoded size (Esri static labels tiles: 512)
     CurlBuf buf;
     CURL *easy = nullptr;
     bool finished = false;
@@ -224,9 +227,9 @@ struct TileFetch {
 };
 
 bool decode_tile_image(const std::vector<uint8_t> &bytes, std::vector<uint8_t> &rgba,
-                       unsigned &w, unsigned &h);
+                       unsigned &w, unsigned &h, int expect_px);
 void blit_tile_rgba(std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
-                    const std::vector<uint8_t> &tile_rgba, int dst_x, int dst_y);
+                    const std::vector<uint8_t> &tile_rgba, int tile_px, int dst_x, int dst_y);
 
 void bind_easy(TileFetch &job) {
     job.easy = curl_easy_init();
@@ -251,10 +254,11 @@ void bind_easy(TileFetch &job) {
 // Fetch all jobs with curl_multi; decode+blit as each completes.
 // Failed tiles are retried a couple of times (OpenTopo was especially flaky
 // under HTTP/2 multiplex). Returns false if the request gen was superseded.
-// *failed_out = tiles still missing after retries.
+// *failed_out = tiles still missing after retries. Progress runs from
+// pct_start to pct_end across this batch.
 bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
                           std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
-                          uint32_t gen, int fetch_pct_end, int *failed_out) {
+                          uint32_t gen, int pct_start, int pct_end, int *failed_out) {
     *failed_out = 0;
     if (jobs.empty()) return true;
     static std::once_flag curl_once;
@@ -283,7 +287,7 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
     };
 
     start_more();
-    progress_set(gen, true, 1);
+    progress_set(gen, true, pct_start > 0 ? pct_start : 1);
 
     while (done < total) {
         {
@@ -319,8 +323,8 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
             if (hop) {
                 std::vector<uint8_t> rgba;
                 unsigned tw = 0, th = 0;
-                if (decode_tile_image(job->buf.data, rgba, tw, th)) {
-                    blit_tile_rgba(mosaic, mosaic_w, mosaic_h, rgba,
+                if (decode_tile_image(job->buf.data, rgba, tw, th, job->tile_px)) {
+                    blit_tile_rgba(mosaic, mosaic_w, mosaic_h, rgba, job->tile_px,
                                    job->dst_x, job->dst_y);
                     decoded = true;
                 }
@@ -348,7 +352,7 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
                 job->buf.data.shrink_to_fit();
             }
             done++;
-            progress_set(gen, true, (done * fetch_pct_end) / total);
+            progress_set(gen, true, pct_start + (done * (pct_end - pct_start)) / total);
             start_more();
         }
 
@@ -426,6 +430,7 @@ void format_tile_url(char *buf, size_t buflen, int style, int z, int x, int y) {
                  z, y, x);
         break;
     case MAP_BASEMAP_STYLE_SATELLITE:
+    case MAP_BASEMAP_STYLE_SATELLITE_LABELS: // labels are a second pass
         // Esri World Imagery via the ArcGIS basemap layer service (256px
         // JPEG, /tile/{z}/{y}/{x}). Billed against the Location Platform
         // key's free 2M basemap tiles/month. basemap_request() refuses this
@@ -552,14 +557,14 @@ void save_cache(const std::string &path, const BasemapSlot &slot) {
 }
 
 bool decode_tile_image(const std::vector<uint8_t> &bytes, std::vector<uint8_t> &rgba,
-                       unsigned &tw, unsigned &th) {
+                       unsigned &tw, unsigned &th, int expect_px) {
     int w = 0, h = 0, comp = 0;
     unsigned char *out = stbi_load_from_memory(bytes.data(), (int)bytes.size(),
                                                &w, &h, &comp, 4);
     if (!out) return false;
     tw = (unsigned)w;
     th = (unsigned)h;
-    if (tw != (unsigned)TILE_PX || th != (unsigned)TILE_PX) {
+    if (tw != (unsigned)expect_px || th != (unsigned)expect_px) {
         stbi_image_free(out);
         return false;
     }
@@ -569,17 +574,28 @@ bool decode_tile_image(const std::vector<uint8_t> &bytes, std::vector<uint8_t> &
 }
 
 void blit_tile_rgba(std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
-                    const std::vector<uint8_t> &rgba, int dst_x0, int dst_y0) {
-    for (int ty = 0; ty < TILE_PX; ty++) {
+                    const std::vector<uint8_t> &rgba, int tile_px, int dst_x0, int dst_y0) {
+    for (int ty = 0; ty < tile_px; ty++) {
         int dy = dst_y0 + ty;
         if (dy < 0 || dy >= mosaic_h) continue;
-        for (int tx = 0; tx < TILE_PX; tx++) {
+        for (int tx = 0; tx < tile_px; tx++) {
             int dx = dst_x0 + tx;
             if (dx < 0 || dx >= mosaic_w) continue;
-            const uint8_t *p = &rgba[((size_t)ty * TILE_PX + tx) * 4];
+            const uint8_t *p = &rgba[((size_t)ty * tile_px + tx) * 4];
             uint8_t *d = &mosaic[((size_t)dy * mosaic_w + dx) * 4];
             d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; d[3] = p[3];
         }
+    }
+}
+
+// Alpha-composite a transparent overlay (Esri labels) onto the opaque
+// mosaic; both are RGBA of the same size.
+void composite_over(std::vector<uint8_t> &mosaic, const std::vector<uint8_t> &overlay) {
+    for (size_t i = 0; i + 3 < mosaic.size() && i + 3 < overlay.size(); i += 4) {
+        const unsigned a = overlay[i + 3];
+        if (a == 0) continue;
+        for (int c = 0; c < 3; c++)
+            mosaic[i + c] = (uint8_t)((overlay[i + c] * a + mosaic[i + c] * (255 - a) + 127) / 255);
     }
 }
 
@@ -779,8 +795,10 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     platform_log_debug("Basemap: fetching %d tiles at z=%d (parallel %d)\n",
                  tile_total, z, MAX_PARALLEL);
     const uint32_t t_fetch0 = platform_millis();
+    const bool with_labels = (slot.style == MAP_BASEMAP_STYLE_SATELLITE_LABELS) && z >= 1;
+    const int imagery_pct_end = with_labels ? 60 : FETCH_PCT_END;
     int failed = 0;
-    if (!fetch_tiles_parallel(jobs, mosaic, mosaic_w, mosaic_h, gen, FETCH_PCT_END, &failed))
+    if (!fetch_tiles_parallel(jobs, mosaic, mosaic_w, mosaic_h, gen, 0, imagery_pct_end, &failed))
         return false;
     // Nothing arrived (network down, key rejected): fail rather than build --
     // and cache for 30-40 days -- a blank paper mosaic.
@@ -790,6 +808,47 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     }
     // Partial: show it, but don't cache holes (next request refetches).
     slot.complete = (failed == 0);
+
+    // Satellite (labels): Esri's transparent labels layer from the static
+    // basemap tiles service (512px tiles, so level z-1 covers the same area
+    // as a 2x2 block of our 256px z tiles). Fetched into a separate overlay
+    // and composited after the blur below, so the text stays crisp.
+    std::vector<uint8_t> labels;
+    if (with_labels) {
+        labels.assign((size_t)mosaic_w * mosaic_h * 4, 0);
+        const int lz = z - 1;
+        const int ln = 1 << lz;
+        auto floor_half = [](int v) { return v >= 0 ? v / 2 : -((-v + 1) / 2); };
+        std::vector<TileFetch> label_jobs;
+        for (int ly = ty0 / 2; ly <= ty1 / 2; ly++) {
+            for (int lx = floor_half(tx0); lx <= floor_half(tx1); lx++) {
+                int wlx = lx % ln;
+                if (wlx < 0) wlx += ln;
+                char url[768];
+                snprintf(url, sizeof(url),
+                         "https://static-map-tiles-api.arcgis.com/arcgis/rest/services/"
+                         "static-basemap-tiles-service/v1/arcgis/imagery/labels/static/"
+                         "tile/%d/%d/%d?token=%s",
+                         lz, ly, wlx, g_config.esri_basemap_key);
+                TileFetch job;
+                job.url = url;
+                job.tile_px = 2 * TILE_PX;
+                job.dst_x = (lx * 2 - tx0) * TILE_PX;
+                job.dst_y = (ly * 2 - ty0) * TILE_PX;
+                label_jobs.push_back(std::move(job));
+            }
+        }
+        int label_failed = 0;
+        if (!fetch_tiles_parallel(label_jobs, labels, mosaic_w, mosaic_h, gen,
+                                  imagery_pct_end, FETCH_PCT_END, &label_failed))
+            return false;
+        // Imagery without (some) labels is still worth showing, not caching.
+        if (label_failed > 0) {
+            platform_log_warn("Basemap: %d/%d label tiles failed\n",
+                              label_failed, (int)label_jobs.size());
+            slot.complete = false;
+        }
+    }
     platform_log_debug("Basemap: tile fetch %ums for %d tiles\n",
                  (unsigned)(platform_millis() - t_fetch0), tile_total);
 
@@ -811,6 +870,7 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
         progress_set(gen, true,
                      FETCH_PCT_END + ((i + 1) * (BLUR_PCT_END - FETCH_PCT_END)) / blur_passes);
     }
+    if (!labels.empty()) composite_over(mosaic, labels);
 
     const double origin_mx = (double)tx0 * TILE_PX;
     const double origin_my = (double)ty0 * TILE_PX;
@@ -1045,7 +1105,8 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     const bool sectional_oob =
         style == MAP_BASEMAP_STYLE_SECTIONAL && !basemap_sectional_covered(lat, lon);
     const bool satellite_nokey =
-        style == MAP_BASEMAP_STYLE_SATELLITE && !g_config.esri_basemap_key[0];
+        (style == MAP_BASEMAP_STYLE_SATELLITE || style == MAP_BASEMAP_STYLE_SATELLITE_LABELS)
+        && !g_config.esri_basemap_key[0];
     if (sectional_oob || satellite_nokey) {
         std::lock_guard<std::mutex> lock(g_mu);
         g_req_lat = lat;
@@ -1183,7 +1244,8 @@ const char *basemap_unavailable_message(void) {
     if (!g_unavailable) return nullptr;
     if (g_req_style == MAP_BASEMAP_STYLE_SECTIONAL)
         return "VFR sectional not available outside US";
-    if (g_req_style == MAP_BASEMAP_STYLE_SATELLITE)
+    if (g_req_style == MAP_BASEMAP_STYLE_SATELLITE ||
+        g_req_style == MAP_BASEMAP_STYLE_SATELLITE_LABELS)
         return "Satellite needs Esri API key";
     return nullptr;
 }
@@ -1195,6 +1257,10 @@ const char *basemap_attribution(void) {
         // Esri requires "Powered by Esri" plus the service's copyrightText.
         return "Powered by Esri | Source: Esri, Vantor, Earthstar Geographics, "
                "and the GIS User Community";
+    case MAP_BASEMAP_STYLE_SATELLITE_LABELS:
+        // + the labels layer's credits (Esri World Boundaries and Places).
+        return "Powered by Esri | Source: Esri, Vantor, Earthstar Geographics, and the "
+               "GIS User Community | Labels: Esri, HERE, Garmin, (c) OpenStreetMap contributors";
     case MAP_BASEMAP_STYLE_TOPO:
         return "(c) OpenStreetMap contributors, SRTM | (c) OpenTopoMap (CC-BY-SA)";
     case MAP_BASEMAP_STYLE_SECTIONAL:
