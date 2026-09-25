@@ -69,6 +69,7 @@ See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - VIEW toggle to hide runway lines + labels (clearer zoomed-in satellite)
 - Test suite (host unit tests for pure logic + CI compile check)
+- Code review 2026-09-26: remaining findings (see §7.1)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -726,6 +727,46 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   used during 2026-09 work (range tests, airport-name width survey,
   `-fsyntax-only` against LVGL 9.5) are the seed for this. Scope with Dan
   before starting.
+
+- **Code review 2026-09-26 — remaining findings (Dan)**. Fixed in batch 1:
+  card photo lifetime (Clear caches crash), wrong-aircraft card data + queued
+  lookups, app erasing set_api_keys.py keys (keys now read from disk on
+  save), tap hit-test offset (Map/Radar/List), filter tap swallowing next
+  map tap, emergency toast dedup, tap-another-aircraft switches the card.
+  Still open, roughly by priority:
+  - Intermittent: after switching an open card to aircraft B, B's photo
+    sometimes doesn't appear (not yet reproduced/diagnosed).
+  - config.json / locations.json written in place (power loss -> keys or
+    locations lost); concurrent saves from background threads. Use
+    temp+rename. Also mkdir isn't recursive (fails if ~/.config missing).
+  - Settings Save writes the open-time snapshot back over live ADB
+    counters / auto-disable / quota changed while it was open.
+  - METAR/ATIS: switching during an in-flight fetch shows the previous
+    airport's data for up to 15 min; ATIS retries the D-ATIS list every
+    second when it fails (waypoint locations).
+  - Removing the active location leaves its aircraft frozen on screen.
+  - Failed basemap rebuild (all tiles fail) cached as blank for 30-40 days.
+  - Metric Units toggle is never read. error_log_init() never called (APP
+    ERRORS always empty).
+  - stats.cpp: after 2000 unique aircraft, top types/airlines re-count
+    every tick.
+  - Location identity by name: static-DB airport adds store truncated full
+    name, duplicates possible (wrong location on boot, airport edit-save
+    "name already used"). Map glyph labels still use loc->name.
+  - Airline lookup matches registration callsigns (CGAxx, OEAxx); airlines
+    load once at boot with no retry.
+  - Editing active-location presets clears the aircraft list (uses
+    fetcher_request_immediate_fetch). Waypoint lat/lon fields accept
+    garbage -> 0,0 / out of range.
+  - http_linux logs full URLs on failure (airportdb apiToken in journal);
+    airportdb URL buffer truncates tokens > ~140 chars.
+  - OTA: no checksum/signature; offers any differing tag (can downgrade);
+    no armv7 asset.
+  - SD wear: basemap mosaics never pruned (~2MB each); weather rewrites a
+    4MB file every ~8 min.
+  - Lower: TIS-B "~hex" truncated; List title "? TRAFFIC" for waypoints;
+    Wi-Fi icon always green; chip label stale after factory reset;
+    /dev/dri/card0 hardcoded.
 
 ### 7.1b Deferred (Dan, 2026-08-09 — do not start)
 
