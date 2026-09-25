@@ -63,6 +63,7 @@ struct BasemapSlot {
     int bullseye_r = 0;
     int style = MAP_BASEMAP_STYLE_DARK;
     bool valid = false;
+    bool complete = true; // every tile fetched -- only complete mosaics are cached
 
     void bind_buf() {
         memset(&buf, 0, sizeof(buf));
@@ -248,9 +249,11 @@ void bind_easy(TileFetch &job) {
 // Fetch all jobs with curl_multi; decode+blit as each completes.
 // Failed tiles are retried a couple of times (OpenTopo was especially flaky
 // under HTTP/2 multiplex). Returns false if the request gen was superseded.
+// *failed_out = tiles still missing after retries.
 bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
                           std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
-                          uint32_t gen, int fetch_pct_end) {
+                          uint32_t gen, int fetch_pct_end, int *failed_out) {
+    *failed_out = 0;
     if (jobs.empty()) return true;
     static std::once_flag curl_once;
     std::call_once(curl_once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
@@ -359,6 +362,7 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
     if (failed > 0) {
         platform_log_warn("Basemap: %d/%d tiles failed after retries\n", failed, total);
     }
+    *failed_out = failed;
     return true;
 }
 
@@ -767,8 +771,17 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     platform_log_debug("Basemap: fetching %d tiles at z=%d (parallel %d)\n",
                  tile_total, z, MAX_PARALLEL);
     const uint32_t t_fetch0 = platform_millis();
-    if (!fetch_tiles_parallel(jobs, mosaic, mosaic_w, mosaic_h, gen, FETCH_PCT_END))
+    int failed = 0;
+    if (!fetch_tiles_parallel(jobs, mosaic, mosaic_w, mosaic_h, gen, FETCH_PCT_END, &failed))
         return false;
+    // Nothing arrived (network down, key rejected): fail rather than build --
+    // and cache for 30-40 days -- a blank paper mosaic.
+    if (failed >= tile_total) {
+        platform_log_warn("Basemap: all %d tiles failed -- not building\n", tile_total);
+        return false;
+    }
+    // Partial: show it, but don't cache holes (next request refetches).
+    slot.complete = (failed == 0);
     platform_log_debug("Basemap: tile fetch %ums for %d tiles\n",
                  (unsigned)(platform_millis() - t_fetch0), tile_total);
 
@@ -881,7 +894,8 @@ void worker_main(uint32_t gen) {
         ok = build_basemap(local, gen);
         if (ok) {
             progress_set(gen, true, 100);
-            save_cache(path, local);
+            if (local.complete) save_cache(path, local);
+            else platform_log_info("Basemap: incomplete mosaic shown but not cached\n");
         }
     }
 
