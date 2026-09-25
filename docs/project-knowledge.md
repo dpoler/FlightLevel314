@@ -748,13 +748,13 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   prefix + boot load retries; editing active presets uses fetcher_wake()
   (keeps traffic); waypoint lat/lon/elev validated; airports identified by
   ICAO (identity_of(); one-time migration of names + last_location_name).
+  SD wear (2026-09-26): weather overlay no longer written to disk (memory
+  only); basemap prune_cache() drops expired / old-format mosaics and trims
+  LRU (atime) to 1 GB, at startup and after each save.
+  Dropped (Dan): intermittent missing photo after switching the card.
   Still open, roughly by priority:
-  - Intermittent: after switching an open card to aircraft B, B's photo
-    sometimes doesn't appear (not yet reproduced/diagnosed).
   - OTA: no checksum/signature; offers any differing tag (can downgrade);
-    no armv7 asset.
-  - SD wear: basemap mosaics never pruned (~2MB each); weather rewrites a
-    4MB file every ~8 min.
+    no armv7 asset. (Dan hasn't used OTA yet -- revisit when releasing.)
   - Lower: TIS-B "~hex" truncated; List title "? TRAFFIC" for waypoints;
     Wi-Fi icon always green; chip label stale after factory reset;
     /dev/dri/card0 hardcoded.
