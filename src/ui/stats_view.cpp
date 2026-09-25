@@ -195,8 +195,14 @@ static void refresh_stats(lv_timer_t *t) {
     // and only ever publish results for the location on screen.
     if (wx_loc != _wx_last_loc) _wx_last_loc = wx_loc;
 
+    // Right after a location switch the weather globals still describe the
+    // previous location until the 1 Hz background poll catches up -- show
+    // "Fetching..." rather than the old airport's text.
+    const bool metar_current = metar_for_active_location();
+    const bool atis_current = atis_for_active_location();
+
     if (_metar_lbl) {
-        switch (metar_status) {
+        switch (metar_current ? metar_status : METAR_FETCHING) {
             case METAR_OK:
                 lv_label_set_text(_metar_lbl, metar_raw);
                 lv_obj_set_style_text_color(_metar_lbl, DIM_COLOR, 0);
@@ -222,7 +228,7 @@ static void refresh_stats(lv_timer_t *t) {
         }
 
         if (_atis_status_lbl || _atis_combined_lbl) {
-            switch (atis_status) {
+            switch (atis_current ? atis_status : ATIS_FETCHING) {
                 case ATIS_OK:
                     if (atis_split) {
                         set_atis_visibility(true, false);
@@ -586,5 +592,8 @@ void stats_view_init(lv_obj_t *parent, AircraftList *list) {
     lv_timer_create(refresh_stats, 2000, nullptr);
 }
 
+// Immediate refresh (e.g. right after a location switch) instead of waiting
+// for the 2 s timer.
 void stats_view_update() {
+    if (_metar_lbl) refresh_stats(nullptr);
 }

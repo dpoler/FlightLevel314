@@ -23,3 +23,9 @@ extern char metar_station[8]; // which ICAO metar_raw actually came from
 // Internally rate-limited (~15 min, ~4x the routine hourly METAR cycle) plus
 // immediate re-fetch on active-location change. Safe to call every tick.
 void metar_poll();
+
+// True when metar_status/metar_raw/metar_station describe the location that
+// is active right now. Right after a switch they still hold the previous
+// location's data until metar_poll() (1 Hz, background) catches up -- the UI
+// should show "Fetching..." instead of trusting them.
+bool metar_for_active_location();

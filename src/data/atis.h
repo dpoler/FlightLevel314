@@ -25,3 +25,7 @@ extern bool atis_split;          // true when arr and/or dep present (not combin
 // Rate-limited; safe to call often from a background loop. Fetches on
 // active-location change or every ~15 minutes (same cadence as METAR).
 void atis_poll();
+
+// Same as metar_for_active_location(): false right after a location switch,
+// until atis_poll() has published data for the new location.
+bool atis_for_active_location();

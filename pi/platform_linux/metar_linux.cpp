@@ -35,6 +35,7 @@ namespace {
 std::mutex _fetch_mutex;
 bool _busy = false;
 char _active_key[24] = "";   // cache key of the location on screen now
+char _published_key[24] = ""; // location the metar_* globals describe
 bool _need_fetch = false;    // a switch happened while a fetch was running
 
 struct MetarCacheEntry {
@@ -85,7 +86,9 @@ void cache_store(const char *key, const MetarResult &r) {
     e->fetched_ms = platform_millis();
 }
 
-void apply_to_globals(MetarStatus st, const char *raw, const char *station) {
+// Caller holds _fetch_mutex.
+void apply_to_globals(const char *key, MetarStatus st, const char *raw, const char *station) {
+    strlcpy(_published_key, key, sizeof(_published_key));
     strlcpy(metar_raw, raw, sizeof(metar_raw));
     strlcpy(metar_station, station, sizeof(metar_station));
     metar_status = st;
@@ -198,7 +201,7 @@ void run_fetch(float lat, float lon, std::string icao, std::string key) {
     if (ok) cache_store(key.c_str(), r);
     if (strcmp(_active_key, key.c_str()) == 0) {
         // On error keep showing the last good text for this location, if any.
-        if (ok || !metar_raw[0]) apply_to_globals(r.status, r.raw, r.station);
+        if (ok || !metar_raw[0]) apply_to_globals(key.c_str(), r.status, r.raw, r.station);
         else metar_status = METAR_ERROR;
     }
     _busy = false;
@@ -216,7 +219,7 @@ void metar_poll() {
         if (last_loc_idx != -1) {
             std::lock_guard<std::mutex> lock(_fetch_mutex);
             _active_key[0] = '\0';
-            apply_to_globals(METAR_IDLE, "", "");
+            apply_to_globals("", METAR_IDLE, "", "");
             last_loc_idx = -1;
             last_key[0] = '\0';
         }
@@ -242,14 +245,14 @@ void metar_poll() {
         strlcpy(_active_key, key, sizeof(_active_key));
         MetarCacheEntry *hit = cache_find(key);
         if (hit && (now - hit->fetched_ms) < METAR_REFRESH_MS) {
-            apply_to_globals(hit->status, hit->raw, hit->station);
+            apply_to_globals(key, hit->status, hit->raw, hit->station);
             last_fetch_ms = hit->fetched_ms;
             _need_fetch = false;
             platform_log_debug("METAR: cache hit %s\n", key);
             return; // still fresh -- no network
         }
         // Cold switch: don't leave the previous airport's text up.
-        apply_to_globals(METAR_FETCHING, "", "");
+        apply_to_globals(key, METAR_FETCHING, "", "");
         _need_fetch = true;
     } else if (!_need_fetch && now - last_fetch_ms < METAR_REFRESH_MS) {
         return;
@@ -263,4 +266,12 @@ void metar_poll() {
     std::thread([lat, lon, icao, key_copy]() {
         run_fetch(lat, lon, icao, key_copy);
     }).detach();
+}
+
+bool metar_for_active_location() {
+    char key[24] = "";
+    int idx = locations_active_index();
+    if (idx >= 0) cache_key_for(locations_get(idx), key, sizeof(key));
+    std::lock_guard<std::mutex> lock(_fetch_mutex);
+    return strcmp(key, _published_key) == 0;
 }

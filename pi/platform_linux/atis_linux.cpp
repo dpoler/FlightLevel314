@@ -35,6 +35,19 @@ namespace {
 std::mutex _fetch_mutex;
 bool _busy = false;
 char _active_icao[8] = "";   // ATIS airport for the location on screen now
+char _active_loc_key[24] = "";    // location on screen now (see loc_key_for)
+char _published_loc_key[24] = ""; // location the atis_* globals describe
+
+// Location identity, same scheme as metar_linux.cpp's cache key: ICAO for
+// airports, rounded lat/lon for waypoints.
+void loc_key_for(const Location *loc, char *out, size_t out_sz) {
+    if (loc && loc->icao[0]) {
+        strlcpy(out, loc->icao, out_sz);
+        return;
+    }
+    snprintf(out, out_sz, "WP%.2f,%.2f",
+             loc ? (double)loc->lat : 0.0, loc ? (double)loc->lon : 0.0);
+}
 bool _need_fetch = false;    // a switch happened while a fetch was running
 
 std::mutex _list_mutex;
@@ -289,6 +302,7 @@ void run_fetch(std::string icao) {
     if (strcmp(_active_icao, icao.c_str()) == 0) {
         if (ok) atis_cache_apply(&r);
         else atis_status = ATIS_ERROR;
+        strlcpy(_published_loc_key, _active_loc_key, sizeof(_published_loc_key));
     }
     _busy = false;
 }
@@ -299,41 +313,58 @@ void atis_poll() {
     static uint32_t last_fetch_ms = 0;
     static int last_loc_idx = -2;
     static char last_icao[8] = "";
+    static char last_loc_key[24] = "";
 
     int idx = locations_active_index();
     if (idx == -1) {
         if (last_loc_idx != -1) {
             std::lock_guard<std::mutex> lock(_fetch_mutex);
             _active_icao[0] = '\0';
+            _active_loc_key[0] = '\0';
+            _published_loc_key[0] = '\0';
             atis_status = ATIS_IDLE;
             clear_texts();
             last_loc_idx = -1;
             last_icao[0] = '\0';
+            last_loc_key[0] = '\0';
         }
         return;
     }
 
+    char loc_key[24] = "";
+    loc_key_for(locations_get(idx), loc_key, sizeof(loc_key));
+
     char icao[8] = {};
     if (!resolve_icao(icao, sizeof(icao))) {
-        if (last_loc_idx != idx || last_icao[0]) {
+        if (last_loc_idx != idx || last_icao[0] || strcmp(loc_key, last_loc_key) != 0) {
             std::lock_guard<std::mutex> lock(_fetch_mutex);
             _active_icao[0] = '\0';
+            strlcpy(_active_loc_key, loc_key, sizeof(_active_loc_key));
+            strlcpy(_published_loc_key, loc_key, sizeof(_published_loc_key));
             clear_texts();
             atis_status = ATIS_UNAVAILABLE;
             last_loc_idx = idx;
             last_icao[0] = '\0';
+            strlcpy(last_loc_key, loc_key, sizeof(last_loc_key));
         }
         return;
     }
 
     uint32_t now = platform_millis();
-    bool loc_changed = (idx != last_loc_idx) || (strcmp(icao, last_icao) != 0);
+    // Location key too: a removed location's neighbor can take the same index
+    // and even the same nearest ATIS airport, but it's still a switch.
+    bool loc_changed = (idx != last_loc_idx) || (strcmp(icao, last_icao) != 0)
+                       || (strcmp(loc_key, last_loc_key) != 0);
 
     std::lock_guard<std::mutex> lock(_fetch_mutex);
     if (loc_changed) {
         last_loc_idx = idx;
+        strlcpy(last_loc_key, loc_key, sizeof(last_loc_key));
         strlcpy(last_icao, icao, sizeof(last_icao));
         strlcpy(_active_icao, icao, sizeof(_active_icao));
+        strlcpy(_active_loc_key, loc_key, sizeof(_active_loc_key));
+        // Published immediately below either way: cached text or FETCHING.
+        strlcpy(_published_loc_key, loc_key, sizeof(_published_loc_key));
         AtisCacheEntry *hit = atis_cache_find(icao);
         if (hit && (now - hit->fetched_ms) < ATIS_REFRESH_MS) {
             atis_cache_apply(hit);
@@ -355,4 +386,12 @@ void atis_poll() {
     _need_fetch = false;
     last_fetch_ms = now;
     std::thread([icao = std::string(icao)]() { run_fetch(icao); }).detach();
+}
+
+bool atis_for_active_location() {
+    char key[24] = "";
+    int idx = locations_active_index();
+    if (idx >= 0) loc_key_for(locations_get(idx), key, sizeof(key));
+    std::lock_guard<std::mutex> lock(_fetch_mutex);
+    return strcmp(key, _published_loc_key) == 0;
 }
