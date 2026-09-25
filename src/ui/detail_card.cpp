@@ -73,17 +73,18 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #if LCD_H_RES >= 1280
 #define CARD_H         340
 #define CARD_PAD       16
-// Wide enough for FROM/TO columns under the identity block.
-#define SUMMARY_W      400
-#define SUMMARY_H      270
+// Wide enough for FROM/TO + DEP/ARR columns under the identity block;
+// SUMMARY_H fills the card height (CARD_H - 2*CARD_PAD - 8px top offset).
+#define SUMMARY_W      440
+#define SUMMARY_H      296
 #define PHOTO_SLOT_W   400
 #define PHOTO_SLOT_H   220
-// Telemetry labels ("LONGITUDE", "VERT SPD") need ~140px. Center a
-// fixed-width 3-col block in the gap between summary and photo.
-#define GRID_COL_W     140
-#define STATS_W        (GRID_COL_W * 3)
-#define MID_AVAIL      (LCD_H_RES - 2 * CARD_PAD - SUMMARY_W - PHOTO_SLOT_W)
-#define STATS_X        (SUMMARY_W + (MID_AVAIL - STATS_W) / 2)
+// Telemetry values ("+1600 fpm", "-104.6430") need ~90px of a 130px column.
+// Grid sits GRID_GAP right of the summary; col 3 still clears a full-width
+// (400px) photo by ~20px (measured on panel 2026-09-24).
+#define GRID_COL_W     130
+#define GRID_GAP       40
+#define STATS_X        (SUMMARY_W + GRID_GAP)
 #define IDENTITY_MAX_W (SUMMARY_W - 24)
 #define GRID_Y0        10
 #define GRID_ROW_H     42
@@ -586,13 +587,13 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_airline = 22;
     const int y_ids = 44;
     // Blank line after squawk row, then manufacturer/type + category.
-    const int y_ac = 80;
-    const int y_cat = 100;
+    const int y_ac = 84;
+    const int y_cat = 104;
     // Blank line before FROM/TO.
-    const int y_route_hdr = 136;
-    const int y_route_icao = 154;
-    const int y_route_name = 176;
-    const int y_route_time = 214;
+    const int y_route_hdr = 144;
+    const int y_route_icao = 162;
+    const int y_route_name = 184;
+    const int y_route_time = 226;
 #else
     lv_obj_t *id_parent = _card;
     const int id_x = 0;
