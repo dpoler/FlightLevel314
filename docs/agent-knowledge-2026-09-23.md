@@ -139,7 +139,7 @@ Three tabs, narrow panel (~**560×660**), footer **Cancel / Save** only.
 
 | Tab | Contents |
 |-----|----------|
-| **Display** | Range presets (nm), metric toggle, brightness slider |
+| **Display** | Range presets (nm), brightness slider |
 | **Services** | Traffic provider; AirportDB / AeroDataBox / CARTO presence·valid·enable; top line “API keys are set with set_api_keys.py” |
 | **System** | OTA check, HOST info (hw/OS/hostname/arch/sys uptime), diagnostics, Clear caches \| Reset to defaults |
 

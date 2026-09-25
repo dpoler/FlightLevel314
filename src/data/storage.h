@@ -39,7 +39,7 @@ struct UserConfig {
     int traffic_provider;
     int radius_nm;           // API query radius = max(radius_presets), set on save
     int radius_presets[4];  // user-configurable zoom levels, sorted ascending
-    bool use_metric;
+    bool use_metric;         // unused (no metric display); kept for config.json compat
     bool use_ethernet;       // true=Ethernet, false=WiFi (default: WiFi)
     char watchlist[10][7]; // up to 10 ICAO hex codes
     int watchlist_count;

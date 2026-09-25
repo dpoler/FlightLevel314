@@ -1,6 +1,6 @@
 // Scoped-down Pi implementation of src/ui/settings.h -- deliberately NOT
 // a port of src/ui/settings.cpp. Pi Settings is a three-tab panel:
-// Display (range presets, metric, brightness), Services (traffic source +
+// Display (range presets, brightness), Services (traffic source +
 // keyed API status/enable), System (OTA, host info, diagnostics, cache /
 // factory reset). Keys are hand-edited in config.json / set_api_keys.py;
 // the UI only shows presence / validity / enable. WiFi/Ethernet and ESP32
@@ -36,7 +36,6 @@ static uint32_t _shown_at_ms = 0;
 static uint32_t _boot_time_ms = 0;
 
 static lv_obj_t *_ta_radius[4] = {nullptr, nullptr, nullptr, nullptr};
-static lv_obj_t *_sw_metric = nullptr;
 static lv_obj_t *_dd_traffic_prov = nullptr;
 static lv_obj_t *_fetch_val = nullptr;
 static lv_obj_t *_latency_val = nullptr;
@@ -482,8 +481,6 @@ static void apply_cfg_to_fields() {
         snprintf(rbuf, sizeof(rbuf), "%d", _cfg.radius_presets[i]);
         lv_textarea_set_text(_ta_radius[i], rbuf);
     }
-    if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
-    else lv_obj_clear_state(_sw_metric, LV_STATE_CHECKED);
 
     int tprov = _cfg.traffic_provider;
     if (tprov < 0 || tprov > 1) tprov = 0;
@@ -547,7 +544,6 @@ static void save_and_close(lv_event_t *e) {
                 _cfg.radius_presets[j] = tmp;
             }
     _cfg.radius_nm = _cfg.radius_presets[3];
-    _cfg.use_metric = lv_obj_has_state(_sw_metric, LV_STATE_CHECKED);
 
     if (_dd_traffic_prov) {
         int sel = (int)lv_dropdown_get_selected(_dd_traffic_prov);
@@ -1076,7 +1072,9 @@ void settings_init(lv_obj_t *parent) {
     _cfg = storage_load_config();
     const int field_w = 380;
 
-    // --- Display: range presets, metric, brightness ---
+    // --- Display: range presets, brightness ---
+    // (No Metric Units toggle: nothing ever displayed metric. use_metric stays
+    // in UserConfig only so existing config.json files round-trip.)
     create_label(tab_display, "Default Range Presets (nm, 1-500)", 0, 4);
     for (int i = 0; i < 4; i++) {
         char rbuf[8];
@@ -1090,21 +1088,17 @@ void settings_init(lv_obj_t *parent) {
         lv_obj_add_event_cb(_ta_radius[i], ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
     }
 
-    create_label(tab_display, "Metric Units", 0, 84);
-    _sw_metric = make_enable_switch(tab_display, 130, 82);
-    if (_cfg.use_metric) lv_obj_add_state(_sw_metric, LV_STATE_CHECKED);
-
-    create_label(tab_display, "Brightness", 0, 130);
+    create_label(tab_display, "Brightness", 0, 84);
     _bright_label = lv_label_create(tab_display);
     lv_label_set_text_fmt(_bright_label, "%d%%", _cfg.display_brightness_pct);
     lv_obj_set_style_text_font(_bright_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_bright_label, SYS_COLOR, 0);
-    lv_obj_set_pos(_bright_label, field_w - 48, 130);
+    lv_obj_set_pos(_bright_label, field_w - 48, 84);
     lv_obj_clear_flag(_bright_label, LV_OBJ_FLAG_CLICKABLE);
 
     _bright_slider = lv_slider_create(tab_display);
     lv_obj_set_size(_bright_slider, field_w, 12);
-    lv_obj_set_pos(_bright_slider, 0, 158);
+    lv_obj_set_pos(_bright_slider, 0, 112);
     lv_slider_set_range(_bright_slider, 10, 100);
     {
         int b = _cfg.display_brightness_pct;
