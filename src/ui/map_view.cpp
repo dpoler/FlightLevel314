@@ -671,8 +671,18 @@ static void draw_runways_for(lv_layer_t *layer, const Location *loc, LabelRectSe
     for (int i = 0; i < loc->runway_count; i++) {
         const LocRunway &rw = loc->runways[i];
         int x1, y1, x2, y2;
-        if (!_proj.to_screen(rw.le_lat, rw.le_lon, x1, y1)) continue;
-        if (!_proj.to_screen(rw.he_lat, rw.he_lon, x2, y2)) continue;
+        // to_screen() still fills coords when a point is off-canvas. Zoomed
+        // in (e.g. KDEN at 1 nm) one end of a long runway is often off-screen:
+        // draw the line anyway (LVGL clips) and label only the visible end.
+        // Skipping the whole runway when either end was off hid both.
+        const bool le_on = _proj.to_screen(rw.le_lat, rw.le_lon, x1, y1);
+        const bool he_on = _proj.to_screen(rw.he_lat, rw.he_lon, x2, y2);
+        if (!le_on && !he_on) {
+            // Both ends off-canvas: skip unless the runway crosses the view.
+            const int lo_x = x1 < x2 ? x1 : x2, hi_x = x1 < x2 ? x2 : x1;
+            const int lo_y = y1 < y2 ? y1 : y2, hi_y = y1 < y2 ? y2 : y1;
+            if (hi_x < 0 || lo_x >= _proj.screen_w || hi_y < 0 || lo_y >= _proj.screen_h) continue;
+        }
 
         line.p1 = {(lv_value_precise_t)x1, (lv_value_precise_t)y1};
         line.p2 = {(lv_value_precise_t)x2, (lv_value_precise_t)y2};
@@ -687,8 +697,8 @@ static void draw_runways_for(lv_layer_t *layer, const Location *loc, LabelRectSe
         vx /= vlen;
         vy /= vlen;
 
-        place_runway_label(layer, &lbl, placed, x1, y1, -vx, -vy, rw.le_id, lbl_w, lbl_h);
-        place_runway_label(layer, &lbl, placed, x2, y2, vx, vy, rw.he_id, lbl_w, lbl_h);
+        if (le_on) place_runway_label(layer, &lbl, placed, x1, y1, -vx, -vy, rw.le_id, lbl_w, lbl_h);
+        if (he_on) place_runway_label(layer, &lbl, placed, x2, y2, vx, vy, rw.he_id, lbl_w, lbl_h);
     }
 }
 

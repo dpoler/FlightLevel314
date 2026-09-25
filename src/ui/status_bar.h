@@ -40,3 +40,7 @@ void status_bar_set_gear_callback(lv_event_cb_t cb);
 // picker chip at the fixed LOCATION_CHIP_X) this chip's x depends on
 // NUM_VIEWS/screen width and is only known once the bar is actually built.
 int status_bar_get_view_chip_x();
+
+// Location picker chip width changed (it sizes to the location name) --
+// moves the range chip so it stays CHIP_GAP to the right of it.
+void status_bar_set_location_chip_width(int w);

@@ -177,6 +177,11 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
     return bar;
 }
 
+void status_bar_set_location_chip_width(int w) {
+    if (!range_chip) return;
+    lv_obj_set_x(range_chip, LOCATION_CHIP_X + w + CHIP_GAP);
+}
+
 void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircraft_count, uint32_t last_update_ms) {
     // Safety net: pick up the active location's own presets if something
     // switched locations without calling range_sync_active_presets().

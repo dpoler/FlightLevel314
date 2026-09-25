@@ -83,9 +83,25 @@ static void build_add_waypoint_view();
 static void build_info_view(int idx);
 static void build_edit_view(int idx, bool just_added);
 
+// Chip grows with the location name (e.g. after a rename), from BTN_W up to
+// PICKER_MAX_W; longer names get "...". The cap keeps the range chip beside
+// it clear of the centered nav tabs.
+#define PICKER_MAX_W 170
+
 static void update_picker_label() {
     const Location *loc = locations_get(locations_active_index());
-    lv_label_set_text(_picker_lbl, loc ? loc->name : "+ Add");
+    const char *text = loc ? loc->name : "+ Add";
+    lv_label_set_text(_picker_lbl, text);
+
+    lv_point_t sz;
+    lv_text_get_size(&sz, text, &lv_font_montserrat_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    int w = sz.x + 16;
+    if (w < BTN_W) w = BTN_W;
+    if (w > PICKER_MAX_W) w = PICKER_MAX_W;
+    lv_obj_set_width(_picker_btn, w);
+    lv_obj_set_width(_picker_lbl, w - 8);
+    lv_obj_center(_picker_lbl);
+    status_bar_set_location_chip_width(w);
 }
 
 static void close_overlay() {
@@ -1193,6 +1209,8 @@ void location_picker_init(lv_obj_t *screen) {
     _picker_lbl = lv_label_create(_picker_btn);
     lv_obj_set_style_text_font(_picker_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(_picker_lbl, COLOR_ACCENT, 0);
+    lv_obj_set_style_text_align(_picker_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(_picker_lbl, LV_LABEL_LONG_DOT);
     lv_obj_center(_picker_lbl);
     update_picker_label();
 
