@@ -11,6 +11,7 @@
 #include "../src/data/ota.h"
 #include "../src/data/metar.h"
 #include "../src/data/atis.h"
+#include "../src/data/error_log.h"
 #include "../src/ui/views.h"
 #include "../src/ui/detail_card.h"
 #include "../src/ui/range.h"
@@ -77,6 +78,9 @@ static uint32_t pi_tick_cb() {
 }
 
 int main() {
+    // Before any thread can call error_log_add() -- without init every entry
+    // was silently dropped (Settings -> APP ERRORS always empty).
+    error_log_init();
     aircraft_list.init();
 
     // Real round-trip through pi/platform_linux/storage_linux.cpp --
