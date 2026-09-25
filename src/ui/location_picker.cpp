@@ -21,15 +21,15 @@
 // Wide enough for "KJFK  John F. Kennedy International" + icon cluster.
 #define PANEL_W    540
 #define ROW_H      56   // was 44 -- felt cramped once the reorder handle was added (reported)
-// Icon cluster (right → left): Close, Grip, Info, Eye. Offsets are the
-// object's right edge from the row's right edge (LV_ALIGN_RIGHT_MID). Step
-// of 34 keeps ~equal visual gaps across 14–22px-wide icons; reserve must
-// cover eye's left edge so the name label doesn't collide.
+// Icon cluster (right → left): Close, Grip, Info. Offsets are the object's
+// right edge from the row's right edge (LV_ALIGN_RIGHT_MID). Step of 34 keeps
+// ~equal visual gaps across 14–22px-wide icons; reserve must cover info's
+// left edge so the name label doesn't collide. (The nearby-airports "eye"
+// that used to sit leftmost is now a checkbox in the location's edit form.)
 #define ICON_CLOSE_X       (-10)
 #define ICON_GRIP_X        (-44)
 #define ICON_INFO_X        (-78)
-#define ICON_EYE_X         (-112)
-#define ROW_ICON_RESERVE   140
+#define ROW_ICON_RESERVE   106
 #define BTN_W      60   // matches status_bar.cpp's CHIP_W -- same width as every other button in the bar (nav tabs, range/TRAIL/TAG chips)
 #define BTN_H      24   // matches status_bar.cpp's CHIP_H (and the nav tabs' own height)
 #define ADD_MATCH_MAX 5
@@ -79,6 +79,9 @@ static lv_obj_t *_wp_status_lbl = nullptr;
 // Per-location range preset fields (edit view + Add Location form).
 static lv_obj_t *_rng_ta[4] = {};
 static int _edit_idx = -1;
+// "Show nearby airport runways" checkbox (edit view + Add Location form).
+static lv_obj_t *_nearby_cb = nullptr;
+#define NEARBY_CB_TEXT "Show nearby airport runways"
 
 static void build_list_view();
 static void build_add_view();
@@ -153,6 +156,7 @@ static void close_overlay() {
         _wp_elev_ta = nullptr;
         _wp_status_lbl = nullptr;
         for (int i = 0; i < 4; i++) _rng_ta[i] = nullptr;
+        _nearby_cb = nullptr;
         _edit_idx = -1;
         _info_status_lbl = nullptr;
         _info_idx = -1;
@@ -252,27 +256,9 @@ static void info_row_click_cb(lv_event_t *e) {
     build_info_view(idx);
 }
 
-// "Nearby large airports" toggle -- eye icon in the row's icon cluster (see
-// locations.h for the caching design). Rebuilds the whole list on tap rather
-// than patching just the one icon/badge in place, matching the existing
-// remove/reorder rows' own "just rebuild" approach in this small a popover.
-static void nearby_toggle_click_cb(lv_event_t *e) {
-    int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    locations_nearby_set_enabled(idx, !locations_nearby_enabled(idx));
-    build_list_view();
-}
-
-static void add_nearby_toggle(lv_obj_t *row, int idx) {
-    lv_obj_t *eye = lv_label_create(row);
-    lv_label_set_text(eye, LV_SYMBOL_EYE_OPEN);
-    lv_obj_set_style_text_color(eye, locations_nearby_enabled(idx) ? COLOR_ACCENT : COLOR_DIM, 0);
-    // Leftmost of the icon cluster: Eye | Info | Grip | X
-    lv_obj_align(eye, LV_ALIGN_RIGHT_MID, ICON_EYE_X, 0);
-    lv_obj_add_flag(eye, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_ext_click_area(eye, 10);
-    lv_obj_add_event_cb(eye, nearby_toggle_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
-
-    // Second line under the ICAO/name — never overlaid on the primary label.
+// "+N nearby" badge on a row's second line when that location shows nearby
+// large airports' runways (toggled by the checkbox in its edit form).
+static void add_nearby_badge(lv_obj_t *row, int idx) {
     int count = locations_nearby_count(idx);
     if (locations_nearby_enabled(idx) && count > 0) {
         lv_obj_t *badge = lv_label_create(row);
@@ -392,6 +378,7 @@ static void build_list_view() {
     _wp_elev_ta = nullptr;
     _wp_status_lbl = nullptr;
     for (int i = 0; i < 4; i++) _rng_ta[i] = nullptr;
+    _nearby_cb = nullptr;
     _edit_idx = -1;
 
     // Sized exactly to content (saved locations + the two "Add" rows) -- no
@@ -476,7 +463,7 @@ static void build_list_view() {
         lv_obj_set_ext_click_area(rm, 10);
         lv_obj_add_event_cb(rm, remove_row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
-        add_nearby_toggle(row, i);
+        add_nearby_badge(row, i);
 
         // Info (i-in-circle) — view name/coords; edits are delete + re-add.
         // Cluster order: Eye | Info | Grip | X
@@ -814,6 +801,24 @@ static int range_fields(int y, const Location *loc) {
     return y + 22 + 36;
 }
 
+// "Show nearby airport runways" checkbox at y. Returns the y just below it.
+static int nearby_checkbox(int y, bool checked) {
+    _nearby_cb = lv_checkbox_create(_panel);
+    lv_checkbox_set_text(_nearby_cb, NEARBY_CB_TEXT);
+    lv_obj_set_style_text_font(_nearby_cb, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_nearby_cb, COLOR_TEXT, 0);
+    lv_obj_set_style_border_color(_nearby_cb, COLOR_DIM, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(_nearby_cb, COLOR_ACCENT, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_border_color(_nearby_cb, COLOR_ACCENT, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_pos(_nearby_cb, 0, y);
+    if (checked) lv_obj_add_state(_nearby_cb, LV_STATE_CHECKED);
+    return y + 30;
+}
+
+static bool nearby_checked() {
+    return _nearby_cb && lv_obj_has_state(_nearby_cb, LV_STATE_CHECKED);
+}
+
 // 0 = all four blank (use Settings presets), 1 = all four valid (out
 // filled), -1 = partly filled or out of range (1-500).
 static int read_range_fields(int out[4]) {
@@ -895,7 +900,9 @@ static void waypoint_save_click_cb(lv_event_t *e) {
 
     char err[48];
     if (locations_add_waypoint(name, lat, lon, elev, err, sizeof(err))) {
-        if (rng > 0) locations_set_range_presets(locations_count() - 1, presets);
+        const int new_idx = locations_count() - 1;
+        if (rng > 0) locations_set_range_presets(new_idx, presets);
+        if (nearby_checked()) locations_nearby_set_enabled(new_idx, true);
         build_list_view(); // back to the list, now showing the new location
     } else {
         lv_label_set_text(_wp_status_lbl, err);
@@ -914,7 +921,7 @@ static void build_add_waypoint_view() {
     }
 
     _panel = lv_obj_create(_overlay);
-    lv_obj_set_size(_panel, PANEL_W, 356);
+    lv_obj_set_size(_panel, PANEL_W, 390);
     lv_obj_set_pos(_panel, 8, 8);
     lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
@@ -935,7 +942,7 @@ static void build_add_waypoint_view() {
     _wp_lat_ta  = wp_field(70, "Latitude, e.g. 39.8617", 0, LV_KEYBOARD_MODE_NUMBER);
     _wp_lon_ta  = wp_field(112, "Longitude, e.g. -104.6731", 0, LV_KEYBOARD_MODE_NUMBER);
     _wp_elev_ta = wp_field(154, "Elevation ft, e.g. 5430", 0, LV_KEYBOARD_MODE_NUMBER);
-    const int y_btn = range_fields(198, nullptr) + 12;
+    const int y_btn = nearby_checkbox(range_fields(198, nullptr) + 8, false) + 8;
 
     lv_obj_t *save_btn = lv_obj_create(_panel);
     lv_obj_set_size(save_btn, 90, BTN_H + 10);
@@ -989,7 +996,7 @@ static void build_info_view(int idx) {
         && g_config.airportdb_enabled && g_config.airportdb_token[0];
 
     _panel = lv_obj_create(_overlay);
-    lv_obj_set_size(_panel, PANEL_W, can_fetch_runways || _refresh_in_progress ? 326 : 296);
+    lv_obj_set_size(_panel, PANEL_W, can_fetch_runways || _refresh_in_progress ? 352 : 322);
     lv_obj_set_pos(_panel, 8, 8);
     lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
@@ -1040,6 +1047,15 @@ static void build_info_view(int idx) {
         snprintf(buf, sizeof(buf), "Range  %d / %d / %d / %d nm%s",
                  r[0], r[1], r[2], r[3], own ? "" : "  (Settings)");
         line(buf, own ? COLOR_TEXT : COLOR_DIM);
+    }
+    if (loc->nearby_enabled) {
+        if (loc->nearby_count > 0)
+            snprintf(buf, sizeof(buf), "Nearby airport runways  on (%d)", loc->nearby_count);
+        else
+            snprintf(buf, sizeof(buf), "Nearby airport runways  on");
+        line(buf, COLOR_TEXT);
+    } else {
+        line("Nearby airport runways  off", COLOR_DIM);
     }
 
     if (is_airport) {
@@ -1151,6 +1167,8 @@ static void edit_save_click_cb(lv_event_t *e) {
         return;
     }
     locations_set_range_presets(idx, rng > 0 ? presets : nullptr);
+    // Turning it on starts the nearby-airport scan (as the old row eye did).
+    locations_nearby_set_enabled(idx, nearby_checked());
 
     if (active) {
         int new_eff[4];
@@ -1202,7 +1220,7 @@ static void build_edit_view(int idx, bool just_added) {
     _wp_lat_ta = _wp_lon_ta = _wp_elev_ta = nullptr;
 
     _panel = lv_obj_create(_overlay);
-    lv_obj_set_size(_panel, PANEL_W, is_airport ? 222 : 356);
+    lv_obj_set_size(_panel, PANEL_W, is_airport ? 256 : 390);
     lv_obj_set_pos(_panel, 8, 8);
     lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
@@ -1253,7 +1271,7 @@ static void build_edit_view(int idx, bool just_added) {
         lv_textarea_set_text(_wp_elev_ta, vbuf);
         y = 198;
     }
-    const int y_btn = range_fields(y, loc) + 12;
+    const int y_btn = nearby_checkbox(range_fields(y, loc) + 8, loc->nearby_enabled) + 8;
 
     lv_obj_t *save_btn = lv_obj_create(_panel);
     lv_obj_set_size(save_btn, 90, BTN_H + 10);
