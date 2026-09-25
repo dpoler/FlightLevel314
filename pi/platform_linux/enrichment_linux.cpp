@@ -220,15 +220,28 @@ void normalize_callsign(const char *callsign, char *out, size_t out_sz) {
     strlcpy(out, cs.c_str(), out_sz);
 }
 
+// One AeroDataBox flight row, reduced to what the detail card shows.
+struct AdboxRoute {
+    char origin[8];
+    char dest[8];
+    char dep_sched[6];
+    char dep_est[6];
+    char arr_sched[6];
+    char arr_est[6];
+    char status[20];
+};
+
 void mark_route_result(AircraftEnrichment *entry, const char *callsign,
-                       const char *origin, const char *dest, bool have_route) {
-    if (have_route) {
-        strlcpy(entry->origin_icao, origin, sizeof(entry->origin_icao));
-        strlcpy(entry->dest_icao, dest, sizeof(entry->dest_icao));
-    } else {
-        entry->origin_icao[0] = '\0';
-        entry->dest_icao[0] = '\0';
-    }
+                       const AdboxRoute *route) {
+    const AdboxRoute none {};
+    if (!route) route = &none;
+    strlcpy(entry->origin_icao, route->origin, sizeof(entry->origin_icao));
+    strlcpy(entry->dest_icao, route->dest, sizeof(entry->dest_icao));
+    strlcpy(entry->dep_sched, route->dep_sched, sizeof(entry->dep_sched));
+    strlcpy(entry->dep_est, route->dep_est, sizeof(entry->dep_est));
+    strlcpy(entry->arr_sched, route->arr_sched, sizeof(entry->arr_sched));
+    strlcpy(entry->arr_est, route->arr_est, sizeof(entry->arr_est));
+    strlcpy(entry->flight_status, route->status, sizeof(entry->flight_status));
     entry->route_checked = true;
     entry->route_checked_ms = platform_millis();
     normalize_callsign(callsign, entry->route_callsign, sizeof(entry->route_callsign));
@@ -312,14 +325,31 @@ bool adbox_allowed() {
     return true;
 }
 
-bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
-                       char *dest, size_t dest_sz) {
+bool parse_adbox_route(JsonDocument &doc, AdboxRoute *out) {
     // Response is a JSON array of FlightContract, or occasionally a single object.
     // Pick the best flight for "what is this aircraft doing now" — not merely
     // the first row that has airports (that often picks a completed/next leg).
     JsonArrayConst arr = doc.as<JsonArrayConst>();
 
-    auto copy_airports = [&](JsonObjectConst flight) -> bool {
+    // "HH:MM" from a local time ("2026-09-13 07:10+05:30"); "" if absent.
+    auto local_hhmm = [](JsonObjectConst mov, const char *key, char *dst, size_t dst_sz) {
+        dst[0] = '\0';
+        const char *s = mov[key]["local"] | "";
+        if (strlen(s) >= 16 && (s[10] == ' ' || s[10] == 'T') && s[13] == ':') {
+            snprintf(dst, dst_sz, "%.5s", s + 11);
+        }
+    };
+
+    auto copy_movement = [&](JsonObjectConst mov, char *sched, char *est) {
+        local_hhmm(mov, "scheduledTime", sched, 6);
+        const char *keys[] = {"runwayTime", "revisedTime", "predictedTime"};
+        for (const char *k : keys) {
+            local_hhmm(mov, k, est, 6);
+            if (est[0]) break;
+        }
+    };
+
+    auto copy_flight = [&](JsonObjectConst flight) -> bool {
         if (flight.isNull()) return false;
         const char *o = flight["departure"]["airport"]["icao"] | "";
         const char *d = flight["arrival"]["airport"]["icao"] | "";
@@ -328,8 +358,12 @@ bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
             d = flight["arrival"]["airport"]["iata"] | "";
         }
         if (!o[0] && !d[0]) return false;
-        strlcpy(origin, o, origin_sz);
-        strlcpy(dest, d, dest_sz);
+        *out = AdboxRoute {};
+        strlcpy(out->origin, o, sizeof(out->origin));
+        strlcpy(out->dest, d, sizeof(out->dest));
+        copy_movement(flight["departure"].as<JsonObjectConst>(), out->dep_sched, out->dep_est);
+        copy_movement(flight["arrival"].as<JsonObjectConst>(), out->arr_sched, out->arr_est);
+        strlcpy(out->status, flight["status"] | "", sizeof(out->status));
         return true;
     };
 
@@ -340,9 +374,12 @@ bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
         for (const char *k : keys) {
             const char *s = mov[k]["utc"] | "";
             if (!s[0]) continue;
-            // AeroDataBox: "2026-08-10T15:30:00Z" or with fractional seconds.
+            // AeroDataBox sends "2026-08-10 15:30Z"; also accept ISO "T".
+            char tmp[32];
+            strlcpy(tmp, s, sizeof(tmp));
+            if (strlen(tmp) > 10 && tmp[10] == 'T') tmp[10] = ' ';
             struct tm tm_utc {};
-            const char *parsed = strptime(s, "%Y-%m-%dT%H:%M:%S", &tm_utc);
+            const char *parsed = strptime(tmp, "%Y-%m-%d %H:%M", &tm_utc);
             if (!parsed) continue;
             tm_utc.tm_isdst = 0;
             return timegm(&tm_utc);
@@ -442,13 +479,13 @@ bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
         }
         if (!have) {
             // No airports on any row — fall back to first object (caller fails if empty).
-            return copy_airports(arr[0].as<JsonObjectConst>());
+            return copy_flight(arr[0].as<JsonObjectConst>());
         }
-        return copy_airports(best.flight);
+        return copy_flight(best.flight);
     }
 
     JsonObjectConst single = doc.as<JsonObjectConst>();
-    return copy_airports(single);
+    return copy_flight(single);
 }
 
 // Live nearest flight, then same search for today's local date. searchBy uses
@@ -459,9 +496,8 @@ bool parse_adbox_route(JsonDocument &doc, char *origin, size_t origin_sz,
 // re-trigger sticky auto-disable.
 bool fetch_adbox_route(int provider, const char *key,
                        const char *icao_hex, const char *callsign, const char *registration,
-                       char *origin, size_t origin_sz, char *dest, size_t dest_sz) {
-    origin[0] = '\0';
-    dest[0] = '\0';
+                       AdboxRoute *out) {
+    *out = AdboxRoute {};
     if (!key || !key[0]) return false;
 
     char hdr_bufs[2][160];
@@ -507,7 +543,7 @@ bool fetch_adbox_route(int provider, const char *key,
             platform_log_warn("Enrich: AeroDataBox JSON parse fail (%zu bytes)\n", len);
             return 0;
         }
-        return parse_adbox_route(doc, origin, origin_sz, dest, dest_sz) ? 1 : 0;
+        return parse_adbox_route(doc, out) ? 1 : 0;
     };
 
     auto try_search = [&](const char *search_by, const char *param) -> int {
@@ -806,14 +842,14 @@ void run_enrichment(std::string icao, std::string registration, std::string call
     const bool want_route = adbox_on && enrichment_route_eligible(
         callsign.c_str(), category.c_str(), type_code.c_str(), is_military);
     if (want_route) {
-        char origin[8] = {}, dest[8] = {};
+        AdboxRoute route {};
         bool ok = fetch_adbox_route(adbox_prov, adbox_key, icao.c_str(), callsign.c_str(),
-                                    registration.c_str(),
-                                    origin, sizeof(origin), dest, sizeof(dest));
+                                    registration.c_str(), &route);
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            mark_route_result(entry, callsign.c_str(), origin, dest, ok);
-            if (ok) platform_log_debug("Enrich: route %s -> %s for %s\n", origin, dest, icao.c_str());
+            mark_route_result(entry, callsign.c_str(), ok ? &route : nullptr);
+            if (ok) platform_log_debug("Enrich: route %s -> %s (%s) for %s\n",
+                                       route.origin, route.dest, route.status, icao.c_str());
             else platform_log_debug("Enrich: AeroDataBox no route for %s\n", icao.c_str());
         }
         notify_callback(entry);
@@ -821,7 +857,7 @@ void run_enrichment(std::string icao, std::string registration, std::string call
         std::lock_guard<std::mutex> lock(_mutex);
         // Off, ineligible (small GA/HELI/MIL), or no key — stamp so we don't
         // spin until TTL / callsign change / cache clear.
-        mark_route_result(entry, callsign.c_str(), "", "", false);
+        mark_route_result(entry, callsign.c_str(), nullptr);
         if (adbox_on && !want_route)
             platform_log_debug("Enrich: route skipped (not commercial) for %s\n",
                          icao.c_str());
@@ -857,18 +893,17 @@ void run_route_refresh(std::string icao, std::string registration, std::string c
     const bool want_route = adbox_on && enrichment_route_eligible(
         callsign.c_str(), category.c_str(), type_code.c_str(), is_military);
     if (want_route) {
-        char origin[8] = {}, dest[8] = {};
+        AdboxRoute route {};
         bool ok = fetch_adbox_route(adbox_prov, adbox_key, icao.c_str(), callsign.c_str(),
-                                    registration.c_str(),
-                                    origin, sizeof(origin), dest, sizeof(dest));
+                                    registration.c_str(), &route);
         std::lock_guard<std::mutex> lock(_mutex);
-        mark_route_result(entry, callsign.c_str(), origin, dest, ok);
+        mark_route_result(entry, callsign.c_str(), ok ? &route : nullptr);
         platform_log_debug("Enrich: route refresh %s -> %s for %s (%s)\n",
-                     ok ? origin : "-", ok ? dest : "-", icao.c_str(),
+                     ok ? route.origin : "-", ok ? route.dest : "-", icao.c_str(),
                      ok ? "ok" : "none");
     } else {
         std::lock_guard<std::mutex> lock(_mutex);
-        mark_route_result(entry, callsign.c_str(), "", "", false);
+        mark_route_result(entry, callsign.c_str(), nullptr);
         if (adbox_on)
             platform_log_debug("Enrich: route refresh skipped (not commercial) for %s\n",
                          icao.c_str());

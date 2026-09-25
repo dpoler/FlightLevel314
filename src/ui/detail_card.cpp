@@ -50,6 +50,12 @@ static lv_obj_t *_lat_label = nullptr;
 static lv_obj_t *_lon_label = nullptr;
 static lv_obj_t *_track_label = nullptr;
 static lv_obj_t *_signal_label = nullptr;
+// Flight times (AeroDataBox, airport local). *_sched_label is a dim
+// "sch HH:MM" beside the value, shown only when the estimate differs.
+static lv_obj_t *_dep_label = nullptr;
+static lv_obj_t *_dep_sched_label = nullptr;
+static lv_obj_t *_arr_label = nullptr;
+static lv_obj_t *_arr_sched_label = nullptr;
 
 // Live update timer
 static lv_timer_t *_update_timer = nullptr;
@@ -100,6 +106,7 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #define CARD_TEXT lv_color_hex(0xccccdd)
 #define CARD_ACCENT lv_color_hex(0x4488ff)
 #define CARD_DIM lv_color_hex(0x666688)
+#define CARD_WARN lv_color_hex(0xffaa00)
 
 // ASCII separator — montserrat doesn't include U+00B7 (·), which rendered
 // as empty rectangular tofu between summary fields.
@@ -243,6 +250,36 @@ static void route_set_hidden(bool hidden) {
     apply(_route_to_name);
 }
 
+// Newest time as the value; scheduled beside it only when they differ.
+static void set_time_cell(lv_obj_t *value, lv_obj_t *sched_lbl,
+                          const char *sched, const char *est) {
+    const char *shown = est[0] ? est : sched;
+    lv_label_set_text(value, shown[0] ? shown : "--");
+    if (est[0] && sched[0] && strcmp(est, sched) != 0) {
+        lv_label_set_text_fmt(sched_lbl, "sch %s", sched);
+        lv_obj_align_to(sched_lbl, value, LV_ALIGN_OUT_RIGHT_BOTTOM, 6, 0);
+        lv_obj_clear_flag(sched_lbl, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(sched_lbl, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+// Diverted / canceled flights keep their planned destination in the feed
+// (AeroDataBox has no "diverted to" field), so flag TO instead of trusting it.
+static void set_route_status(const char *status) {
+    const bool diverted = strcmp(status, "Diverted") == 0;
+    const bool canceled = strncmp(status, "Canceled", 8) == 0;
+    if (diverted || canceled) {
+        lv_label_set_text(_route_to_hdr, diverted ? "TO  DIVERTED" : "TO  CANCELED");
+        lv_obj_set_style_text_color(_route_to_hdr, CARD_WARN, 0);
+        lv_obj_set_style_text_color(_route_to_icao, CARD_DIM, 0);
+    } else {
+        lv_label_set_text(_route_to_hdr, "TO");
+        lv_obj_set_style_text_color(_route_to_hdr, CARD_DIM, 0);
+        lv_obj_set_style_text_color(_route_to_icao, CARD_ACCENT, 0);
+    }
+}
+
 static void on_enrichment_ready(AircraftEnrichment *data) {
     if (!_visible) return;
 
@@ -282,7 +319,16 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         // ASCII "-" only — Montserrat has no U+2014 em dash (renders as tofu).
         lv_label_set_text(_route_from_name, oplace[0] ? oplace : "-");
         lv_label_set_text(_route_to_name, dplace[0] ? dplace : "-");
+        set_route_status(data->flight_status);
         route_set_hidden(false);
+    }
+
+    set_time_cell(_dep_label, _dep_sched_label, data->dep_sched, data->dep_est);
+    if (strcmp(data->flight_status, "Diverted") == 0) {
+        // Planned arrival time is meaningless once diverted.
+        set_time_cell(_arr_label, _arr_sched_label, "", "");
+    } else {
+        set_time_cell(_arr_label, _arr_sched_label, data->arr_sched, data->arr_est);
     }
 
 #if !defined(ARDUINO)
@@ -662,8 +708,8 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     // === DATA GRID ===
     // Wide (Pi): 3 columns, grouped by meaning. LATITUDE/LONGITUDE stay
     // adjacent; MACH/IAS/TAS/ROLL/QNH dropped (rarely present / low value).
-    // Bottom cells left empty for upcoming flight-ops times.
-    // Narrow: 6 columns × 2 rows + SIGNAL, same groupings left-to-right.
+    // Bottom row: SIGNAL + DEPARTS/ARRIVES (AeroDataBox, airport local).
+    // Narrow: 6 columns × 2 rows + SIGNAL/DEPARTS/ARRIVES, same groupings.
 #if LCD_H_RES >= 1280
     int y0 = GRID_Y0;
     // Motion
@@ -682,8 +728,10 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     make_data_row(_card, "LATITUDE",  COL1, y0 + 3 * GRID_ROW_H, &_lat_label);
     make_data_row(_card, "LONGITUDE", COL2, y0 + 3 * GRID_ROW_H, &_lon_label);
     make_data_row(_card, "TRACKED",   COL3, y0 + 3 * GRID_ROW_H, &_track_label);
-    // Feed freshness; remaining cells reserved for STD/ATD/STA/ATA later
+    // Feed freshness + flight times (airport local)
     make_data_row(_card, "SIGNAL",    COL1, y0 + 4 * GRID_ROW_H, &_signal_label);
+    make_data_row(_card, "DEPARTS",   COL2, y0 + 4 * GRID_ROW_H, &_dep_label);
+    make_data_row(_card, "ARRIVES",   COL3, y0 + 4 * GRID_ROW_H, &_arr_label);
 #else
     int y1 = GRID_Y0;
     make_data_row(_card, "ALTITUDE",  COL1, y1, &_alt_label);
@@ -703,7 +751,19 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
 
     int y3 = GRID_Y0 + 2 * GRID_ROW_H;
     make_data_row(_card, "SIGNAL",    COL1, y3, &_signal_label);
+    make_data_row(_card, "DEPARTS",   COL2, y3, &_dep_label);
+    make_data_row(_card, "ARRIVES",   COL3, y3, &_arr_label);
 #endif
+    auto make_sched_label = [&]() {
+        lv_obj_t *lbl = lv_label_create(_card);
+        lv_label_set_text(lbl, "");
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, CARD_DIM, 0);
+        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        return lbl;
+    };
+    _dep_sched_label = make_sched_label();
+    _arr_sched_label = make_sched_label();
 
     // Tap to close
     lv_obj_add_event_cb(_card, [](lv_event_t *e) {
@@ -766,7 +826,10 @@ void detail_card_show(const Aircraft *ac) {
     if (_route_to_icao) lv_label_set_text(_route_to_icao, "");
     if (_route_from_name) lv_label_set_text(_route_from_name, "");
     if (_route_to_name) lv_label_set_text(_route_to_name, "");
+    set_route_status("");
     route_set_hidden(true);
+    set_time_cell(_dep_label, _dep_sched_label, "", "");
+    set_time_cell(_arr_label, _arr_sched_label, "", "");
     lv_label_set_text(_photo_credit_label, "");
     lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 #if !defined(ARDUINO)

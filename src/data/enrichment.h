@@ -15,6 +15,16 @@ struct AircraftEnrichment {
     // Empty when unavailable / service off.
     char origin_icao[8];
     char dest_icao[8];
+    // Times from the same AeroDataBox flight, "HH:MM" in each airport's local
+    // time. *_sched = scheduled; *_est = newest better time (runway, then
+    // revised, then predicted). Empty when unknown.
+    char dep_sched[6];
+    char dep_est[6];
+    char arr_sched[6];
+    char arr_est[6];
+    // AeroDataBox status of that flight ("EnRoute", "Diverted", ...). Empty
+    // when unknown. A diverted flight still reports its planned dest_icao.
+    char flight_status[20];
     bool route_checked; // true once AeroDataBox was attempted (or skipped as off)
     // Callsign used for the last route lookup (alnum upper). Empty if none.
     char route_callsign[16];
