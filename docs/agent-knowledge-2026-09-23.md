@@ -240,7 +240,6 @@ never claim “up to date” falsely.
 Highest-signal leftovers (verify §7.1 in project-knowledge before acting):
 
 - **Follow Mode** — hold; design notes only
-- Detail card: STD/ATD/STA/ATA + diverted; reclaim blank telemetry rows
 - Satellite basemap style (Esri/Mapbox; key OK)
 - Optional fresher README LIST/INFO screenshots
 - QoL themes / font size

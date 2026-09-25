@@ -67,8 +67,6 @@ PAT/SSH setup unless he asks; push from Mac instead.
 ### Open backlog (do **not** start unless Dan asks)
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
-- Detail card: AeroDataBox STD/ATD/STA/ATA + diverted; reclaim blank
-  telemetry rows; card can grow taller / better centered (2026-08-31)
 - Satellite basemap style (Esri or Mapbox; API key OK)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
@@ -602,17 +600,16 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   gate in detail_card (or enrichment read path) — no extra API. Full note
   under origin/destination history above §9.
 
-- **Detail card — flight ops times (Dan, 2026-08-28 / 08-31)**: surface
-  STD/ATD/STA/ATA (+ Diverted etc.) from the same AeroDataBox Flight Status
-  JSON already used for O/D — **0 extra API calls** if we only persist fields
-  the parser already reads for scoring. Layout notes when implementing:
-  1. **Card can grow taller** — the summary/flight-info box is not vertically
-     centered in the dimmed overlay; there is unused margin. Prefer a modest
-     height bump (and/or centering) over packing times into a cramped column.
-  2. Telemetry grid already dropped MACH / IAS / TAS / ROLL / QNH (2026-08-31)
-     and regrouped LATITUDE/LONGITUDE; empty cells on the last grid row are
-     reserved for times / diverted.
-  **Do not start unless Dan asks.**
+- ~~**Detail card — flight ops times (Dan, 2026-08-28 / 08-31)**~~
+  **done 2026-09-24** — times come from the same AeroDataBox flight already
+  used for O/D (0 extra API calls). Summary box (440x296) shows a time line
+  under FROM / TO in airport-local time: `STD 18:50  ATD 19:08`,
+  `STA 21:50  ETA 21:36`. A = ADB `runwayTime`; E = revised/predicted;
+  second pair only when actual or differing. Diverted/Canceled flag the TO
+  header amber (ADB has no "diverted to" airport; STA shows `--` when
+  diverted). Telemetry grid dropped MACH/IAS/TAS/ROLL/QNH and moved right.
+  Same change fixed ADB timestamp parsing (`YYYY-MM-DD HH:MMZ`), so the
+  live-flight time score in route pick actually works now.
 
 - ~~**VIEW — “Rebuild this map” (current mosaic only) (Dan, 2026-08-10)**~~
   **done 2026-08-21**: VIEW → Basemap → **Rebuild map** calls
