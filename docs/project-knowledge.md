@@ -735,26 +735,20 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   lookups, app erasing set_api_keys.py keys (keys now read from disk on
   save), tap hit-test offset (Map/Radar/List), filter tap swallowing next
   map tap, emergency toast dedup, tap-another-aircraft switches the card.
+  Fixed in batch 2: atomic config/locations writes + serialized saves +
+  recursive mkdir (files now 0600); Settings Save/Cancel keep live ADB
+  state; METAR/ATIS publish only for the active location (+ INFO shows
+  "Fetching..." until *_for_active_location()), D-ATIS list backoff;
+  removing the active location selects its neighbor and clears traffic;
+  basemap doesn't build/cache when tiles fail; error_log_init at boot;
+  stats unique set; Metric toggle removed; map labels saved airports by
+  ICAO; nearby-runways rescan on switch when toggle on + cache empty.
   Still open, roughly by priority:
   - Intermittent: after switching an open card to aircraft B, B's photo
     sometimes doesn't appear (not yet reproduced/diagnosed).
-  - config.json / locations.json written in place (power loss -> keys or
-    locations lost); concurrent saves from background threads. Use
-    temp+rename. Also mkdir isn't recursive (fails if ~/.config missing).
-  - Settings Save writes the open-time snapshot back over live ADB
-    counters / auto-disable / quota changed while it was open.
-  - METAR/ATIS: switching during an in-flight fetch shows the previous
-    airport's data for up to 15 min; ATIS retries the D-ATIS list every
-    second when it fails (waypoint locations).
-  - Removing the active location leaves its aircraft frozen on screen.
-  - Failed basemap rebuild (all tiles fail) cached as blank for 30-40 days.
-  - Metric Units toggle is never read. error_log_init() never called (APP
-    ERRORS always empty).
-  - stats.cpp: after 2000 unique aircraft, top types/airlines re-count
-    every tick.
   - Location identity by name: static-DB airport adds store truncated full
     name, duplicates possible (wrong location on boot, airport edit-save
-    "name already used"). Map glyph labels still use loc->name.
+    "name already used").
   - Airline lookup matches registration callsigns (CGAxx, OEAxx); airlines
     load once at boot with no retry.
   - Editing active-location presets clears the aircraft list (uses
