@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <vector>
 
 struct AircraftEnrichment {
     char photo_url[256];
@@ -48,7 +49,11 @@ struct AircraftEnrichment {
 void enrichment_init();
 
 // Fetch enrichment data in background. Calls callback progressively as data arrives.
-// Callback is always called from LVGL context (safe to update UI).
+// Callback is always called from LVGL context (safe to update UI). The data
+// pointer may belong to a different aircraft than the one last requested (an
+// earlier lookup finishing) -- callers should re-read by ICAO with
+// enrichment_snapshot(). A request made while another lookup is running is
+// queued (latest wins) and started when that lookup finishes.
 // callsign/category/type_code/is_military feed AeroDataBox eligibility
 // (skip small GA / HELI / MIL to save API quota).
 void enrichment_fetch(const char *icao_hex, const char *registration,
@@ -68,6 +73,14 @@ void enrichment_poll();
 
 // Get cached enrichment (returns nullptr if not yet fetched)
 AircraftEnrichment *enrichment_get_cached(const char *icao_hex);
+
+// Copy the cache entry for icao_hex (loaded or still loading) under the cache
+// lock, plus its decoded photo pixels (RGB565, photo_w * photo_h * 2 bytes;
+// empty if none). out->photo_rgb565 is set to nullptr -- the caller owns the
+// copy, so cache eviction / enrichment_clear_cache() can't free pixels it is
+// still drawing. Returns false if nothing is cached for that aircraft.
+bool enrichment_snapshot(const char *icao_hex, AircraftEnrichment *out,
+                         std::vector<uint8_t> *photo);
 
 // Drop all cached enrichment entries (e.g. after toggling AeroDataBox on).
 void enrichment_clear_cache();

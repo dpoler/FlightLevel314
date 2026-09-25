@@ -10,6 +10,10 @@
 #include <cstdio> // snprintf -- not reliably transitive under libstdc++ (Pi build)
 #include <cstring>
 #include <cctype>
+#include <vector>
+#if !defined(ARDUINO)
+#include "src/misc/cache/instance/lv_image_cache.h" // lv_image_cache_drop (not in lvgl.h)
+#endif
 
 static lv_obj_t *_card = nullptr;
 #if LCD_H_RES >= 1280
@@ -35,6 +39,11 @@ static lv_obj_t *_photo_credit_label = nullptr;
 static lv_obj_t *_photo_img = nullptr;
 static lv_image_dsc_t _photo_dsc;
 static char _photo_shown_icao[7] = {};
+// Card-owned copy of the displayed photo's pixels. The enrichment cache can
+// evict or clear (Settings -> Clear caches) its own buffer at any time, and
+// the card keeps drawing under the Settings backdrop -- so never point the
+// image at cache memory.
+static std::vector<uint8_t> _photo_pixels;
 #endif
 // Telemetry grid values (labels created in detail_card_init).
 static lv_obj_t *_alt_label = nullptr;
@@ -309,8 +318,17 @@ static void set_route_status(const char *status) {
     }
 }
 
-static void on_enrichment_ready(AircraftEnrichment *data) {
+static void on_enrichment_ready(AircraftEnrichment *entry) {
+    (void)entry;
     if (!_visible) return;
+
+    // The callback's entry can belong to another aircraft (an earlier lookup
+    // finishing after the card moved on), so always re-read by the ICAO on
+    // screen. The snapshot also copies the photo pixels (see _photo_pixels).
+    AircraftEnrichment snap;
+    std::vector<uint8_t> photo;
+    if (!enrichment_snapshot(_current_ac.icao_hex, &snap, &photo)) return;
+    const AircraftEnrichment *data = &snap;
 
     // Manufacturer + type. adsbdb's "type" is often a short designator
     // (A320, B738) while manufacturer is a separate field — always join when
@@ -361,7 +379,9 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
     }
 
 #if !defined(ARDUINO)
-    if (data->photo_rgb565 && data->photo_w > 0 && data->photo_h > 0 && _photo_img) {
+    if (!photo.empty() && data->photo_w > 0 && data->photo_h > 0 && _photo_img) {
+        _photo_pixels.swap(photo);
+        lv_image_cache_drop(&_photo_dsc); // same descriptor, new pixels
         memset(&_photo_dsc, 0, sizeof(_photo_dsc));
         _photo_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
         _photo_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
@@ -369,7 +389,7 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         _photo_dsc.header.h = data->photo_h;
         _photo_dsc.header.stride = (uint32_t)data->photo_w * 2;
         _photo_dsc.data_size = (uint32_t)data->photo_w * (uint32_t)data->photo_h * 2;
-        _photo_dsc.data = data->photo_rgb565;
+        _photo_dsc.data = _photo_pixels.data();
         lv_image_set_src(_photo_img, &_photo_dsc);
         lv_obj_set_size(_photo_img, data->photo_w, data->photo_h);
         lv_obj_align(_photo_img, LV_ALIGN_TOP_RIGHT, 0, 8);
@@ -908,12 +928,14 @@ void detail_card_hide() {
     _visible = false;
 
 #if !defined(ARDUINO)
-    // Drop the image src before any cache slot can free photo_rgb565.
+    // Detach the image, then release the card's pixel copy.
     if (_photo_img) {
         lv_obj_add_flag(_photo_img, LV_OBJ_FLAG_HIDDEN);
         lv_image_set_src(_photo_img, nullptr);
         _photo_shown_icao[0] = '\0';
     }
+    _photo_pixels.clear();
+    _photo_pixels.shrink_to_fit();
 #endif
 
     // Pause live updates

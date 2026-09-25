@@ -61,8 +61,6 @@ static uint32_t _trails_cleared_at = 0;
 #define RUNWAY_LBL_W_BIG          40     // lv_font_montserrat_14
 #define RUNWAY_LBL_H_BIG          18
 
-static bool _filter_just_clicked = false; // guard against zoom cycle
-
 // Tracked aircraft — bold red circle until another is selected or it leaves
 static char _tracked_hex[7] = {};
 
@@ -427,7 +425,6 @@ static void update_gnd_visual(); // defined below -- filter_click_cb needs it fo
 
 static void filter_click_cb(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    _filter_just_clicked = true; // prevent zoom cycle
     filter_toggle(idx);
     update_filter_visuals();
 
@@ -469,7 +466,6 @@ static void update_gnd_visual() {
 }
 
 static void gnd_click_cb(lv_event_t *e) {
-    _filter_just_clicked = true; // prevent zoom cycle
     g_config.view_hide_ground[VIEW_MAP] = !g_config.view_hide_ground[VIEW_MAP];
     storage_save_config(g_config);
     update_gnd_visual();
@@ -1291,17 +1287,18 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
         if (views_get_active_index() != VIEW_MAP) return;
         if (views_swipe_active()) { views_clear_swipe(); return; }
 
-        // Guard: skip if a filter button was just clicked
-        if (_filter_just_clicked) {
-            _filter_just_clicked = false;
-            return;
-        }
-
+        // Filter buttons are siblings of the canvas, so their taps never
+        // reach this handler -- no guard needed (the old "just clicked" flag
+        // was only cleared here, so it swallowed the next real map tap).
         lv_point_t point;
         lv_indev_get_point(lv_indev_active(), &point);
 
+        // Aircraft are drawn in absolute screen coordinates (DRAW_MAIN_END
+        // layer), same space as the touch point -- no status-bar offset.
+        // The old "- 30" (an ESP32 leftover) put the hit circle 30px below
+        // each icon.
         int tx = point.x;
-        int ty = point.y - 30;
+        int ty = point.y;
 
         if (detail_card_is_visible()) {
             detail_card_hide();

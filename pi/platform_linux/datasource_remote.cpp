@@ -25,6 +25,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -79,6 +81,13 @@ void mark_alerted(const char *hex) {
     _alerted_write = (_alerted_write + 1) % ALERTED_MAX;
     if (_alerted_count < ALERTED_MAX) _alerted_count++;
 }
+
+// Emergency alert dedup: ICAO hex -> squawk already alerted. Toast once when
+// an aircraft starts squawking 7500/7600/7700, again only if the code changes
+// or it clears and comes back -- previously it re-toasted every ~20s fetch
+// for as long as the aircraft stayed in range. Rebuilt each fetch from the
+// aircraft still in the list, so entries for departed aircraft drop out.
+std::unordered_map<std::string, uint16_t> _emg_alerted;
 
 void apply_json_entry(Aircraft &a, JsonObject obj, bool is_new) {
     strlcpy(a.icao_hex, obj["hex"] | "", sizeof(a.icao_hex));
@@ -199,19 +208,33 @@ bool RemoteApiDataSource::fetch(AircraftList *list) {
     }
     list->count = write;
 
+    std::unordered_map<std::string, uint16_t> emg_next;
     for (int i = 0; i < list->count; i++) {
         Aircraft &a = list->aircraft[i];
-        if (a.stale_since != 0) continue;
-        if (a.is_emergency && g_config.alert_emergency) {
+        if (a.is_emergency) {
+            auto prev = _emg_alerted.find(a.icao_hex);
+            const bool already = (prev != _emg_alerted.end() && prev->second == a.squawk);
+            // Ghosts (missed a fetch) keep their entry but never alert.
+            if (a.stale_since != 0) {
+                if (already) emg_next[a.icao_hex] = a.squawk;
+                continue;
+            }
+            emg_next[a.icao_hex] = a.squawk;
+            if (already || !g_config.alert_emergency) continue;
             char msg[48];
             snprintf(msg, sizeof(msg), "Squawk %04d - %s", a.squawk,
                      a.squawk == 7500 ? "HIJACK" : a.squawk == 7600 ? "COMMS FAIL" : "EMERGENCY");
             alerts_queue(ALERT_EMERGENCY, a.callsign[0] ? a.callsign : a.icao_hex, msg, a.icao_hex);
-        } else if (a.is_military && g_config.alert_military && !already_alerted(a.icao_hex)) {
+            continue;
+        }
+        if (a.stale_since != 0) continue;
+        if (a.is_military && g_config.alert_military && !already_alerted(a.icao_hex)) {
             mark_alerted(a.icao_hex);
             alerts_queue(ALERT_MILITARY, a.callsign[0] ? a.callsign : a.icao_hex, a.type_code, a.icao_hex);
         }
     }
+
+    _emg_alerted.swap(emg_next);
 
     list->unlock();
     return true;

@@ -89,7 +89,6 @@ static lv_obj_t *_filter_lbls[NUM_FILTERS] = {};
 // state match), but drawn in the same button stack, state group with VERT.
 static lv_obj_t *_gnd_btn = nullptr;
 static lv_obj_t *_gnd_lbl = nullptr;
-static bool _filter_just_clicked = false;
 
 // Convert lat/lon to radar-relative screen coords
 static bool to_radar_screen(float lat, float lon, int &sx, int &sy) {
@@ -686,7 +685,6 @@ static void update_gnd_visual(); // defined below -- radar_filter_click_cb needs
 
 static void radar_filter_click_cb(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    _filter_just_clicked = true;
     filter_toggle(idx);
     update_filter_visuals();
 
@@ -725,7 +723,6 @@ static void update_gnd_visual() {
 }
 
 static void gnd_click_cb(lv_event_t *e) {
-    _filter_just_clicked = true;
     g_config.view_hide_ground[VIEW_RADAR] = !g_config.view_hide_ground[VIEW_RADAR];
     storage_save_config(g_config);
     update_gnd_visual();
@@ -767,15 +764,14 @@ void radar_view_init(lv_obj_t *parent, AircraftList *list) {
         if (views_get_active_index() != VIEW_RADAR) return;
         if (views_swipe_active()) { views_clear_swipe(); return; }
 
-        if (_filter_just_clicked) {
-            _filter_just_clicked = false;
-            return;
-        }
-
+        // No filter-tap guard needed: the buttons are siblings, not
+        // children, so their taps never reach this handler.
         lv_point_t point;
         lv_indev_get_point(lv_indev_active(), &point);
+        // Blips are drawn in absolute screen coordinates (RADAR_CX/CY), same
+        // space as the touch point -- no status-bar offset (see map_view.cpp).
         int tx = point.x;
-        int ty = point.y - 30;
+        int ty = point.y;
 
         if (detail_card_is_visible()) {
             detail_card_hide();

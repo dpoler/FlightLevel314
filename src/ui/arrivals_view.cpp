@@ -22,7 +22,6 @@ static lv_obj_t *_filter_btns[NUM_FILTERS] = {};
 static lv_obj_t *_gnd_btn = nullptr;
 static lv_obj_t *_gnd_lbl = nullptr;
 static lv_obj_t *_filter_lbls[NUM_FILTERS] = {};
-static bool _filter_just_clicked = false; // suppress the row-tap handler right after a filter button tap
 
 static void update_board(lv_timer_t *t); // defined below; gnd_click_cb needs it
 
@@ -278,7 +277,6 @@ static void update_gnd_visual() {
 }
 
 static void gnd_click_cb(lv_event_t *e) {
-    _filter_just_clicked = true;
     g_config.view_hide_ground[VIEW_ARRIVALS] = !g_config.view_hide_ground[VIEW_ARRIVALS];
     storage_save_config(g_config);
     update_gnd_visual();
@@ -430,7 +428,6 @@ void arrivals_view_on_show() {
 
 static void filter_click_cb(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    _filter_just_clicked = true;
     filter_toggle(idx);
     update_filter_visuals();
 
@@ -501,14 +498,6 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
         if (views_get_active_index() != VIEW_ARRIVALS) return;
         if (views_swipe_active()) { views_clear_swipe(); return; }
 
-        // Guard: skip if a filter button was just clicked -- the row-tap
-        // logic below only checks Y, not X, so a tap on the filter column
-        // would otherwise also be read as a row tap.
-        if (_filter_just_clicked) {
-            _filter_just_clicked = false;
-            return;
-        }
-
         if (detail_card_is_visible()) {
             detail_card_hide();
             return;
@@ -516,10 +505,16 @@ void arrivals_view_init(lv_obj_t *parent, AircraftList *list) {
 
         lv_point_t point;
         lv_indev_get_point(lv_indev_active(), &point);
-        int ty = point.y - 30; // offset for status bar
-
-        // Determine which row was tapped
-        int row = (ty - HEADER_H - 4) / ROW_H;
+        // Row backgrounds sit at HEADER_H + row * ROW_H inside the board;
+        // convert the (absolute) touch point into board coordinates. The old
+        // "- 30" didn't match the Pi's 48px status bar, so the bottom 18px
+        // of each row opened the next row. Filter buttons are siblings of
+        // the board, so their taps never reach this handler.
+        lv_area_t board;
+        lv_obj_get_coords(_board_container, &board);
+        int ty = point.y - board.y1;
+        if (ty < HEADER_H) return; // title / column headers
+        int row = (ty - HEADER_H) / ROW_H;
         if (row < 0 || row >= MAX_ROWS) return;
         if (!_rows[row].active) return;
 

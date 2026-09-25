@@ -86,20 +86,19 @@ static UserConfig defaults() {
     return cfg;
 }
 
-UserConfig storage_load_config() {
-    UserConfig cfg = defaults();
-
+// Reads config.json over `cfg` (which should start as defaults()). Missing =
+// no file; Bad = empty/oversized or doesn't parse (cfg may be partly set).
+// Silent -- storage_load_config() does the logging.
+enum class LoadResult { Ok, Missing, Bad };
+static LoadResult load_file(UserConfig &cfg) {
     FILE *f = fopen(config_file_path().c_str(), "r");
-    if (!f) {
-        platform_log_info("Storage: no config file yet at %s, using defaults\n", config_file_path().c_str());
-        return cfg;
-    }
+    if (!f) return LoadResult::Missing;
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (size <= 0 || size > 65536) {
         fclose(f);
-        return cfg;
+        return LoadResult::Bad;
     }
     std::string buf(size, '\0');
     size_t read = fread(&buf[0], 1, size, f);
@@ -107,10 +106,7 @@ UserConfig storage_load_config() {
     buf.resize(read);
 
     JsonDocument doc;
-    if (deserializeJson(doc, buf) != DeserializationError::Ok) {
-        platform_log_warn("Storage: %s failed to parse, using defaults\n", config_file_path().c_str());
-        return cfg;
-    }
+    if (deserializeJson(doc, buf) != DeserializationError::Ok) return LoadResult::Bad;
 
     strlcpy(cfg.wifi_ssid, doc["ssid"] | cfg.wifi_ssid, sizeof(cfg.wifi_ssid));
     strlcpy(cfg.wifi_pass, doc["pass"] | cfg.wifi_pass, sizeof(cfg.wifi_pass));
@@ -196,20 +192,47 @@ UserConfig storage_load_config() {
     cfg.last_view_idx = doc["last_view"] | cfg.last_view_idx;
     cfg.last_range_idx = doc["last_rng"] | cfg.last_range_idx;
     strlcpy(cfg.last_location_name, doc["last_loc"] | cfg.last_location_name, sizeof(cfg.last_location_name));
+    return LoadResult::Ok;
+}
 
-    platform_log_info("Storage: config loaded from %s\n", config_file_path().c_str());
+UserConfig storage_load_config() {
+    UserConfig cfg = defaults();
+    switch (load_file(cfg)) {
+    case LoadResult::Ok:
+        platform_log_info("Storage: config loaded from %s\n", config_file_path().c_str());
+        break;
+    case LoadResult::Missing:
+        platform_log_info("Storage: no config file yet at %s, using defaults\n",
+                          config_file_path().c_str());
+        break;
+    case LoadResult::Bad:
+        platform_log_warn("Storage: %s failed to parse, using defaults\n",
+                          config_file_path().c_str());
+        cfg = defaults();
+        break;
+    }
     return cfg;
 }
 
 void storage_save_config(const UserConfig &cfg) {
     mkdir(config_dir().c_str(), 0755); // ignores EEXIST -- fine either way
 
+    // API keys (and the billing renew day) are only ever written by
+    // tools/set_api_keys.py -- the app never edits them. Take them from the
+    // file on disk, not from `cfg`: the running app's in-memory copy predates
+    // any key set (or cleared) over SSH since boot, and saving it used to
+    // silently erase the new key on the next range tap / location switch.
+    // Missing file (first run, factory reset) -> fall back to `cfg`.
+    UserConfig disk = defaults();
+    const bool have_disk = (load_file(disk) == LoadResult::Ok);
+    const UserConfig &keys = have_disk ? disk : cfg;
+
     JsonDocument doc;
     doc["ssid"] = cfg.wifi_ssid;
     doc["pass"] = cfg.wifi_pass;
-    doc["apt_tok"] = cfg.airportdb_token;
+    doc["apt_tok"] = keys.airportdb_token;
     doc["apt_en"] = cfg.airportdb_enabled;
-    doc["adbox_key"] = cfg.aerodatabox_key;
+    doc["adbox_key"] = keys.aerodatabox_key;
     doc["adbox_prov"] = cfg.aerodatabox_provider;
     doc["adbox_en"] = cfg.aerodatabox_enabled;
     doc["adbox_ym"] = cfg.adbox_usage_yyyymm;
@@ -222,7 +245,7 @@ void storage_save_config(const UserConfig &cfg) {
     doc["adbox_mu"] = cfg.adbox_mkt_have_units;
     doc["adbox_murem"] = cfg.adbox_mkt_units_rem;
     doc["adbox_mulim"] = cfg.adbox_mkt_units_lim;
-    doc["adbox_renew_day"] = cfg.adbox_renew_day;
+    doc["adbox_renew_day"] = keys.adbox_renew_day;
     doc["traffic_prov"] = cfg.traffic_provider;
     doc["radius"] = cfg.radius_nm;
     doc["rad0"] = cfg.radius_presets[0];
@@ -258,8 +281,8 @@ void storage_save_config(const UserConfig &cfg) {
     doc["tag_type1"] = cfg.view_show_tag_type[1];
     doc["show2loc0"] = cfg.view_show_secondary_locations[0];
     doc["show2loc1"] = cfg.view_show_secondary_locations[1];
-    doc["carto_key"] = cfg.carto_basemap_key;
-    doc["esri_key"] = cfg.esri_basemap_key;
+    doc["carto_key"] = keys.carto_basemap_key;
+    doc["esri_key"] = keys.esri_basemap_key;
     doc["bm_on"] = cfg.map_basemap_enabled;
     for (int i = 0; i < 7; i++) {
         char key[12];

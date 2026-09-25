@@ -580,13 +580,6 @@ static void save_and_close(lv_event_t *e) {
         _cfg.display_brightness_pct = b;
     }
 
-    // Settings never edits renewal day (set_api_keys.py). Keep on-disk value
-    // so Save after a mid-open --adbox-renew-day does not wipe it.
-    {
-        UserConfig disk = storage_load_config();
-        _cfg.adbox_renew_day = disk.adbox_renew_day;
-    }
-
     storage_save_config(_cfg);
     if (clear_enrich) enrichment_clear_cache();
     if (_on_change) _on_change(&_cfg);

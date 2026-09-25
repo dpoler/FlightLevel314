@@ -55,6 +55,17 @@ void (*_pending_callback)(AircraftEnrichment *) = nullptr;
 volatile AircraftEnrichment *_deferred_entry = nullptr;
 volatile bool _deferred_ready = false;
 
+// One queued request (latest wins) for a tap that arrives while another
+// lookup is running -- previously it was dropped, so the new aircraft's card
+// never got enriched. Guarded by _mutex.
+struct QueuedRequest {
+    bool have = false;
+    std::string icao, reg, cs, cat, typ;
+    bool is_military = false;
+    void (*callback)(AircraftEnrichment *) = nullptr;
+};
+QueuedRequest _queued;
+
 // Marketplace meters from ADB response headers (RapidAPI units/requests).
 // Hot path is in-memory; units are mirrored into g_config so Settings USAGE
 // survives restart without burning another verify call. Billing renewal day
@@ -749,6 +760,21 @@ bool decode_photo_rgb565(const uint8_t *bytes, size_t len,
     return true;
 }
 
+// Release the busy slot and start the queued request, if any.
+void finish_run() {
+    QueuedRequest q;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _busy = false;
+        q = std::move(_queued);
+        _queued = QueuedRequest{};
+    }
+    if (q.have) {
+        enrichment_fetch(q.icao.c_str(), q.reg.c_str(), q.cs.c_str(), q.cat.c_str(),
+                         q.typ.c_str(), q.is_military, q.callback);
+    }
+}
+
 void run_enrichment(std::string icao, std::string registration, std::string callsign,
                     std::string category, std::string type_code, bool is_military) {
     AircraftEnrichment *entry = nullptr;
@@ -873,9 +899,9 @@ void run_enrichment(std::string icao, std::string registration, std::string call
         std::lock_guard<std::mutex> lock(_mutex);
         entry->loaded = true;
         entry->loading = false;
-        _busy = false;
     }
     notify_callback(entry);
+    finish_run();
 }
 
 // Re-query AeroDataBox only (keep photo / adsbdb fields). Used when the
@@ -915,11 +941,8 @@ void run_route_refresh(std::string icao, std::string registration, std::string c
                          icao.c_str());
     }
 
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _busy = false;
-    }
     notify_callback(entry);
+    finish_run();
 }
 
 } // namespace
@@ -934,6 +957,42 @@ bool enrichment_route_eligible(const char *callsign, const char *category,
     // Same commercial rule as COM filter / airliner icon: airline callsign
     // AND emitter category A2–A6. Empty category → no lookup.
     return is_commercial_traffic(callsign, category);
+}
+
+namespace {
+// Caller holds _mutex.
+void queue_request(const char *icao, const char *reg, const char *cs, const char *cat,
+                   const char *typ, bool is_military, void (*callback)(AircraftEnrichment *)) {
+    _queued.have = true;
+    _queued.icao = icao ? icao : "";
+    _queued.reg = reg ? reg : "";
+    _queued.cs = cs ? cs : "";
+    _queued.cat = cat ? cat : "";
+    _queued.typ = typ ? typ : "";
+    _queued.is_military = is_military;
+    _queued.callback = callback;
+}
+} // namespace
+
+bool enrichment_snapshot(const char *icao_hex, AircraftEnrichment *out,
+                         std::vector<uint8_t> *photo) {
+    if (!icao_hex || !icao_hex[0] || !out) return false;
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (int i = 0; i < _cache_count; i++) {
+        if (strcmp(_cache_keys[i], icao_hex) != 0) continue;
+        const AircraftEnrichment &e = _cache[i];
+        *out = e;
+        out->photo_rgb565 = nullptr;
+        if (photo) {
+            photo->clear();
+            if (e.photo_rgb565 && e.photo_w > 0 && e.photo_h > 0) {
+                const size_t n = (size_t)e.photo_w * e.photo_h * 2;
+                photo->assign(e.photo_rgb565, e.photo_rgb565 + n);
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 AircraftEnrichment *enrichment_get_cached(const char *icao_hex) {
@@ -977,9 +1036,12 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
             if (route_needs_refresh(&_cache[i], callsign, adbox_on, eligible)) {
                 _pending_callback = callback;
                 notify_callback(&_cache[i]);
-                if (_busy) return; // show stale O/D; another fetch owns the slot
-                _busy = true;
-                _deferred_ready = false;
+                if (_busy) { // show stale O/D now; refresh once the slot frees
+                    queue_request(icao_hex, registration, callsign,
+                                  category, type_code, is_military, callback);
+                    return;
+                }
+                _busy = true; // keep the notify above: paint cached photo/meta now
                 kick_route_only = true;
                 icao = icao_hex;
                 reg = registration ? registration : "";
@@ -996,7 +1058,9 @@ void enrichment_fetch(const char *icao_hex, const char *registration,
 
         if (!kick_route_only) {
             if (_busy) {
-                platform_log_debug("Enrich: skipped (fetch already in progress)\n");
+                platform_log_debug("Enrich: queued %s (fetch already in progress)\n", icao_hex);
+                queue_request(icao_hex, registration, callsign,
+                              category, type_code, is_military, callback);
                 return;
             }
             _busy = true;
