@@ -233,6 +233,10 @@ const AirlineEntry *airline_lookup(const char *callsign) {
         plen++;
     }
     if (plen < 2) return nullptr;
+    // Airline callsigns are the ICAO prefix + a flight number (UAL1234).
+    // Require the digit: registration callsigns are all letters (C-GABC ->
+    // "CGABC", OE-ABC -> "OEABC") and falsely matched airlines CGA / OEA.
+    if (callsign[plen] < '0' || callsign[plen] > '9') return nullptr;
 
     std::lock_guard<std::mutex> lock(_mutex);
     // Prefer exact 3-letter ICAO match (ADS-B airline callsigns).

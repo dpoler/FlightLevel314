@@ -102,7 +102,15 @@ int main() {
     // here on a background thread — blocking curl on the UI thread would
     // stall first paint, and detail_card airline_lookup() simply returns
     // nullptr until this finishes (falls back to owner_op).
-    std::thread([] { airlines_load(); }).detach();
+    // Retries with backoff: a kiosk boot often beats Wi-Fi/DNS, and a single
+    // failed load used to leave airline names blank until the next restart.
+    std::thread([] {
+        int wait_s = 30;
+        while (!airlines_load()) {
+            std::this_thread::sleep_for(std::chrono::seconds(wait_s));
+            if (wait_s < 600) wait_s *= 2;
+        }
+    }).detach();
 
     std::thread fetch_thread(fetch_loop);
     fetch_thread.detach();
