@@ -178,8 +178,11 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
 }
 
 void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircraft_count, uint32_t last_update_ms) {
-    // Range can change outside the chip (Settings preset edits) -- keep the
-    // label in sync instead of showing the pre-edit value until next tap.
+    // Safety net: pick up the active location's own presets if something
+    // switched locations without calling range_sync_active_presets().
+    range_sync_active_presets();
+    // Range can change outside the chip (Settings / location preset edits) --
+    // keep the label in sync instead of showing a stale value until next tap.
     if (range_lbl && strcmp(lv_label_get_text(range_lbl), range_label()) != 0) {
         lv_label_set_text(range_lbl, range_label());
     }

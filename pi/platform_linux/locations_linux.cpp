@@ -92,6 +92,10 @@ void loc_to_json(JsonObject obj, const Location &loc) {
     obj["lat"] = loc.lat;
     obj["lon"] = loc.lon;
     obj["elev"] = loc.elevation_ft;
+    if (loc.range_presets[0] > 0) {
+        JsonArray rng = obj["rng"].to<JsonArray>();
+        for (int i = 0; i < 4; i++) rng.add(loc.range_presets[i]);
+    }
     JsonArray rwys = obj["runways"].to<JsonArray>();
     for (int i = 0; i < loc.runway_count; i++) {
         JsonObject r = rwys.add<JsonObject>();
@@ -111,6 +115,10 @@ void json_to_loc(JsonObjectConst obj, Location &loc) {
     loc.lat = obj["lat"] | 0.0f;
     loc.lon = obj["lon"] | 0.0f;
     loc.elevation_ft = obj["elev"] | 0;
+    JsonArrayConst rng = obj["rng"];
+    if (rng.size() == 4) {
+        for (int i = 0; i < 4; i++) loc.range_presets[i] = rng[i] | 0;
+    }
     JsonArrayConst rwys = obj["runways"];
     for (JsonObjectConst r : rwys) {
         if (loc.runway_count >= MAX_RUNWAYS) break;
@@ -352,6 +360,14 @@ void locations_reorder(int from, int to) {
     save_all_locked();
 }
 
+// Settings presets unless this location has its own. Caller holds _mutex
+// (or passes a copy).
+static void effective_presets(const Location *loc, int out[4]) {
+    const bool own = loc && loc->range_presets[0] > 0;
+    for (int i = 0; i < 4; i++)
+        out[i] = own ? loc->range_presets[i] : g_config.radius_presets[i];
+}
+
 int locations_active_index() {
     std::lock_guard<std::mutex> lock(_mutex);
     return _active_index;
@@ -370,6 +386,34 @@ void locations_set_active(int idx) {
     }
 
     if (changed) fetcher_request_immediate_fetch();
+}
+
+bool locations_set_range_presets(int idx, const int *presets) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (idx < 0 || idx >= _count) return false;
+    int *dst = _locations[idx].range_presets;
+    if (!presets) {
+        for (int i = 0; i < 4; i++) dst[i] = 0;
+    } else {
+        for (int i = 0; i < 4; i++) {
+            int v = presets[i];
+            if (v < 1) v = 1;
+            if (v > 500) v = 500;
+            dst[i] = v;
+        }
+        for (int i = 0; i < 3; i++)
+            for (int j = i + 1; j < 4; j++)
+                if (dst[j] < dst[i]) { int t = dst[i]; dst[i] = dst[j]; dst[j] = t; }
+    }
+    save_all_locked();
+    return true;
+}
+
+void locations_active_range_presets(int out[4]) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    const Location *loc = (_active_index >= 0 && _active_index < _count)
+        ? &_locations[_active_index] : nullptr;
+    effective_presets(loc, out);
 }
 
 bool locations_get_active_coords(float *lat, float *lon, int *elevation_ft) {
@@ -677,6 +721,7 @@ void locations_nearby_set_enabled(int idx, bool on) {
     std::string owner_name;
     float owner_lat = 0, owner_lon = 0;
     char owner_icao[LOC_ICAO_LEN] = {};
+    int owner_presets[4] = {};
     bool need_scan = false;
 
     {
@@ -691,6 +736,7 @@ void locations_nearby_set_enabled(int idx, bool on) {
             owner_lat = _locations[idx].lat;
             owner_lon = _locations[idx].lon;
             strlcpy(owner_icao, _locations[idx].icao, sizeof(owner_icao));
+            effective_presets(&_locations[idx], owner_presets);
             _nearby_scan_active = true;
             need_scan = true;
         }
@@ -699,7 +745,8 @@ void locations_nearby_set_enabled(int idx, bool on) {
     if (!need_scan) return;
 
 #if HAS_AIRPORTS_DB
-    float radius = (float)g_config.radius_presets[3];
+    // Widest range this location can show (its own presets or Settings').
+    float radius = (float)owner_presets[3];
     std::thread([owner_name, owner_lat, owner_lon, owner_icao_str = std::string(owner_icao), radius]() {
         std::vector<Location> found;
         for (int i = 0; i < AIRPORTS_DB_COUNT && (int)found.size() < NEARBY_MAX; i++) {

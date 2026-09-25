@@ -328,7 +328,7 @@ static void draw_blips(lv_layer_t *layer) {
         if (ac.trail_count > 1 && trails_shown()) {
             // Scale the effective cap by current zoom -- see the matching
             // comment in map_view.cpp for the full rationale.
-            float radius_ratio = range_get_nm() / (float)g_config.radius_presets[3];
+            float radius_ratio = range_get_nm() / range_max_nm();
             if (radius_ratio > 1.0f) radius_ratio = 1.0f;
             int max_pts = (int)(trails_amount() * radius_ratio);
             if (max_pts < 3) max_pts = 3; // always show some trail, never fully vanish

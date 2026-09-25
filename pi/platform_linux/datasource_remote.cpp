@@ -133,7 +133,10 @@ bool RemoteApiDataSource::fetch(AircraftList *list) {
     float lat, lon;
     if (!locations_get_active_coords(&lat, &lon, nullptr)) return false;
 
-    int radius = g_config.radius_nm > 0 ? g_config.radius_nm : 50;
+    // Widest preset for the active location (its own, else Settings').
+    int presets[4];
+    locations_active_range_presets(presets);
+    int radius = presets[3] > 0 ? presets[3] : 50;
     char url[192];
     // adsb.fi public opendata: v3 lat/lon/dist returns the same `ac` envelope
     // as adsb.lol's /v2/point. Dist is capped at 250 nm by their API.

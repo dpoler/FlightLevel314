@@ -47,6 +47,8 @@ struct Location {
     int nearby_count;    // cached count -- cheap to read for any row's badge
                           // without loading the actual runway data (see
                           // locations_nearby_count())
+    int range_presets[4]; // per-location zoom levels (nm, ascending); all 0 =
+                          // use the Settings presets (g_config.radius_presets)
 };
 
 // Load saved locations from NVS. Call once at boot.
@@ -116,6 +118,15 @@ void locations_remove(int idx);
 // either index is out of range or they're equal. The active selection (if
 // any) is remapped to keep pointing at the same location, not the same slot.
 void locations_reorder(int from, int to);
+
+// Per-location range presets (nm). `presets` is 4 values in any order
+// (sorted ascending, each clamped to 1-500); nullptr clears them so the
+// location uses the Settings presets again. Returns false on a bad index.
+bool locations_set_range_presets(int idx, const int *presets);
+
+// Range presets in effect for the active location (ascending): its own if
+// set, else the Settings presets. out[3] is also the ADS-B query radius.
+void locations_active_range_presets(int out[4]);
 
 // Currently selected location. -1 = none selected (empty list, or nothing
 // chosen yet -- e.g. right after a factory reset). Callers must handle this

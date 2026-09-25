@@ -13,3 +13,16 @@ void range_set_index(int idx);                   // jump directly to a level ind
 // if it is still a preset; otherwise keeps the same slot (so editing the
 // active preset, e.g. 5 -> 2 nm, lands on the new value).
 void range_set_levels(const int *nm_values, int count);
+
+float range_max_nm();                            // widest level in effect
+
+// Apply an edit of the presets in effect (Settings, or the active
+// location's own): keeps the current range, and if the active preset itself
+// was edited (exactly one new value), follows it to the new value even when
+// its rank changed (5 -> 30). No-op when old == new.
+void range_apply_edited_presets(const int old_presets[4], const int new_presets[4]);
+
+// Load the active location's presets (or Settings') if they differ from the
+// levels in effect -- call after switching locations. Returns true if the
+// levels changed (caller may persist last_range_idx).
+bool range_sync_active_presets();

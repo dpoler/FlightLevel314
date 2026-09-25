@@ -8,6 +8,8 @@
 #include "map_view.h"
 #include "radar_view.h"
 #include "airports_lookup.h"
+#include "range.h"
+#include "../data/fetcher.h"
 #include "../platform/platform.h"
 #include <cstring>
 #include <cctype>
@@ -71,11 +73,15 @@ static lv_obj_t *_wp_lat_ta = nullptr;
 static lv_obj_t *_wp_lon_ta = nullptr;
 static lv_obj_t *_wp_elev_ta = nullptr;
 static lv_obj_t *_wp_status_lbl = nullptr;
+// Per-location range preset fields (edit view + Add Location form).
+static lv_obj_t *_rng_ta[4] = {};
+static int _edit_idx = -1;
 
 static void build_list_view();
 static void build_add_view();
 static void build_add_waypoint_view();
 static void build_info_view(int idx);
+static void build_edit_view(int idx, bool just_added);
 
 static void update_picker_label() {
     const Location *loc = locations_get(locations_active_index());
@@ -110,6 +116,8 @@ static void close_overlay() {
         _wp_lon_ta = nullptr;
         _wp_elev_ta = nullptr;
         _wp_status_lbl = nullptr;
+        for (int i = 0; i < 4; i++) _rng_ta[i] = nullptr;
+        _edit_idx = -1;
         _info_status_lbl = nullptr;
         _info_idx = -1;
     }
@@ -117,6 +125,12 @@ static void close_overlay() {
 
 static void select_location(int idx) {
     locations_set_active(idx);
+    // Switch to this location's own range presets (if any) right away rather
+    // than on the next status-bar tick.
+    if (range_sync_active_presets()) {
+        g_config.last_range_idx = range_get_index();
+        storage_save_config(g_config);
+    }
     float lat, lon;
     if (locations_get_active_coords(&lat, &lon, nullptr)) {
         // Recenter immediately -- don't wait for Map/Radar's periodic sync
@@ -327,6 +341,8 @@ static void build_list_view() {
     _wp_lon_ta = nullptr;
     _wp_elev_ta = nullptr;
     _wp_status_lbl = nullptr;
+    for (int i = 0; i < 4; i++) _rng_ta[i] = nullptr;
+    _edit_idx = -1;
 
     // Sized exactly to content (saved locations + the two "Add" rows) -- no
     // minimum floor. A prior pass added one to avoid a "tiny box" look with
@@ -710,14 +726,77 @@ static lv_obj_t *wp_field(int y, const char *placeholder, int max_len,
     return ta;
 }
 
+// Four small numeric fields for per-location range presets (nm). Blank =
+// use the Settings presets, which show as placeholders. `loc` may be null
+// (new location). Returns the y just below the fields.
+static int range_fields(int y, const Location *loc) {
+    lv_obj_t *lbl = lv_label_create(_panel);
+    lv_label_set_text(lbl, "Range presets (nm), blank = Settings defaults");
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl, COLOR_DIM, 0);
+    lv_obj_set_pos(lbl, 0, y);
+
+    const bool own = loc && loc->range_presets[0] > 0;
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *ta = lv_textarea_create(_panel);
+        lv_obj_set_size(ta, 90, 36);
+        lv_obj_set_pos(ta, i * 100, y + 22);
+        lv_textarea_set_one_line(ta, true);
+        lv_textarea_set_max_length(ta, 3);
+        lv_textarea_set_accepted_chars(ta, "0123456789");
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d", g_config.radius_presets[i]);
+        lv_textarea_set_placeholder_text(ta, buf);
+        if (own) {
+            snprintf(buf, sizeof(buf), "%d", loc->range_presets[i]);
+            lv_textarea_set_text(ta, buf);
+        } else {
+            lv_textarea_set_text(ta, "");
+        }
+        lv_obj_add_event_cb(ta, [](lv_event_t *e) {
+            lv_keyboard_set_textarea(_keyboard, lv_event_get_target_obj(e));
+            lv_keyboard_set_mode(_keyboard, LV_KEYBOARD_MODE_NUMBER);
+            lv_obj_clear_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+        }, LV_EVENT_FOCUSED, nullptr);
+        _rng_ta[i] = ta;
+    }
+    return y + 22 + 36;
+}
+
+// 0 = all four blank (use Settings presets), 1 = all four valid (out
+// filled), -1 = partly filled or out of range (1-500).
+static int read_range_fields(int out[4]) {
+    int filled = 0;
+    for (int i = 0; i < 4; i++) {
+        const char *t = _rng_ta[i] ? lv_textarea_get_text(_rng_ta[i]) : "";
+        if (!t[0]) continue;
+        int v = atoi(t);
+        if (v < 1 || v > 500) return -1;
+        out[i] = v;
+        filled++;
+    }
+    if (filled == 0) return 0;
+    return filled == 4 ? 1 : -1;
+}
+
+static const char *RANGE_FIELDS_ERR = "Range: fill all four (1-500) or leave all blank";
+
 static void waypoint_save_click_cb(lv_event_t *e) {
     const char *name = lv_textarea_get_text(_wp_name_ta);
     float lat = atof(lv_textarea_get_text(_wp_lat_ta));
     float lon = atof(lv_textarea_get_text(_wp_lon_ta));
     int elev = atoi(lv_textarea_get_text(_wp_elev_ta));
+    int presets[4];
+    const int rng = read_range_fields(presets);
+    if (rng < 0) {
+        lv_label_set_text(_wp_status_lbl, RANGE_FIELDS_ERR);
+        lv_obj_set_style_text_color(_wp_status_lbl, COLOR_ERR, 0);
+        return;
+    }
 
     char err[48];
     if (locations_add_waypoint(name, lat, lon, elev, err, sizeof(err))) {
+        if (rng > 0) locations_set_range_presets(locations_count() - 1, presets);
         build_list_view(); // back to the list, now showing the new location
     } else {
         lv_label_set_text(_wp_status_lbl, err);
@@ -736,7 +815,7 @@ static void build_add_waypoint_view() {
     }
 
     _panel = lv_obj_create(_overlay);
-    lv_obj_set_size(_panel, PANEL_W, 290);
+    lv_obj_set_size(_panel, PANEL_W, 356);
     lv_obj_set_pos(_panel, 8, 8);
     lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
@@ -757,10 +836,11 @@ static void build_add_waypoint_view() {
     _wp_lat_ta  = wp_field(70, "Latitude, e.g. 39.8617", 0, LV_KEYBOARD_MODE_NUMBER);
     _wp_lon_ta  = wp_field(112, "Longitude, e.g. -104.6731", 0, LV_KEYBOARD_MODE_NUMBER);
     _wp_elev_ta = wp_field(154, "Elevation ft, e.g. 5430", 0, LV_KEYBOARD_MODE_NUMBER);
+    const int y_btn = range_fields(198, nullptr) + 12;
 
     lv_obj_t *save_btn = lv_obj_create(_panel);
     lv_obj_set_size(save_btn, 90, BTN_H + 10);
-    lv_obj_set_pos(save_btn, 0, 200);
+    lv_obj_set_pos(save_btn, 0, y_btn);
     lv_obj_set_style_bg_color(save_btn, COLOR_ACCENT, 0);
     lv_obj_set_style_radius(save_btn, 6, 0);
     lv_obj_clear_flag(save_btn, LV_OBJ_FLAG_SCROLLABLE);
@@ -772,7 +852,7 @@ static void build_add_waypoint_view() {
 
     lv_obj_t *back_btn = lv_obj_create(_panel);
     lv_obj_set_size(back_btn, 90, BTN_H + 10);
-    lv_obj_set_pos(back_btn, 100, 200);
+    lv_obj_set_pos(back_btn, 100, y_btn);
     lv_obj_set_style_bg_color(back_btn, COLOR_ROW, 0);
     lv_obj_set_style_radius(back_btn, 6, 0);
     lv_obj_clear_flag(back_btn, LV_OBJ_FLAG_SCROLLABLE);
@@ -786,10 +866,10 @@ static void build_add_waypoint_view() {
     lv_label_set_text(_wp_status_lbl, "");
     lv_obj_set_style_text_font(_wp_status_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_width(_wp_status_lbl, PANEL_W - 20);
-    lv_obj_set_pos(_wp_status_lbl, 0, 244);
+    lv_obj_set_pos(_wp_status_lbl, 0, y_btn + BTN_H + 18);
 }
 
-// Read-only location details. Fixing a typo = delete + re-add.
+// Location details, with an Edit button (build_edit_view).
 // Airports added with AirportDB off have runway_count 0; offer a fetch
 // once the token is enabled so KORD-style entries don't need delete/re-add.
 static void build_info_view(int idx) {
@@ -810,7 +890,7 @@ static void build_info_view(int idx) {
         && g_config.airportdb_enabled && g_config.airportdb_token[0];
 
     _panel = lv_obj_create(_overlay);
-    lv_obj_set_size(_panel, PANEL_W, can_fetch_runways || _refresh_in_progress ? 300 : 270);
+    lv_obj_set_size(_panel, PANEL_W, can_fetch_runways || _refresh_in_progress ? 326 : 296);
     lv_obj_set_pos(_panel, 8, 8);
     lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
@@ -855,6 +935,13 @@ static void build_info_view(int idx) {
     line(buf, COLOR_TEXT);
     snprintf(buf, sizeof(buf), "Elev  %d ft", loc->elevation_ft);
     line(buf, COLOR_TEXT);
+    {
+        const bool own = loc->range_presets[0] > 0;
+        const int *r = own ? loc->range_presets : g_config.radius_presets;
+        snprintf(buf, sizeof(buf), "Range  %d / %d / %d / %d nm%s",
+                 r[0], r[1], r[2], r[3], own ? "" : "  (Settings)");
+        line(buf, own ? COLOR_TEXT : COLOR_DIM);
+    }
 
     if (is_airport) {
         snprintf(buf, sizeof(buf), "Runways  %d", loc->runway_count);
@@ -908,11 +995,177 @@ static void build_info_view(int idx) {
     lv_obj_set_style_text_color(back_lbl, COLOR_DIM, 0);
     lv_obj_center(back_lbl);
 
-    lv_obj_t *hint = lv_label_create(_panel);
-    lv_label_set_text(hint, "To change: delete and re-add");
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(hint, COLOR_DIM, 0);
-    lv_obj_set_pos(hint, 100, y + 8);
+    lv_obj_t *edit_btn = lv_obj_create(_panel);
+    lv_obj_set_size(edit_btn, 90, BTN_H + 10);
+    lv_obj_set_pos(edit_btn, 100, y);
+    lv_obj_set_style_bg_color(edit_btn, COLOR_ACCENT, 0);
+    lv_obj_set_style_radius(edit_btn, 6, 0);
+    lv_obj_clear_flag(edit_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(edit_btn, [](lv_event_t *e) {
+        build_edit_view((int)(intptr_t)lv_event_get_user_data(e), false);
+    }, LV_EVENT_CLICKED, (void *)(intptr_t)idx);
+    lv_obj_t *edit_lbl = lv_label_create(edit_btn);
+    lv_label_set_text(edit_lbl, "Edit");
+    lv_obj_set_style_text_color(edit_lbl, lv_color_hex(0x000000), 0);
+    lv_obj_center(edit_lbl);
+}
+
+static void edit_save_click_cb(lv_event_t *e) {
+    const int idx = _edit_idx;
+    const Location *loc = locations_get(idx);
+    if (!loc || !_wp_name_ta) return;
+    const bool is_airport = loc->icao[0] != '\0';
+    const bool just_added = lv_event_get_user_data(e) != nullptr;
+
+    int presets[4];
+    const int rng = read_range_fields(presets);
+    if (rng < 0) {
+        lv_label_set_text(_wp_status_lbl, RANGE_FIELDS_ERR);
+        lv_obj_set_style_text_color(_wp_status_lbl, COLOR_ERR, 0);
+        return;
+    }
+
+    float lat = loc->lat, lon = loc->lon;
+    int elev = loc->elevation_ft;
+    if (!is_airport) {
+        lat = atof(lv_textarea_get_text(_wp_lat_ta));
+        lon = atof(lv_textarea_get_text(_wp_lon_ta));
+        elev = atoi(lv_textarea_get_text(_wp_elev_ta));
+    }
+    const bool moved = (lat != loc->lat || lon != loc->lon);
+
+    const bool active = (idx == locations_active_index());
+    int old_eff[4];
+    locations_active_range_presets(old_eff);
+
+    char err[48];
+    if (!locations_update(idx, lv_textarea_get_text(_wp_name_ta), lat, lon, elev,
+                          err, sizeof(err))) {
+        lv_label_set_text(_wp_status_lbl, err);
+        lv_obj_set_style_text_color(_wp_status_lbl, COLOR_ERR, 0);
+        return;
+    }
+    locations_set_range_presets(idx, rng > 0 ? presets : nullptr);
+
+    if (active) {
+        int new_eff[4];
+        locations_active_range_presets(new_eff);
+        if (memcmp(old_eff, new_eff, sizeof(old_eff)) != 0) {
+            range_apply_edited_presets(old_eff, new_eff);
+            g_config.last_range_idx = range_get_index();
+            storage_save_config(g_config);
+            fetcher_request_immediate_fetch(); // query radius may have changed
+        }
+        if (moved) {
+            map_view_center_on(lat, lon);
+            radar_view_center_on(lat, lon);
+            fetcher_request_immediate_fetch();
+        }
+    }
+    update_picker_label();
+    if (just_added) build_list_view();
+    else build_info_view(idx);
+}
+
+// Edit name (+ lat/lon/elevation for waypoints; airport geometry stays
+// AirportDB-sourced) and per-location range presets. Also opened right after
+// an airport is added (just_added) so presets can be set up front.
+static void build_edit_view(int idx, bool just_added) {
+    const Location *loc = locations_get(idx);
+    if (!loc) return;
+    const bool is_airport = loc->icao[0] != '\0';
+
+    if (_panel) {
+        lv_obj_add_flag(_panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_delete_async(_panel);
+    }
+    if (_keyboard) lv_obj_add_flag(_keyboard, LV_OBJ_FLAG_HIDDEN);
+    // Opened from the add-airport view on success: its widgets go with _panel.
+    _add_status_lbl = nullptr;
+    _add_fetch_btn = nullptr;
+    _add_ta = nullptr;
+    _add_hint_lbl = nullptr;
+    _add_match_count = 0;
+    for (int i = 0; i < ADD_MATCH_MAX; i++) {
+        _add_match_btns[i] = nullptr;
+        _add_match_ptrs[i] = nullptr;
+    }
+    _edit_idx = idx;
+    _wp_lat_ta = _wp_lon_ta = _wp_elev_ta = nullptr;
+
+    _panel = lv_obj_create(_overlay);
+    lv_obj_set_size(_panel, PANEL_W, is_airport ? 230 : 356);
+    lv_obj_set_pos(_panel, 8, 8);
+    lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
+    lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_panel, 1, 0);
+    lv_obj_set_style_border_color(_panel, COLOR_DIM, 0);
+    lv_obj_set_style_border_opa(_panel, LV_OPA_40, 0);
+    lv_obj_set_style_radius(_panel, 8, 0);
+    lv_obj_set_style_pad_all(_panel, 10, 0);
+    lv_obj_clear_flag(_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(_panel);
+    char tbuf[48];
+    if (just_added) snprintf(tbuf, sizeof(tbuf), "Added %s", loc->icao[0] ? loc->icao : loc->name);
+    else snprintf(tbuf, sizeof(tbuf), "Edit %s", is_airport ? "airport" : "location");
+    lv_label_set_text(title, tbuf);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(title, COLOR_TEXT, 0);
+    lv_obj_set_pos(title, 0, 0);
+
+    char vbuf[24];
+    _wp_name_ta = wp_field(28, "Name", LOC_NAME_LEN - 1);
+    lv_textarea_set_text(_wp_name_ta, loc->name);
+    int y = 70;
+    if (!is_airport) {
+        _wp_lat_ta = wp_field(70, "Latitude", 0, LV_KEYBOARD_MODE_NUMBER);
+        snprintf(vbuf, sizeof(vbuf), "%.5f", loc->lat);
+        lv_textarea_set_text(_wp_lat_ta, vbuf);
+        _wp_lon_ta = wp_field(112, "Longitude", 0, LV_KEYBOARD_MODE_NUMBER);
+        snprintf(vbuf, sizeof(vbuf), "%.5f", loc->lon);
+        lv_textarea_set_text(_wp_lon_ta, vbuf);
+        _wp_elev_ta = wp_field(154, "Elevation ft", 0, LV_KEYBOARD_MODE_NUMBER);
+        snprintf(vbuf, sizeof(vbuf), "%d", loc->elevation_ft);
+        lv_textarea_set_text(_wp_elev_ta, vbuf);
+        y = 198;
+    }
+    const int y_btn = range_fields(y, loc) + 12;
+
+    lv_obj_t *save_btn = lv_obj_create(_panel);
+    lv_obj_set_size(save_btn, 90, BTN_H + 10);
+    lv_obj_set_pos(save_btn, 0, y_btn);
+    lv_obj_set_style_bg_color(save_btn, COLOR_ACCENT, 0);
+    lv_obj_set_style_radius(save_btn, 6, 0);
+    lv_obj_clear_flag(save_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(save_btn, edit_save_click_cb, LV_EVENT_CLICKED,
+                        just_added ? (void *)1 : nullptr);
+    lv_obj_t *save_lbl = lv_label_create(save_btn);
+    lv_label_set_text(save_lbl, "Save");
+    lv_obj_set_style_text_color(save_lbl, lv_color_hex(0x000000), 0);
+    lv_obj_center(save_lbl);
+
+    // Cancel returns to details; after an add, "Skip" keeps Settings presets.
+    lv_obj_t *back_btn = lv_obj_create(_panel);
+    lv_obj_set_size(back_btn, 90, BTN_H + 10);
+    lv_obj_set_pos(back_btn, 100, y_btn);
+    lv_obj_set_style_bg_color(back_btn, COLOR_ROW, 0);
+    lv_obj_set_style_radius(back_btn, 6, 0);
+    lv_obj_clear_flag(back_btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(back_btn, [](lv_event_t *e) {
+        if (lv_event_get_user_data(e)) build_list_view();
+        else build_info_view(_edit_idx);
+    }, LV_EVENT_CLICKED, just_added ? (void *)1 : nullptr);
+    lv_obj_t *back_lbl = lv_label_create(back_btn);
+    lv_label_set_text(back_lbl, just_added ? "Skip" : "Cancel");
+    lv_obj_set_style_text_color(back_lbl, COLOR_DIM, 0);
+    lv_obj_center(back_lbl);
+
+    _wp_status_lbl = lv_label_create(_panel);
+    lv_label_set_text(_wp_status_lbl, "");
+    lv_obj_set_style_text_font(_wp_status_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_width(_wp_status_lbl, PANEL_W - 20);
+    lv_obj_set_pos(_wp_status_lbl, 0, y_btn + BTN_H + 18);
 }
 
 void location_picker_init(lv_obj_t *screen) {
@@ -953,7 +1206,8 @@ void location_picker_init(lv_obj_t *screen) {
                 _add_in_progress = false;
                 if (_add_status_lbl) {
                     if (ok) {
-                        build_list_view();
+                        // New airport is appended; offer its range presets.
+                        build_edit_view(locations_count() - 1, true);
                     } else {
                         lv_label_set_text(_add_status_lbl, err);
                         lv_obj_set_style_text_color(_add_status_lbl, COLOR_ERR, 0);

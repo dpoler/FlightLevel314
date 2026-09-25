@@ -124,7 +124,8 @@ int main() {
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
-    range_set_levels(g_config.radius_presets, 4);
+    // Active location's own presets if it has them, else Settings'.
+    range_sync_active_presets();
     range_set_index(g_config.last_range_idx);
 
     status_bar_create(screen);
@@ -153,31 +154,19 @@ int main() {
     status_bar_set_gear_callback([](lv_event_t *) { settings_show(); });
 
     settings_set_change_callback([](const UserConfig *cfg) {
-        bool presets_changed = (memcmp(cfg->radius_presets, g_config.radius_presets,
-                                       sizeof(g_config.radius_presets)) != 0);
-        int old_presets[4];
-        memcpy(old_presets, g_config.radius_presets, sizeof(old_presets));
-        const float prev_nm = range_get_nm();
+        // Presets in effect before/after: Settings' unless the active
+        // location has its own (then a Settings edit changes nothing here).
+        int old_eff[4], new_eff[4];
+        locations_active_range_presets(old_eff);
         const int bright = cfg->display_brightness_pct;
         g_config = *cfg;
-        // Keeps the current range (or its slot, when that preset was the
-        // one edited). Used to snap to radius_nm -- the *widest* preset --
-        // which jumped the view out while the range chip kept its old label.
-        range_set_levels(cfg->radius_presets, 4);
+        locations_active_range_presets(new_eff);
         backlight_set_percent(bright);
-        if (presets_changed) {
-            // Active preset edited to a value that changed its rank (e.g.
-            // 5 -> 30): follow the edited value rather than the old slot.
-            if (range_get_nm() != prev_nm) {
-                int added = -1, n_added = 0;
-                for (int i = 0; i < 4; i++) {
-                    bool was_there = false;
-                    for (int j = 0; j < 4; j++)
-                        if (cfg->radius_presets[i] == old_presets[j]) was_there = true;
-                    if (!was_there) { added = cfg->radius_presets[i]; n_added++; }
-                }
-                if (n_added == 1) range_set_default(added);
-            }
+        if (memcmp(old_eff, new_eff, sizeof(old_eff)) != 0) {
+            // Keeps the current range, or follows the edited active preset.
+            // Used to snap to radius_nm -- the *widest* preset -- which jumped
+            // the view out while the range chip kept its old label.
+            range_apply_edited_presets(old_eff, new_eff);
             g_config.last_range_idx = range_get_index();
             storage_save_config(g_config);
         }

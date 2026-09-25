@@ -1084,7 +1084,7 @@ void settings_init(lv_obj_t *parent) {
     const int field_w = 380;
 
     // --- Display: range presets, metric, brightness ---
-    create_label(tab_display, "Range Presets (nm, 1-500)", 0, 4);
+    create_label(tab_display, "Default Range Presets (nm, 1-500)", 0, 4);
     for (int i = 0; i < 4; i++) {
         char rbuf[8];
         snprintf(rbuf, sizeof(rbuf), "%d", _cfg.radius_presets[i]);

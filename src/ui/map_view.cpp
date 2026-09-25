@@ -898,7 +898,7 @@ static void draw_aircraft(lv_layer_t *layer) {
             // "Trail Amount" reads as roughly the same fraction of the
             // visible screen at any zoom instead of an arbitrary absolute
             // count. Same formula in radar_view.cpp.
-            float radius_ratio = range_get_nm() / (float)g_config.radius_presets[3];
+            float radius_ratio = range_get_nm() / range_max_nm();
             if (radius_ratio > 1.0f) radius_ratio = 1.0f;
             int max_pts = (int)(trails_amount() * radius_ratio);
             if (max_pts < 3) max_pts = 3; // always show some trail, never fully vanish
