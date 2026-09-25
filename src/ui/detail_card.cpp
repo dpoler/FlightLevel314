@@ -50,8 +50,10 @@ static lv_obj_t *_lat_label = nullptr;
 static lv_obj_t *_lon_label = nullptr;
 static lv_obj_t *_track_label = nullptr;
 static lv_obj_t *_signal_label = nullptr;
-// Flight times (AeroDataBox, airport local). *_sched_label is a dim
-// "sch HH:MM" beside the value, shown only when the estimate differs.
+// Flight times under FROM / TO (AeroDataBox, airport local). *_sched_label is
+// a dim "sch HH:MM" beside the value, shown only when the estimate differs.
+static lv_obj_t *_dep_hdr = nullptr;
+static lv_obj_t *_arr_hdr = nullptr;
 static lv_obj_t *_dep_label = nullptr;
 static lv_obj_t *_dep_sched_label = nullptr;
 static lv_obj_t *_arr_label = nullptr;
@@ -87,14 +89,14 @@ static AircraftList *_list = nullptr; // the live list -- update_timer_cb re-syn
 #define GRID_ROW_H     42
 #define GRID_COLS      3
 #else
-#define CARD_H         340
+#define CARD_H         390
 #define CARD_PAD       16
 #define PHOTO_SLOT_W   0
 #define PHOTO_SLOT_H   0
 #define STATS_X        0
 #define IDENTITY_MAX_W (LCD_H_RES - 32)
-// Room for FROM/TO route block under identity.
-#define GRID_Y0        210
+// Room for FROM/TO route block + times under identity.
+#define GRID_Y0        236
 #define GRID_ROW_H     42
 #define GRID_COL_W     160
 #define GRID_COLS      6
@@ -248,6 +250,14 @@ static void route_set_hidden(bool hidden) {
     apply(_route_to_icao);
     apply(_route_from_name);
     apply(_route_to_name);
+    apply(_dep_hdr);
+    apply(_arr_hdr);
+    apply(_dep_label);
+    apply(_arr_label);
+    if (hidden) {
+        apply(_dep_sched_label);
+        apply(_arr_sched_label);
+    }
 }
 
 // Newest time as the value; scheduled beside it only when they differ.
@@ -582,6 +592,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_route_hdr = 136;
     const int y_route_icao = 154;
     const int y_route_name = 176;
+    const int y_route_time = 214;
 #else
     lv_obj_t *id_parent = _card;
     const int id_x = 0;
@@ -593,6 +604,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     const int y_route_hdr = 136;
     const int y_route_icao = 154;
     const int y_route_name = 176;
+    const int y_route_time = 214;
 #endif
     _y_ids_with_airline = y_ids;
     _y_ids_no_airline = y_airline;
@@ -690,6 +702,40 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     _route_from_name = make_route_name(id_x);
     _route_to_name = make_route_name(route_to_x);
 
+    // DEP / ARR time line under each column.
+    auto make_time_hdr = [&](const char *text, int x) {
+        lv_obj_t *lbl = lv_label_create(id_parent);
+        lv_label_set_text(lbl, text);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, CARD_DIM, 0);
+        lv_obj_set_pos(lbl, x, y_route_time + 2);
+        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        return lbl;
+    };
+    auto make_time_value = [&](int x) {
+        lv_obj_t *lbl = lv_label_create(id_parent);
+        lv_label_set_text(lbl, "--");
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(lbl, CARD_TEXT, 0);
+        lv_obj_set_pos(lbl, x + 40, y_route_time);
+        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        return lbl;
+    };
+    auto make_sched_label = [&]() {
+        lv_obj_t *lbl = lv_label_create(id_parent);
+        lv_label_set_text(lbl, "");
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, CARD_DIM, 0);
+        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
+        return lbl;
+    };
+    _dep_hdr = make_time_hdr("DEP", id_x);
+    _arr_hdr = make_time_hdr("ARR", route_to_x);
+    _dep_label = make_time_value(id_x);
+    _arr_label = make_time_value(route_to_x);
+    _dep_sched_label = make_sched_label();
+    _arr_sched_label = make_sched_label();
+
     _photo_credit_label = lv_label_create(_card);
     lv_label_set_text(_photo_credit_label, "");
     lv_obj_set_style_text_font(_photo_credit_label, &lv_font_montserrat_14, 0);
@@ -708,8 +754,8 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     // === DATA GRID ===
     // Wide (Pi): 3 columns, grouped by meaning. LATITUDE/LONGITUDE stay
     // adjacent; MACH/IAS/TAS/ROLL/QNH dropped (rarely present / low value).
-    // Bottom row: SIGNAL + DEPARTS/ARRIVES (AeroDataBox, airport local).
-    // Narrow: 6 columns × 2 rows + SIGNAL/DEPARTS/ARRIVES, same groupings.
+    // Flight times live under FROM / TO in the identity block.
+    // Narrow: 6 columns × 2 rows + SIGNAL, same groupings left-to-right.
 #if LCD_H_RES >= 1280
     int y0 = GRID_Y0;
     // Motion
@@ -728,10 +774,8 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     make_data_row(_card, "LATITUDE",  COL1, y0 + 3 * GRID_ROW_H, &_lat_label);
     make_data_row(_card, "LONGITUDE", COL2, y0 + 3 * GRID_ROW_H, &_lon_label);
     make_data_row(_card, "TRACKED",   COL3, y0 + 3 * GRID_ROW_H, &_track_label);
-    // Feed freshness + flight times (airport local)
+    // Feed freshness
     make_data_row(_card, "SIGNAL",    COL1, y0 + 4 * GRID_ROW_H, &_signal_label);
-    make_data_row(_card, "DEPARTS",   COL2, y0 + 4 * GRID_ROW_H, &_dep_label);
-    make_data_row(_card, "ARRIVES",   COL3, y0 + 4 * GRID_ROW_H, &_arr_label);
 #else
     int y1 = GRID_Y0;
     make_data_row(_card, "ALTITUDE",  COL1, y1, &_alt_label);
@@ -751,19 +795,7 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
 
     int y3 = GRID_Y0 + 2 * GRID_ROW_H;
     make_data_row(_card, "SIGNAL",    COL1, y3, &_signal_label);
-    make_data_row(_card, "DEPARTS",   COL2, y3, &_dep_label);
-    make_data_row(_card, "ARRIVES",   COL3, y3, &_arr_label);
 #endif
-    auto make_sched_label = [&]() {
-        lv_obj_t *lbl = lv_label_create(_card);
-        lv_label_set_text(lbl, "");
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(lbl, CARD_DIM, 0);
-        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
-        return lbl;
-    };
-    _dep_sched_label = make_sched_label();
-    _arr_sched_label = make_sched_label();
 
     // Tap to close
     lv_obj_add_event_cb(_card, [](lv_event_t *e) {
