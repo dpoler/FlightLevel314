@@ -86,6 +86,15 @@ std::string locations_file_path() {
     return config_dir() + "/locations.json";
 }
 
+// Stable identity: ICAO for airports (unique -- add refuses duplicates),
+// typed name for waypoints (unique -- add/update refuse duplicates). Used for
+// g_config.last_location_name and to find a location again after a
+// background scan. Airports used to be keyed by name, and ones added from the
+// static DB stored the full official name cut to 16 chars -- not unique.
+const char *identity_of(const Location &loc) {
+    return loc.icao[0] ? loc.icao : loc.name;
+}
+
 void loc_to_json(JsonObject obj, const Location &loc) {
     obj["icao"] = loc.icao;
     obj["name"] = loc.name;
@@ -272,14 +281,33 @@ void locations_init() {
     std::lock_guard<std::mutex> lock(_mutex);
     load_all_locked();
 
+    // last_location_name holds identity_of(): an ICAO or a waypoint name.
+    // Older configs stored the airport's name, so fall back to a name match.
     _active_index = -1;
-    if (g_config.last_location_name[0]) {
-        for (int i = 0; i < _count; i++) {
-            if (strcmp(_locations[i].name, g_config.last_location_name) == 0) {
-                _active_index = i;
-                break;
-            }
+    const char *last = g_config.last_location_name;
+    if (last[0]) {
+        for (int i = 0; i < _count && _active_index < 0; i++)
+            if (_locations[i].icao[0] && strcmp(_locations[i].icao, last) == 0) _active_index = i;
+        for (int i = 0; i < _count && _active_index < 0; i++)
+            if (strcmp(_locations[i].name, last) == 0) _active_index = i;
+    }
+
+    // One-time migration: airports are named by their ICAO (display names
+    // come from the static DB), so drop truncated / duplicate stored names.
+    bool renamed = false;
+    for (int i = 0; i < _count; i++) {
+        Location &loc = _locations[i];
+        if (loc.icao[0] && strcmp(loc.name, loc.icao) != 0) {
+            strlcpy(loc.name, loc.icao, sizeof(loc.name));
+            renamed = true;
         }
+    }
+    if (renamed) save_all_locked();
+
+    const char *id = (_active_index >= 0) ? identity_of(_locations[_active_index]) : "";
+    if (strcmp(g_config.last_location_name, id) != 0) {
+        strlcpy(g_config.last_location_name, id, sizeof(g_config.last_location_name));
+        storage_save_config(g_config);
     }
 }
 
@@ -316,8 +344,8 @@ void locations_remove(int idx) {
         // nothing selected -- that showed "No location added yet" and "+Add"
         // while other locations still existed. Only an empty list goes to -1.
         _active_index = (_count == 0) ? -1 : (idx < _count ? idx : _count - 1);
-        const char *name = (_active_index >= 0) ? _locations[_active_index].name : "";
-        strlcpy(g_config.last_location_name, name, sizeof(g_config.last_location_name));
+        const char *id = (_active_index >= 0) ? identity_of(_locations[_active_index]) : "";
+        strlcpy(g_config.last_location_name, id, sizeof(g_config.last_location_name));
         storage_save_config(g_config);
         // Hard cut, same as a location switch (drops the removed site's
         // aircraft, which otherwise stayed frozen on screen, and fetches the
@@ -385,9 +413,9 @@ void locations_set_active(int idx) {
     bool changed = (idx != _active_index);
     _active_index = idx;
 
-    const char *name = (idx == -1) ? "" : _locations[idx].name;
-    if (strcmp(g_config.last_location_name, name) != 0) {
-        strlcpy(g_config.last_location_name, name, sizeof(g_config.last_location_name));
+    const char *id = (idx == -1) ? "" : identity_of(_locations[idx]);
+    if (strcmp(g_config.last_location_name, id) != 0) {
+        strlcpy(g_config.last_location_name, id, sizeof(g_config.last_location_name));
         storage_save_config(g_config);
     }
 
@@ -459,10 +487,8 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size) {
             if (strcmp(airports_db[i].icao, icao_upper) == 0) {
                 loc = Location{};
                 strlcpy(loc.icao, icao_upper, sizeof(loc.icao));
-                if (airports_db[i].name[0])
-                    strlcpy(loc.name, airports_db[i].name, sizeof(loc.name));
-                else
-                    strlcpy(loc.name, icao_upper, sizeof(loc.name));
+                // Named by ICAO like AirportDB adds (see identity_of()).
+                strlcpy(loc.name, icao_upper, sizeof(loc.name));
                 loc.lat = airports_db[i].lat;
                 loc.lon = airports_db[i].lon;
                 found = true;
@@ -545,23 +571,26 @@ bool locations_update(int idx, const char *name, float lat, float lon, int eleva
 
     std::lock_guard<std::mutex> lock(_mutex);
     if (idx < 0 || idx >= _count) return fail("bad index");
+    Location &loc = _locations[idx];
+    // Airports: name is their ICAO and geometry is AirportDB-sourced --
+    // nothing here to change. (Checking name uniqueness for them used to
+    // fail on duplicate truncated names: "name already used".)
+    if (loc.icao[0]) return true;
+
     for (int i = 0; i < _count; i++) {
         if (i == idx) continue;
         if (strcmp(_locations[i].name, clean_name) == 0) return fail("name already used");
     }
 
-    Location &loc = _locations[idx];
     const bool was_active = (_active_index == idx);
     const bool renamed = (strcmp(loc.name, clean_name) != 0);
 
     strlcpy(loc.name, clean_name, sizeof(loc.name));
-    if (!loc.icao[0]) {
-        loc.lat = lat;
-        loc.lon = lon;
-        loc.elevation_ft = elevation_ft;
-    }
+    loc.lat = lat;
+    loc.lon = lon;
+    loc.elevation_ft = elevation_ft;
 
-    if (was_active && renamed) {
+    if (was_active && renamed) { // waypoint: identity is its name
         strlcpy(g_config.last_location_name, clean_name, sizeof(g_config.last_location_name));
         storage_save_config(g_config);
     }
@@ -749,7 +778,7 @@ void locations_nearby_ensure(int idx) {
         const bool airportdb_ok = g_config.airportdb_enabled && g_config.airportdb_token[0];
         if (_locations[idx].nearby_enabled && _locations[idx].nearby_count == 0
             && !_nearby_scan_active && airportdb_ok) {
-            owner_name = _locations[idx].name;
+            owner_name = identity_of(_locations[idx]);
             owner_lat = _locations[idx].lat;
             owner_lon = _locations[idx].lon;
             strlcpy(owner_icao, _locations[idx].icao, sizeof(owner_icao));
@@ -782,7 +811,7 @@ void locations_nearby_ensure(int idx) {
         std::lock_guard<std::mutex> lock(_mutex);
         int resolved = -1;
         for (int i = 0; i < _count; i++)
-            if (strcmp(_locations[i].name, owner_name.c_str()) == 0) { resolved = i; break; }
+            if (strcmp(identity_of(_locations[i]), owner_name.c_str()) == 0) { resolved = i; break; }
         if (resolved != -1) {
             int n = (int)found.size();
             if (n > NEARBY_MAX) n = NEARBY_MAX;

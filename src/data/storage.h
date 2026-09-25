@@ -124,9 +124,9 @@ struct UserConfig {
     int last_view_idx;              // VIEW_MAP/VIEW_RADAR/VIEW_ARRIVALS/VIEW_STATS (views.h)
     int last_range_idx;             // index into range.cpp's levels, 0 = widest
     char last_location_name[17];    // matches LOC_NAME_LEN (locations.h); "" = none selected.
-                                     // Matched against Location::name, not icao -- works
-                                     // uniformly for airports (name==icao) and waypoints
-                                     // (name is whatever the user typed, no icao at all).
+                                     // Location identity: ICAO for airports, typed name for
+                                     // waypoints (locations_linux.cpp identity_of()). Older
+                                     // configs held an airport's name; init still matches it.
 };
 
 // Load config from disk (~/.config/flightlevel314/config.json on Pi).

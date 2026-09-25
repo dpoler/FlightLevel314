@@ -71,11 +71,10 @@ bool locations_add_from_icao(const char *icao, char *err, size_t err_size);
 bool locations_add_waypoint(const char *name, float lat, float lon, int elevation_ft,
                              char *err, size_t err_size);
 
-// Update an existing location. Waypoints: name + lat/lon/elev all apply.
-// Airports (non-empty ICAO): only `name` changes — lat/lon/elev/runways stay
-// airportdb-sourced. Name must be unique among other entries. If this is the
-// active location, updates last_location_name. On ESP32, migrates the
-// name-hashed nearby NVS blob when the name changes.
+// Update an existing waypoint: name + lat/lon/elev. Name must be unique among
+// other entries. If it's the active location and was renamed, updates
+// last_location_name. Airports (non-empty ICAO) are left unchanged and return
+// true -- they're named by ICAO and their geometry is AirportDB-sourced.
 bool locations_update(int idx, const char *name, float lat, float lon, int elevation_ft,
                       char *err, size_t err_size);
 
