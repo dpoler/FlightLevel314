@@ -83,14 +83,31 @@ static void build_add_waypoint_view();
 static void build_info_view(int idx);
 static void build_edit_view(int idx, bool just_added);
 
-// Chip grows with the location name (e.g. after a rename), from BTN_W up to
-// PICKER_MAX_W; longer names get "...". The cap keeps the range chip beside
-// it clear of the centered nav tabs.
-#define PICKER_MAX_W 170
+// Display name: airports use the detail card's compact place name (curated
+// override, else the abbreviated DB name -- "Denver Int'l"), falling back to
+// the ICAO when the airport isn't in the static DB. Not user-editable.
+// Waypoints use their typed name.
+static void location_display_name(const Location *loc, char *buf, int buf_size) {
+    buf[0] = '\0';
+    if (loc->icao[0]) {
+        airports_format_place(loc->icao, buf, buf_size);
+        if (!buf[0]) snprintf(buf, buf_size, "%s", loc->icao);
+    } else {
+        snprintf(buf, buf_size, "%s", loc->name);
+    }
+}
+
+// Chip grows with the name, from BTN_W up to PICKER_MAX_W; longer names get
+// "...". 290 keeps the range chip (+gaps) left of the centered nav tabs at
+// x=511; fits ~98% of detail-card airport names (measured on the static DB).
+#define PICKER_MAX_W 290
 
 static void update_picker_label() {
     const Location *loc = locations_get(locations_active_index());
-    const char *text = loc ? loc->name : "+ Add";
+    char name[96];
+    if (loc) location_display_name(loc, name, sizeof(name));
+    else snprintf(name, sizeof(name), "+ Add");
+    const char *text = name;
     lv_label_set_text(_picker_lbl, text);
 
     lv_point_t sz;
@@ -409,16 +426,17 @@ static void build_list_view() {
         lv_obj_add_event_cb(row, add_row_click_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         lv_obj_t *lbl = lv_label_create(row);
-        // Airports: show ICAO + looked-up name. Waypoints keep loc->name.
+        // Airports: ICAO + detail-card name. Waypoints keep loc->name.
         const bool show_nearby = locations_nearby_enabled(i) && locations_nearby_count(i) > 0;
         if (loc->icao[0]) {
-            const StaticAirport *ap = airports_lookup_icao(loc->icao);
-            if (ap && ap->name[0]) {
-                char line[80];
-                snprintf(line, sizeof(line), "%s  %s", loc->icao, ap->name);
+            char place[96];
+            airports_format_place(loc->icao, place, sizeof(place));
+            if (place[0]) {
+                char line[112];
+                snprintf(line, sizeof(line), "%s  %s", loc->icao, place);
                 lv_label_set_text(lbl, line);
             } else {
-                lv_label_set_text(lbl, loc->icao[0] ? loc->icao : loc->name);
+                lv_label_set_text(lbl, loc->icao);
             }
         } else {
             lv_label_set_text(lbl, loc->name);
@@ -430,7 +448,7 @@ static void build_list_view() {
         if (show_nearby) lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 10, 6);
         else lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 10, 0);
         lv_obj_set_width(lbl, PANEL_W - ROW_ICON_RESERVE - 16);
-        lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
         lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
 
         lv_obj_t *rm = lv_label_create(row);
@@ -1029,8 +1047,13 @@ static void build_info_view(int idx) {
 static void edit_save_click_cb(lv_event_t *e) {
     const int idx = _edit_idx;
     const Location *loc = locations_get(idx);
-    if (!loc || !_wp_name_ta) return;
+    if (!loc) return;
     const bool is_airport = loc->icao[0] != '\0';
+    if (!is_airport && !_wp_name_ta) return;
+    // Airports aren't renamed (display name comes from the static DB).
+    char name[LOC_NAME_LEN];
+    snprintf(name, sizeof(name), "%s",
+             is_airport ? loc->name : lv_textarea_get_text(_wp_name_ta));
     const bool just_added = lv_event_get_user_data(e) != nullptr;
 
     int presets[4];
@@ -1055,8 +1078,7 @@ static void edit_save_click_cb(lv_event_t *e) {
     locations_active_range_presets(old_eff);
 
     char err[48];
-    if (!locations_update(idx, lv_textarea_get_text(_wp_name_ta), lat, lon, elev,
-                          err, sizeof(err))) {
+    if (!locations_update(idx, name, lat, lon, elev, err, sizeof(err))) {
         lv_label_set_text(_wp_status_lbl, err);
         lv_obj_set_style_text_color(_wp_status_lbl, COLOR_ERR, 0);
         return;
@@ -1083,8 +1105,9 @@ static void edit_save_click_cb(lv_event_t *e) {
     else build_info_view(idx);
 }
 
-// Edit name (+ lat/lon/elevation for waypoints; airport geometry stays
-// AirportDB-sourced) and per-location range presets. Also opened right after
+// Edit range presets, plus name/lat/lon/elevation for waypoints. Airports
+// show their detail-card name read-only (geometry stays AirportDB-sourced).
+// Range presets per location. Also opened right after
 // an airport is added (just_added) so presets can be set up front.
 static void build_edit_view(int idx, bool just_added) {
     const Location *loc = locations_get(idx);
@@ -1110,7 +1133,7 @@ static void build_edit_view(int idx, bool just_added) {
     _wp_lat_ta = _wp_lon_ta = _wp_elev_ta = nullptr;
 
     _panel = lv_obj_create(_overlay);
-    lv_obj_set_size(_panel, PANEL_W, is_airport ? 230 : 356);
+    lv_obj_set_size(_panel, PANEL_W, is_airport ? 222 : 356);
     lv_obj_set_pos(_panel, 8, 8);
     lv_obj_set_style_bg_color(_panel, COLOR_PANEL, 0);
     lv_obj_set_style_bg_opa(_panel, LV_OPA_COVER, 0);
@@ -1131,9 +1154,24 @@ static void build_edit_view(int idx, bool just_added) {
     lv_obj_set_pos(title, 0, 0);
 
     char vbuf[24];
-    _wp_name_ta = wp_field(28, "Name", LOC_NAME_LEN - 1);
-    lv_textarea_set_text(_wp_name_ta, loc->name);
-    int y = 70;
+    int y = 64;
+    _wp_name_ta = nullptr;
+    if (is_airport) {
+        char place[96], line[112];
+        location_display_name(loc, place, sizeof(place));
+        snprintf(line, sizeof(line), "%s  %s", loc->icao, place);
+        lv_obj_t *name_lbl = lv_label_create(_panel);
+        lv_label_set_text(name_lbl, line);
+        lv_obj_set_style_text_font(name_lbl, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(name_lbl, COLOR_ACCENT, 0);
+        lv_obj_set_width(name_lbl, PANEL_W - 20);
+        lv_label_set_long_mode(name_lbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_pos(name_lbl, 0, 30);
+    } else {
+        _wp_name_ta = wp_field(28, "Name", LOC_NAME_LEN - 1);
+        lv_textarea_set_text(_wp_name_ta, loc->name);
+        y = 70;
+    }
     if (!is_airport) {
         _wp_lat_ta = wp_field(70, "Latitude", 0, LV_KEYBOARD_MODE_NUMBER);
         snprintf(vbuf, sizeof(vbuf), "%.5f", loc->lat);
