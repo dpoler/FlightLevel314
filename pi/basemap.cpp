@@ -34,7 +34,9 @@
 #include <vector>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cstdlib>
 
 #define STBI_ONLY_PNG
@@ -532,7 +534,13 @@ bool load_cache(const std::string &path, BasemapSlot &slot) {
     }
     size_t n = fread(slot.rgb565.data(), 1, slot.rgb565.size(), f);
     fclose(f);
-    return n == slot.rgb565.size();
+    if (n != slot.rgb565.size()) return false;
+    // Mark "last used" for prune_cache()'s LRU: bump atime only. mtime stays
+    // the build time, which is what the TTL measures. (Explicit utimensat
+    // works even on noatime mounts.)
+    struct timespec ts[2] = {{0, UTIME_NOW}, {0, UTIME_OMIT}};
+    utimensat(AT_FDCWD, path.c_str(), ts, 0);
+    return true;
 }
 
 void save_cache(const std::string &path, const BasemapSlot &slot) {
@@ -861,6 +869,75 @@ bool build_basemap(BasemapSlot &slot, uint32_t gen) {
     return true;
 }
 
+// Disk budget for basemap mosaics (~2 MB each, so ~500 maps).
+constexpr uint64_t CACHE_MAX_BYTES = 1024ull * 1024ull * 1024ull;
+std::mutex g_prune_mu;
+
+// TTL in days for a cache file, from its name's style tag ("dark_eq6k1_...").
+// -1 = a name this build would never load (older cache format) -> delete.
+int ttl_for_cache_name(const char *name) {
+    const char *eq = strstr(name, "_eq6");
+    if (!eq) return -1;
+    const std::string tag(name, (size_t)(eq - name));
+    for (int s = 0; s < MAP_BASEMAP_STYLE_COUNT; s++)
+        if (tag == style_cache_tag(s)) return style_cache_ttl_days(s);
+    return -1;
+}
+
+// Remove mosaics that will never be used again -- expired (the TTL is
+// checked on load, so they'd only be rebuilt) or an older cache format --
+// then trim least-recently-used ones until under CACHE_MAX_BYTES. They used
+// to accumulate forever (one per style x location x range x geometry).
+void prune_cache() {
+    std::unique_lock<std::mutex> lock(g_prune_mu, std::try_to_lock);
+    if (!lock.owns_lock()) return; // another prune is running
+    const std::string dir = cache_dir();
+    DIR *d = opendir(dir.c_str());
+    if (!d) return;
+
+    struct Entry { std::string path; uint64_t size; time_t last_use; };
+    std::vector<Entry> keep;
+    uint64_t total = 0;
+    int expired = 0;
+    const time_t now = time(nullptr);
+    while (dirent *ent = readdir(d)) {
+        const char *name = ent->d_name;
+        size_t len = strlen(name);
+        if (name[0] == '.' || len < 8 || strcmp(name + len - 7, ".rgb565") != 0) continue;
+        std::string path = dir + "/" + name;
+        struct stat st {};
+        if (stat(path.c_str(), &st) != 0) continue;
+        const int ttl_days = ttl_for_cache_name(name);
+        const bool dead = ttl_days < 0 ||
+            (now >= st.st_mtime && now - st.st_mtime >= (time_t)ttl_days * 86400);
+        if (dead) {
+            if (unlink(path.c_str()) == 0) expired++;
+            continue;
+        }
+        const time_t last_use = st.st_atime > st.st_mtime ? st.st_atime : st.st_mtime;
+        keep.push_back({path, (uint64_t)st.st_size, last_use});
+        total += (uint64_t)st.st_size;
+    }
+    closedir(d);
+
+    int trimmed = 0;
+    if (total > CACHE_MAX_BYTES) {
+        std::sort(keep.begin(), keep.end(),
+                  [](const Entry &a, const Entry &b) { return a.last_use < b.last_use; });
+        for (const Entry &e : keep) {
+            if (total <= CACHE_MAX_BYTES) break;
+            if (unlink(e.path.c_str()) == 0) {
+                total -= e.size;
+                trimmed++;
+            }
+        }
+    }
+    if (expired || trimmed) {
+        platform_log_info("Basemap: pruned %d expired + %d least-recently-used mosaic(s); "
+                          "cache now %.0f MB\n", expired, trimmed, total / (1024.0 * 1024.0));
+    }
+}
+
 void worker_main(uint32_t gen) {
     BasemapSlot local;
     {
@@ -894,8 +971,12 @@ void worker_main(uint32_t gen) {
         ok = build_basemap(local, gen);
         if (ok) {
             progress_set(gen, true, 100);
-            if (local.complete) save_cache(path, local);
-            else platform_log_info("Basemap: incomplete mosaic shown but not cached\n");
+            if (local.complete) {
+                save_cache(path, local);
+                prune_cache();
+            } else {
+                platform_log_info("Basemap: incomplete mosaic shown but not cached\n");
+            }
         }
     }
 
@@ -933,6 +1014,11 @@ void worker_main(uint32_t gen) {
 
 void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int canvas_h,
                      int geo_center_y, int bullseye_r_px) {
+    static bool pruned_at_start = false;
+    if (!pruned_at_start) { // once per run, off the UI thread
+        pruned_at_start = true;
+        std::thread(prune_cache).detach();
+    }
     if (canvas_w <= 0 || canvas_h <= 0 || bullseye_r_px <= 0) return;
 
     const int style = map_basemap_style();
