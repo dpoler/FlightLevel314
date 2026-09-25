@@ -70,6 +70,7 @@ See §7.1. Highest-signal open items:
 - VIEW toggle to hide runway lines + labels (clearer zoomed-in satellite)
 - Test suite (host unit tests for pure logic + CI compile check)
 - Code review 2026-09-26: remaining findings (see §7.1)
+- Satellite with labels (Esri labels overlay composited on imagery)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -767,6 +768,23 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   - Lower: TIS-B "~hex" truncated; List title "? TRAFFIC" for waypoints;
     Wi-Fi icon always green; chip label stale after factory reset;
     /dev/dri/card0 hardcoded.
+
+- **Satellite with labels (Dan, 2026-09-26)**: add "Satellite (labels)"
+  next to plain Satellite, like Dark / Dark (no labels). Esri publishes a
+  transparent labels-only overlay for World Imagery:
+  - Basemap layer service `.../Reference/World_Boundaries_and_Places/
+    MapServer/tile/{z}/{y}/{x}` (256px PNG32). On ibasemaps-api it returned
+    404 with a bogus token (imagery serves with any token) -- verify with a
+    real key before relying on it. The keyless legacy
+    services.arcgisonline.com copy works but isn't the licensed route.
+  - Fallback: static basemap tiles `arcgis/imagery/labels` (512px PNG,
+    same Location Platform key).
+  Build: fetch imagery + labels for the same z/x/y, alpha-composite labels
+  onto the mosaic before the warp (blit_tile_rgba currently overwrites
+  RGBA -- needs a blend variant), own cache tag. Doubles tiles per rebuild
+  (<=600, fine against 2M/month). Attribution adds the overlay's credits
+  (Esri, HERE, Garmin, (c) OpenStreetMap contributors). Labels are baked
+  at tile resolution, so they warp with the imagery like CARTO's do.
 
 ### 7.1b Deferred (Dan, 2026-08-09 — do not start)
 
