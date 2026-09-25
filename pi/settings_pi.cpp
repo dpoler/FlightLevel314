@@ -513,12 +513,17 @@ static void cancel_and_close(lv_event_t *e) {
     // fields; brightness may have been preview-only (no mid-edit writes).
     const int live_traffic = g_config.traffic_provider;
     const bool live_adbox = g_config.aerodatabox_enabled;
+    // AeroDataBox auto-disabled itself (429 / quota) while Settings was open:
+    // that isn't a UI preview, so Cancel must not undo it.
+    const bool auto_disabled = g_config.adbox_rate_limited && !_cfg_at_open.adbox_rate_limited;
     g_config.display_brightness_pct = _cfg_at_open.display_brightness_pct;
     g_config.traffic_provider = _cfg_at_open.traffic_provider;
     g_config.aerodatabox_provider = _cfg_at_open.aerodatabox_provider;
     g_config.airportdb_enabled = _cfg_at_open.airportdb_enabled;
-    g_config.aerodatabox_enabled = _cfg_at_open.aerodatabox_enabled;
-    g_config.adbox_rate_limited = _cfg_at_open.adbox_rate_limited;
+    if (!auto_disabled) {
+        g_config.aerodatabox_enabled = _cfg_at_open.aerodatabox_enabled;
+        g_config.adbox_rate_limited = _cfg_at_open.adbox_rate_limited;
+    }
     backlight_set_percent(g_config.display_brightness_pct);
     if (live_traffic != g_config.traffic_provider)
         fetcher_request_immediate_fetch();
@@ -557,17 +562,34 @@ static void save_and_close(lv_event_t *e) {
         _cfg.aerodatabox_provider = sel;
     }
 
+    const bool auto_disabled = g_config.adbox_rate_limited && !_cfg_at_open.adbox_rate_limited;
     bool apt_en = lv_obj_has_state(_sw_apt_en, LV_STATE_CHECKED) && _apt_valid == KeyValid::Valid;
     bool adbox_en = lv_obj_has_state(_sw_adbox_en, LV_STATE_CHECKED) && _adbox_valid == KeyValid::Valid;
+    // Auto-disabled mid-edit: the switch still shows its open-time state, so
+    // Save must not read that as "re-enable". (Re-enabling after a lockout
+    // that predates opening Settings still works below.)
+    if (auto_disabled) adbox_en = false;
     bool clear_enrich = (adbox_en != g_config.aerodatabox_enabled)
                         || (_cfg.aerodatabox_provider != g_config.aerodatabox_provider);
     _cfg.airportdb_enabled = apt_en;
     _cfg.aerodatabox_enabled = adbox_en;
-    // Re-enabling clears sticky rate-limit / soft-cap lockout.
-    if (adbox_en && g_config.adbox_rate_limited) {
-        aerodatabox_clear_rate_limit();
-        _cfg.adbox_rate_limited = false;
-    }
+    // Re-enabling clears sticky rate-limit / soft-cap lockout (live config).
+    if (adbox_en && g_config.adbox_rate_limited) aerodatabox_clear_rate_limit();
+
+    // _cfg was loaded when Settings opened. Background threads keep updating
+    // AeroDataBox bookkeeping in g_config meanwhile (usage count, marketplace
+    // quota, verify cache, 429 auto-disable) -- take those live values, after
+    // any clear above, so Save doesn't roll them back to the snapshot.
+    _cfg.adbox_usage_yyyymm = g_config.adbox_usage_yyyymm;
+    _cfg.adbox_usage_count = g_config.adbox_usage_count;
+    _cfg.adbox_soft_limit = g_config.adbox_soft_limit;
+    _cfg.adbox_rate_limited = g_config.adbox_rate_limited;
+    _cfg.adbox_verify_ok = g_config.adbox_verify_ok;
+    _cfg.adbox_verify_prov = g_config.adbox_verify_prov;
+    _cfg.adbox_verify_key_hash = g_config.adbox_verify_key_hash;
+    _cfg.adbox_mkt_have_units = g_config.adbox_mkt_have_units;
+    _cfg.adbox_mkt_units_rem = g_config.adbox_mkt_units_rem;
+    _cfg.adbox_mkt_units_lim = g_config.adbox_mkt_units_lim;
 
     if (_bright_slider) {
         int b = (int)lv_slider_get_value(_bright_slider);
