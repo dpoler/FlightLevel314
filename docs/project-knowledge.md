@@ -743,19 +743,14 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   basemap doesn't build/cache when tiles fail; error_log_init at boot;
   stats unique set; Metric toggle removed; map labels saved airports by
   ICAO; nearby-runways rescan on switch when toggle on + cache empty.
+  Fixed in batch 3: URLs logged without query strings (airportdb token) +
+  full-size AirportDB URL buffer; airline lookup requires a digit after the
+  prefix + boot load retries; editing active presets uses fetcher_wake()
+  (keeps traffic); waypoint lat/lon/elev validated; airports identified by
+  ICAO (identity_of(); one-time migration of names + last_location_name).
   Still open, roughly by priority:
   - Intermittent: after switching an open card to aircraft B, B's photo
     sometimes doesn't appear (not yet reproduced/diagnosed).
-  - Location identity by name: static-DB airport adds store truncated full
-    name, duplicates possible (wrong location on boot, airport edit-save
-    "name already used").
-  - Airline lookup matches registration callsigns (CGAxx, OEAxx); airlines
-    load once at boot with no retry.
-  - Editing active-location presets clears the aircraft list (uses
-    fetcher_request_immediate_fetch). Waypoint lat/lon fields accept
-    garbage -> 0,0 / out of range.
-  - http_linux logs full URLs on failure (airportdb apiToken in journal);
-    airportdb URL buffer truncates tokens > ~140 chars.
   - OTA: no checksum/signature; offers any differing tag (can downgrade);
     no armv7 asset.
   - SD wear: basemap mosaics never pruned (~2MB each); weather rewrites a
