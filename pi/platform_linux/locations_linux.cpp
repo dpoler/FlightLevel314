@@ -216,7 +216,9 @@ bool fetch_airport_data(const char *icao_upper, Location &out, char *err, size_t
         return false;
     };
 
-    char url[192];
+    // Sized for the full token field (160) -- was 192 total, which silently
+    // cut tokens longer than ~140 chars.
+    char url[64 + sizeof(g_config.airportdb_token)];
     snprintf(url, sizeof(url), "https://airportdb.io/api/v1/airport/%s?apiToken=%s",
               icao_upper, g_config.airportdb_token);
 

@@ -78,6 +78,15 @@ size_t header_cb(char *buffer, size_t size, size_t nitems, void *userdata) {
 
 std::once_flag curl_init_flag;
 
+// URL for logs: scheme/host/path only. Query strings can carry API keys
+// (airportdb.io's ?apiToken=), and warnings land in the systemd journal.
+std::string loggable_url(const char *url) {
+    std::string s(url ? url : "");
+    size_t q = s.find('?');
+    if (q != std::string::npos) s.replace(q, std::string::npos, "?...");
+    return s;
+}
+
 bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_len,
                        long *http_status, const char *const *extra_headers,
                        PlatformHttpRateLimit *rate_limit, bool require_2xx) {
@@ -134,13 +143,13 @@ bool http_get_internal(const char *url, char *out, size_t out_size, size_t *out_
     }
 
     if (res != CURLE_OK) {
-        platform_log_warn("HTTP GET %s failed: curl=%d\n", url, (int)res);
+        platform_log_warn("HTTP GET %s failed: curl=%d\n", loggable_url(url).c_str(), (int)res);
         return false;
     }
     if (http_status) *http_status = http_code;
 
     if (require_2xx && (http_code < 200 || http_code >= 300)) {
-        platform_log_warn("HTTP GET %s failed: http=%ld\n", url, http_code);
+        platform_log_warn("HTTP GET %s failed: http=%ld\n", loggable_url(url).c_str(), http_code);
         return false;
     }
 
