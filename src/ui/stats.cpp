@@ -5,13 +5,24 @@
 #include "../data/locations.h"
 #include <cstring>
 #include <cstdlib>
+#include <string>
+#include <unordered_set>
 
 static SessionStats _stats;
 
-// Simple hash set for unique ICAO tracking
-#define MAX_UNIQUE 2000
-static char _seen_icaos[MAX_UNIQUE][7];
-static int _seen_count = 0;
+// Unique aircraft seen at the active location this session. A hash set, not
+// the old fixed 2000-entry array: at a busy airport that filled within a day,
+// after which every unseen aircraft read as "new" on every update and the top
+// types/airlines counts inflated each second. Capped only to bound memory
+// over months of uptime; past the cap, unseen aircraft stop counting as new.
+#define MAX_UNIQUE 200000
+static std::unordered_set<std::string> _seen;
+
+// True the first time an ICAO is seen (and records it).
+static bool mark_seen(const char *icao) {
+    if (_seen.size() >= MAX_UNIQUE) return false;
+    return _seen.insert(icao).second;
+}
 
 // unique_seen/peak_count/top_types/top_airlines/fastest_*/slowest_*/
 // highest_*/lowest_*/closest_* are meant to describe whichever location is
@@ -26,19 +37,6 @@ static int _seen_count = 0;
 // every single call regardless of location (see stats_view.cpp's "RIGHT
 // NOW" column) -- so they are reset unconditionally further down, not here.
 static int _last_active_loc = -2; // sentinel so the very first call resets/syncs
-
-static bool already_seen(const char *icao) {
-    for (int i = 0; i < _seen_count; i++) {
-        if (strcmp(_seen_icaos[i], icao) == 0) return true;
-    }
-    return false;
-}
-
-static void mark_seen(const char *icao) {
-    if (_seen_count >= MAX_UNIQUE || already_seen(icao)) return;
-    strlcpy(_seen_icaos[_seen_count], icao, 7);
-    _seen_count++;
-}
 
 #define MAX_TYPE_TRACK 100
 struct TypeTracker {
@@ -123,7 +121,7 @@ void stats_init() {
     memset(&_stats, 0, sizeof(_stats));
     _stats.boot_time = millis();
     _stats.closest_dist = 9999.0f;
-    _seen_count = 0;
+    _seen.clear();
     _type_track_count = 0;
     _airline_track_count = 0;
 }
@@ -134,7 +132,7 @@ void stats_update(AircraftList *list) {
     int active_loc = locations_active_index();
     if (active_loc != _last_active_loc) {
         _last_active_loc = active_loc;
-        _seen_count = 0;
+        _seen.clear();
         _type_track_count = 0;
         _airline_track_count = 0;
         _stats.peak_count = 0;
@@ -200,8 +198,7 @@ void stats_update(AircraftList *list) {
         if (ac.on_ground) continue;
 
         _stats.current_count++;
-        bool is_new = !already_seen(ac.icao_hex);
-        mark_seen(ac.icao_hex);
+        bool is_new = mark_seen(ac.icao_hex);
         if (is_new) {
             track_type(ac.type_code);
             track_airline(ac.callsign);
@@ -274,7 +271,7 @@ void stats_update(AircraftList *list) {
     if (_stats.current_count > _stats.peak_count) {
         _stats.peak_count = _stats.current_count;
     }
-    _stats.unique_seen = _seen_count;
+    _stats.unique_seen = (int)_seen.size();
     compute_top_types();
     compute_top_airlines();
 
