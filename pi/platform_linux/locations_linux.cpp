@@ -314,6 +314,10 @@ void locations_remove(int idx) {
             g_config.last_location_name[0] = '\0';
             storage_save_config(g_config);
         }
+        // Same hard cut as a location switch: with no active location the
+        // fetch loop stops early every cycle, so nothing would ever age the
+        // removed site's aircraft out -- they stayed frozen on screen.
+        fetcher_request_immediate_fetch();
     } else if (_active_index > idx) {
         _active_index--;
     }
@@ -826,6 +830,7 @@ void locations_factory_reset() {
     _active_index = -1;
     memset(_locations, 0, sizeof(_locations));
     memset(_nearby_all_count, 0, sizeof(_nearby_all_count));
+    fetcher_request_immediate_fetch(); // drop the old site's aircraft
     remove(locations_file_path().c_str());
     platform_log_info("Locations: %s removed (factory reset)\n", locations_file_path().c_str());
 }
