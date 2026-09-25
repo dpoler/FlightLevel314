@@ -68,7 +68,7 @@ PAT/SSH setup unless he asks; push from Mac instead.
 See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - VIEW toggle to hide runway lines + labels (clearer zoomed-in satellite)
-- Per-location range presets (e.g. KDEN max 3 nm, KLGA 1 nm)
+- Test suite (host unit tests for pure logic + CI compile check)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
 
@@ -701,13 +701,31 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   before implementing. Note: Radar draws no runways today (by design), so
   "per view" only matters if that changes.
 
-- **Per-location range presets (Dan, 2026-09-25)**: move range presets
-  from one global set to per saved location / airport. Big airports want a
-  larger tightest zoom (KDEN ~3 nm) and small ones a tighter one (KLGA
-  ~1 nm). Likely: optional per-location preset array in `locations.json`,
-  falling back to the global Settings presets when unset; edit from the
-  location picker details panel. (Preset-edit bug above is fixed; keep
-  its keep-current-range behavior when presets become per-location.)
+- ~~**Per-location range presets (Dan, 2026-09-25)**~~ **done 2026-09-25**
+  — `Location.range_presets[4]` (`"rng"` in `locations.json`; all 0 = use
+  Settings, now labeled "Default Range Presets"). Picker details panel has
+  **Edit**: range presets for any location; waypoints also name/lat/lon/elev.
+  Add Location form has the preset fields; adding an airport opens its edit
+  form ("Added KLGA", Skip = defaults). Switching locations
+  (`range_sync_active_presets()`) keeps the current range if present, else
+  the same slot; editing the active preset follows it. ADS-B query radius,
+  nearby-runway scan and trail scaling use the presets in effect.
+  Same branch: airports display the detail-card name
+  (`airports_format_place`, e.g. "Denver Int'l") in the chip / picker / edit
+  form and are no longer renamable; location chip sizes to the name
+  (60-290px, "..." beyond; ~98% of static-DB names fit); runways with one
+  end off-screen now draw and label the visible end.
+
+- **Test suite (Dan, 2026-09-25)**: no automated tests today (CI only
+  builds SDL on tags). Candidates, easiest first: host-side unit tests for
+  pure logic (`src/ui/range.cpp` preset keep/follow rules,
+  `airports_format_place` naming + width budget, AeroDataBox route parsing
+  / time formats in `enrichment_linux.cpp` against saved JSON fixtures,
+  config/locations JSON round-trip); a compile check of all sources on every
+  push (not just tags); later, SDL screenshot smoke tests. Ad-hoc harnesses
+  used during 2026-09 work (range tests, airport-name width survey,
+  `-fsyntax-only` against LVGL 9.5) are the seed for this. Scope with Dan
+  before starting.
 
 ### 7.1b Deferred (Dan, 2026-08-09 — do not start)
 

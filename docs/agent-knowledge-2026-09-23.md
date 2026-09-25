@@ -246,7 +246,7 @@ Highest-signal leftovers (verify §7.1 in project-knowledge before acting):
 - **Follow Mode** — hold; design notes only
 - VIEW toggle to hide runway lines + labels (zoomed satellite); open
   question: per location, or per location + per view?
-- Per-location range presets (KDEN ~3 nm vs KLGA ~1 nm)
+- Test suite (host unit tests for pure logic + CI compile check)
 - Optional fresher README LIST/INFO screenshots
 - QoL themes / font size
 
