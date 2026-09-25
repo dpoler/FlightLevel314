@@ -10,6 +10,7 @@
 #include "basemap.h"
 #include "display_prefs.h"
 #include "../data/ota.h"
+#include <cstring>
 #endif
 
 static lv_obj_t *wifi_icon;
@@ -177,6 +178,12 @@ lv_obj_t *status_bar_create(lv_obj_t *parent) {
 }
 
 void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircraft_count, uint32_t last_update_ms) {
+    // Range can change outside the chip (Settings preset edits) -- keep the
+    // label in sync instead of showing the pre-edit value until next tap.
+    if (range_lbl && strcmp(lv_label_get_text(range_lbl), range_label()) != 0) {
+        lv_label_set_text(range_lbl, range_label());
+    }
+
     // Network icon — show type and color by status
     NetType net = fetcher_connection_type();
     if (net == NET_ETHERNET) {

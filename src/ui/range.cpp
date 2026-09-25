@@ -26,6 +26,7 @@ const char* range_label() {
 }
 
 void range_set_levels(const int *nm_values, int count) {
+    const float prev_nm = _levels[_idx];
     if (count < 1) count = 1;
     if (count > RANGE_MAX_LEVELS) count = RANGE_MAX_LEVELS;
     _count = count;
@@ -37,7 +38,10 @@ void range_set_levels(const int *nm_values, int count) {
             if (_levels[j] > _levels[i]) {
                 float tmp = _levels[i]; _levels[i] = _levels[j]; _levels[j] = tmp;
             }
-    if (_idx >= _count) _idx = 0;
+    if (_idx >= _count) _idx = _count - 1;
+    for (int i = 0; i < _count; i++) {
+        if (_levels[i] == prev_nm) { _idx = i; break; }
+    }
 }
 
 void range_set_index(int idx) {

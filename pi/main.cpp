@@ -155,12 +155,29 @@ int main() {
     settings_set_change_callback([](const UserConfig *cfg) {
         bool presets_changed = (memcmp(cfg->radius_presets, g_config.radius_presets,
                                        sizeof(g_config.radius_presets)) != 0);
+        int old_presets[4];
+        memcpy(old_presets, g_config.radius_presets, sizeof(old_presets));
+        const float prev_nm = range_get_nm();
         const int bright = cfg->display_brightness_pct;
         g_config = *cfg;
+        // Keeps the current range (or its slot, when that preset was the
+        // one edited). Used to snap to radius_nm -- the *widest* preset --
+        // which jumped the view out while the range chip kept its old label.
         range_set_levels(cfg->radius_presets, 4);
         backlight_set_percent(bright);
         if (presets_changed) {
-            range_set_default(cfg->radius_nm);
+            // Active preset edited to a value that changed its rank (e.g.
+            // 5 -> 30): follow the edited value rather than the old slot.
+            if (range_get_nm() != prev_nm) {
+                int added = -1, n_added = 0;
+                for (int i = 0; i < 4; i++) {
+                    bool was_there = false;
+                    for (int j = 0; j < 4; j++)
+                        if (cfg->radius_presets[i] == old_presets[j]) was_there = true;
+                    if (!was_there) { added = cfg->radius_presets[i]; n_added++; }
+                }
+                if (n_added == 1) range_set_default(added);
+            }
             g_config.last_range_idx = range_get_index();
             storage_save_config(g_config);
         }
