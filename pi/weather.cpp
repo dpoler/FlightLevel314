@@ -502,63 +502,24 @@ std::string cache_dir() {
     return base + "/flightlevel314/weather";
 }
 
-void ensure_dir(const std::string &path) {
-    std::string cur;
-    for (size_t i = 0; i < path.size(); i++) {
-        cur.push_back(path[i]);
-        if (path[i] == '/' || i + 1 == path.size()) {
-            if (cur.size() > 1 && cur.back() == '/') {
-                mkdir(cur.substr(0, cur.size() - 1).c_str(), 0755);
-            } else if (i + 1 == path.size()) {
-                mkdir(cur.c_str(), 0755);
-            }
-        }
+// Delete weather mosaics left on disk by older builds (the app no longer
+// writes them -- see worker_main). Returns the number removed.
+int remove_disk_files() {
+    std::string dir = cache_dir();
+    DIR *d = opendir(dir.c_str());
+    if (!d) return 0;
+    int removed = 0;
+    while (dirent *ent = readdir(d)) {
+        if (!ent->d_name[0] || ent->d_name[0] == '.') continue;
+        const char *name = ent->d_name;
+        size_t len = strlen(name);
+        if (len < 6 || strcmp(name + len - 5, ".argb") != 0) continue;
+        std::string path = dir + "/" + name;
+        if (unlink(path.c_str()) == 0) removed++;
     }
-    mkdir(path.c_str(), 0755);
-}
-
-std::string cache_path(float lat, float lon, float radius_nm,
-                       int w, int h, int cy, int br) {
-    char name[220];
-    snprintf(name, sizeof(name), "%s/wx_eq2_f25_%.4f_%.4f_r%.0f_%dx%d_cy%d_br%d.argb",
-             cache_dir().c_str(), lat, lon, radius_nm, w, h, cy, br);
-    return name;
-}
-
-bool cache_fresh(const std::string &path) {
-    struct stat st{};
-    if (stat(path.c_str(), &st) != 0) return false;
-    time_t now = time(nullptr);
-    if (now < st.st_mtime) return true;
-    return (now - st.st_mtime) < CACHE_TTL_SEC;
-}
-
-bool load_cache(const std::string &path, WeatherSlot &slot) {
-    if (!cache_fresh(path)) return false;
-    FILE *f = fopen(path.c_str(), "rb");
-    if (!f) return false;
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz <= 0 || (size_t)sz != slot.argb.size()) {
-        fclose(f);
-        return false;
-    }
-    size_t n = fread(slot.argb.data(), 1, slot.argb.size(), f);
-    fclose(f);
-    if (n != slot.argb.size()) return false;
-    struct stat st{};
-    if (stat(path.c_str(), &st) == 0) slot.built_at = st.st_mtime;
-    else slot.built_at = time(nullptr);
-    return true;
-}
-
-void save_cache(const std::string &path, const WeatherSlot &slot) {
-    ensure_dir(cache_dir());
-    FILE *f = fopen(path.c_str(), "wb");
-    if (!f) return;
-    fwrite(slot.argb.data(), 1, slot.argb.size(), f);
-    fclose(f);
+    closedir(d);
+    rmdir(dir.c_str()); // only succeeds if now empty
+    return removed;
 }
 
 bool resolve_latest_frame(std::string &host, std::string &frame_path) {
@@ -757,20 +718,12 @@ void worker_main(uint32_t gen) {
     }
     local.argb.assign((size_t)local.w * local.h * 4, 0);
 
-    std::string path = cache_path(local.lat, local.lon, local.radius_nm,
-                                  local.w, local.h, local.geo_cy, local.bullseye_r);
-    bool ok = false;
-    if (load_cache(path, local)) {
-        local.bind_buf();
-        local.valid = true;
-        ok = true;
-        platform_log_debug("Weather: cache hit %s\n", path.c_str());
-    } else {
-        platform_log_debug("Weather: building (%.4f,%.4f) r=%.0fnm %dx%d\n",
-                     local.lat, local.lon, local.radius_nm, local.w, local.h);
-        ok = build_weather(local, gen);
-        if (ok) save_cache(path, local);
-    }
+    // Memory only: a 4 MB mosaic rewritten every ~8 min (~700 MB/day of SD
+    // writes) only ever saved one small download after a restart. The front
+    // slot already serves the running app until its TTL.
+    platform_log_debug("Weather: building (%.4f,%.4f) r=%.0fnm %dx%d\n",
+                 local.lat, local.lon, local.radius_nm, local.w, local.h);
+    const bool ok = build_weather(local, gen);
 
     {
         std::lock_guard<std::mutex> lock(g_mu);
@@ -791,6 +744,12 @@ void worker_main(uint32_t gen) {
 
 void weather_request(float lat, float lon, float radius_nm, int canvas_w, int canvas_h,
                      int geo_center_y, int bullseye_r_px) {
+    static bool cleaned = false;
+    if (!cleaned) {
+        cleaned = true;
+        int n = remove_disk_files();
+        if (n > 0) platform_log_info("Weather: removed %d obsolete disk mosaic(s)\n", n);
+    }
     if (!map_weather_shown()) return;
     if (canvas_w <= 0 || canvas_h <= 0 || bullseye_r_px <= 0) return;
 
@@ -904,23 +863,7 @@ int weather_cache_clear(void) {
         g_req_gen++;
     }
 
-    std::string dir = cache_dir();
-    DIR *d = opendir(dir.c_str());
-    if (!d) {
-        platform_log_info("Weather: cache clear — no dir at %s\n", dir.c_str());
-        return 0;
-    }
-    int removed = 0;
-    while (dirent *ent = readdir(d)) {
-        if (!ent->d_name[0] || ent->d_name[0] == '.') continue;
-        const char *name = ent->d_name;
-        size_t len = strlen(name);
-        if (len < 6 || strcmp(name + len - 5, ".argb") != 0) continue;
-        std::string path = dir + "/" + name;
-        if (unlink(path.c_str()) == 0) removed++;
-    }
-    closedir(d);
-    platform_log_info("Weather: cache clear — removed %d file(s) from %s\n",
-                 removed, dir.c_str());
+    int removed = remove_disk_files();
+    platform_log_info("Weather: cache clear — removed %d file(s)\n", removed);
     return removed;
 }
