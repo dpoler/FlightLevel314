@@ -50,14 +50,14 @@ static lv_obj_t *_lat_label = nullptr;
 static lv_obj_t *_lon_label = nullptr;
 static lv_obj_t *_track_label = nullptr;
 static lv_obj_t *_signal_label = nullptr;
-// Flight times under FROM / TO (AeroDataBox, airport local). *_sched_label is
-// a dim "sch HH:MM" beside the value, shown only when the estimate differs.
-static lv_obj_t *_dep_hdr = nullptr;
-static lv_obj_t *_arr_hdr = nullptr;
-static lv_obj_t *_dep_label = nullptr;
-static lv_obj_t *_dep_sched_label = nullptr;
-static lv_obj_t *_arr_label = nullptr;
-static lv_obj_t *_arr_sched_label = nullptr;
+// Flight times under FROM / TO (AeroDataBox, airport local), e.g.
+// "STD 18:50  ATD 19:08". First pair is the schedule; second pair is the
+// actual (A) or estimated (E) time, shown only when it adds information.
+struct TimeRow {
+    lv_obj_t *hdr1, *val1, *hdr2, *val2;
+};
+static TimeRow _dep_row = {};
+static TimeRow _arr_row = {};
 
 // Live update timer
 static lv_timer_t *_update_timer = nullptr;
@@ -251,27 +251,45 @@ static void route_set_hidden(bool hidden) {
     apply(_route_to_icao);
     apply(_route_from_name);
     apply(_route_to_name);
-    apply(_dep_hdr);
-    apply(_arr_hdr);
-    apply(_dep_label);
-    apply(_arr_label);
-    if (hidden) {
-        apply(_dep_sched_label);
-        apply(_arr_sched_label);
+    TimeRow *rows[] = {&_dep_row, &_arr_row};
+    for (TimeRow *r : rows) {
+        apply(r->hdr1);
+        apply(r->val1);
+        // Second pair is shown per-flight by set_time_row().
+        if (hidden) {
+            apply(r->hdr2);
+            apply(r->val2);
+        }
     }
 }
 
-// Newest time as the value; scheduled beside it only when they differ.
-static void set_time_cell(lv_obj_t *value, lv_obj_t *sched_lbl,
-                          const char *sched, const char *est) {
-    const char *shown = est[0] ? est : sched;
-    lv_label_set_text(value, shown[0] ? shown : "--");
-    if (est[0] && sched[0] && strcmp(est, sched) != 0) {
-        lv_label_set_text_fmt(sched_lbl, "sch %s", sched);
-        lv_obj_align_to(sched_lbl, value, LV_ALIGN_OUT_RIGHT_BOTTOM, 6, 0);
-        lv_obj_clear_flag(sched_lbl, LV_OBJ_FLAG_HIDDEN);
+// Standard abbreviations: S = scheduled, E = estimated, A = actual;
+// T?D departure, T?A arrival (STD / ETD / ATD, STA / ETA / ATA).
+// Schedule first; then the actual time, or an estimate that differs.
+static void set_time_row(TimeRow *r, bool departure,
+                         const char *sched, const char *est, bool actual) {
+    const char *s_abbr = departure ? "STD" : "STA";
+    const char *e_abbr = actual ? (departure ? "ATD" : "ATA")
+                                : (departure ? "ETD" : "ETA");
+    const bool second = sched[0] && est[0] && (actual || strcmp(est, sched) != 0);
+    if (sched[0]) {
+        lv_label_set_text(r->hdr1, s_abbr);
+        lv_label_set_text(r->val1, sched);
     } else {
-        lv_obj_add_flag(sched_lbl, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(r->hdr1, est[0] ? e_abbr : s_abbr);
+        lv_label_set_text(r->val1, est[0] ? est : "--");
+    }
+    lv_obj_align_to(r->val1, r->hdr1, LV_ALIGN_OUT_RIGHT_BOTTOM, 6, 0);
+    if (second) {
+        lv_label_set_text(r->hdr2, e_abbr);
+        lv_label_set_text(r->val2, est);
+        lv_obj_align_to(r->hdr2, r->val1, LV_ALIGN_OUT_RIGHT_BOTTOM, 14, 0);
+        lv_obj_align_to(r->val2, r->hdr2, LV_ALIGN_OUT_RIGHT_BOTTOM, 6, 0);
+        lv_obj_clear_flag(r->hdr2, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(r->val2, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(r->hdr2, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(r->val2, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -334,12 +352,12 @@ static void on_enrichment_ready(AircraftEnrichment *data) {
         route_set_hidden(false);
     }
 
-    set_time_cell(_dep_label, _dep_sched_label, data->dep_sched, data->dep_est);
+    set_time_row(&_dep_row, true, data->dep_sched, data->dep_est, data->dep_actual);
     if (strcmp(data->flight_status, "Diverted") == 0) {
         // Planned arrival time is meaningless once diverted.
-        set_time_cell(_arr_label, _arr_sched_label, "", "");
+        set_time_row(&_arr_row, false, "", "", false);
     } else {
-        set_time_cell(_arr_label, _arr_sched_label, data->arr_sched, data->arr_est);
+        set_time_row(&_arr_row, false, data->arr_sched, data->arr_est, data->arr_actual);
     }
 
 #if !defined(ARDUINO)
@@ -703,39 +721,26 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     _route_from_name = make_route_name(id_x);
     _route_to_name = make_route_name(route_to_x);
 
-    // DEP / ARR time line under each column.
-    auto make_time_hdr = [&](const char *text, int x) {
-        lv_obj_t *lbl = lv_label_create(id_parent);
-        lv_label_set_text(lbl, text);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(lbl, CARD_DIM, 0);
-        lv_obj_set_pos(lbl, x, y_route_time + 2);
-        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
-        return lbl;
-    };
-    auto make_time_value = [&](int x) {
-        lv_obj_t *lbl = lv_label_create(id_parent);
-        lv_label_set_text(lbl, "--");
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(lbl, CARD_TEXT, 0);
-        lv_obj_set_pos(lbl, x + 40, y_route_time);
-        lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
-        return lbl;
-    };
-    auto make_sched_label = [&]() {
+    // STD/ETD/ATD (STA/ETA/ATA) time line under each column: dim 14pt
+    // abbreviation + 16pt time; set_time_row() lays out the pairs.
+    auto make_time_lbl = [&](bool value) {
         lv_obj_t *lbl = lv_label_create(id_parent);
         lv_label_set_text(lbl, "");
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_color(lbl, CARD_DIM, 0);
+        lv_obj_set_style_text_font(lbl, value ? &lv_font_montserrat_16
+                                              : &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl, value ? CARD_TEXT : CARD_DIM, 0);
         lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
         return lbl;
     };
-    _dep_hdr = make_time_hdr("DEP", id_x);
-    _arr_hdr = make_time_hdr("ARR", route_to_x);
-    _dep_label = make_time_value(id_x);
-    _arr_label = make_time_value(route_to_x);
-    _dep_sched_label = make_sched_label();
-    _arr_sched_label = make_sched_label();
+    auto make_time_row = [&](TimeRow *r, int x) {
+        r->hdr1 = make_time_lbl(false);
+        r->val1 = make_time_lbl(true);
+        r->hdr2 = make_time_lbl(false);
+        r->val2 = make_time_lbl(true);
+        lv_obj_set_pos(r->hdr1, x, y_route_time + 2);
+    };
+    make_time_row(&_dep_row, id_x);
+    make_time_row(&_arr_row, route_to_x);
 
     _photo_credit_label = lv_label_create(_card);
     lv_label_set_text(_photo_credit_label, "");
@@ -861,8 +866,8 @@ void detail_card_show(const Aircraft *ac) {
     if (_route_to_name) lv_label_set_text(_route_to_name, "");
     set_route_status("");
     route_set_hidden(true);
-    set_time_cell(_dep_label, _dep_sched_label, "", "");
-    set_time_cell(_arr_label, _arr_sched_label, "", "");
+    set_time_row(&_dep_row, true, "", "", false);
+    set_time_row(&_arr_row, false, "", "", false);
     lv_label_set_text(_photo_credit_label, "");
     lv_obj_add_flag(_photo_credit_label, LV_OBJ_FLAG_HIDDEN);
 #if !defined(ARDUINO)

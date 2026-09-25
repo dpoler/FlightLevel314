@@ -228,6 +228,8 @@ struct AdboxRoute {
     char dep_est[6];
     char arr_sched[6];
     char arr_est[6];
+    bool dep_actual;
+    bool arr_actual;
     char status[20];
 };
 
@@ -241,6 +243,8 @@ void mark_route_result(AircraftEnrichment *entry, const char *callsign,
     strlcpy(entry->dep_est, route->dep_est, sizeof(entry->dep_est));
     strlcpy(entry->arr_sched, route->arr_sched, sizeof(entry->arr_sched));
     strlcpy(entry->arr_est, route->arr_est, sizeof(entry->arr_est));
+    entry->dep_actual = route->dep_actual;
+    entry->arr_actual = route->arr_actual;
     strlcpy(entry->flight_status, route->status, sizeof(entry->flight_status));
     entry->route_checked = true;
     entry->route_checked_ms = platform_millis();
@@ -340,13 +344,13 @@ bool parse_adbox_route(JsonDocument &doc, AdboxRoute *out) {
         }
     };
 
-    auto copy_movement = [&](JsonObjectConst mov, char *sched, char *est) {
+    // Only runwayTime is known-actual; revised may still be an estimate.
+    auto copy_movement = [&](JsonObjectConst mov, char *sched, char *est, bool *actual) {
         local_hhmm(mov, "scheduledTime", sched, 6);
-        const char *keys[] = {"runwayTime", "revisedTime", "predictedTime"};
-        for (const char *k : keys) {
-            local_hhmm(mov, k, est, 6);
-            if (est[0]) break;
-        }
+        local_hhmm(mov, "runwayTime", est, 6);
+        *actual = est[0] != '\0';
+        if (!est[0]) local_hhmm(mov, "revisedTime", est, 6);
+        if (!est[0]) local_hhmm(mov, "predictedTime", est, 6);
     };
 
     auto copy_flight = [&](JsonObjectConst flight) -> bool {
@@ -361,8 +365,10 @@ bool parse_adbox_route(JsonDocument &doc, AdboxRoute *out) {
         *out = AdboxRoute {};
         strlcpy(out->origin, o, sizeof(out->origin));
         strlcpy(out->dest, d, sizeof(out->dest));
-        copy_movement(flight["departure"].as<JsonObjectConst>(), out->dep_sched, out->dep_est);
-        copy_movement(flight["arrival"].as<JsonObjectConst>(), out->arr_sched, out->arr_est);
+        copy_movement(flight["departure"].as<JsonObjectConst>(),
+                      out->dep_sched, out->dep_est, &out->dep_actual);
+        copy_movement(flight["arrival"].as<JsonObjectConst>(),
+                      out->arr_sched, out->arr_est, &out->arr_actual);
         strlcpy(out->status, flight["status"] | "", sizeof(out->status));
         return true;
     };

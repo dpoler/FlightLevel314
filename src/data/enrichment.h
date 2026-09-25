@@ -16,12 +16,15 @@ struct AircraftEnrichment {
     char origin_icao[8];
     char dest_icao[8];
     // Times from the same AeroDataBox flight, "HH:MM" in each airport's local
-    // time. *_sched = scheduled; *_est = newest better time (runway, then
-    // revised, then predicted). Empty when unknown.
+    // time. *_sched = scheduled (STD/STA); *_est = newest better time (runway,
+    // then revised, then predicted). *_actual = *_est is the runway time
+    // (ATD/ATA); otherwise it is an estimate (ETD/ETA). Empty when unknown.
     char dep_sched[6];
     char dep_est[6];
     char arr_sched[6];
     char arr_est[6];
+    bool dep_actual;
+    bool arr_actual;
     // AeroDataBox status of that flight ("EnRoute", "Diverted", ...). Empty
     // when unknown. A diverted flight still reports its planned dest_icao.
     char flight_status[20];
