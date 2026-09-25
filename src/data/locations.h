@@ -111,6 +111,8 @@ void locations_request_verify_token();
 void locations_verify_token_poll();
 bool locations_verify_token_result(bool *ok, char *err, size_t err_size);
 
+// Removing the active location makes its neighbor active (the entry that
+// takes its slot, else the new last entry); -1 only when the list empties.
 void locations_remove(int idx);
 
 // Moves the location at `from` to position `to`, shifting everything between

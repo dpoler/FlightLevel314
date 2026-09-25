@@ -309,14 +309,17 @@ void locations_remove(int idx) {
     _nearby_all_count[_count] = 0;
 
     if (_active_index == idx) {
-        _active_index = -1;
-        if (g_config.last_location_name[0]) {
-            g_config.last_location_name[0] = '\0';
-            storage_save_config(g_config);
-        }
-        // Same hard cut as a location switch: with no active location the
-        // fetch loop stops early every cycle, so nothing would ever age the
-        // removed site's aircraft out -- they stayed frozen on screen.
+        // Removing the active location selects its neighbor (the entry that
+        // slid into this slot, else the new last one) instead of leaving
+        // nothing selected -- that showed "No location added yet" and "+Add"
+        // while other locations still existed. Only an empty list goes to -1.
+        _active_index = (_count == 0) ? -1 : (idx < _count ? idx : _count - 1);
+        const char *name = (_active_index >= 0) ? _locations[_active_index].name : "";
+        strlcpy(g_config.last_location_name, name, sizeof(g_config.last_location_name));
+        storage_save_config(g_config);
+        // Hard cut, same as a location switch (drops the removed site's
+        // aircraft, which otherwise stayed frozen on screen, and fetches the
+        // new one's).
         fetcher_request_immediate_fetch();
     } else if (_active_index > idx) {
         _active_index--;

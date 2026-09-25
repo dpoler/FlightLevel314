@@ -130,8 +130,16 @@ void stats_update(AircraftList *list) {
     if (!list->lock(pdMS_TO_TICKS(50))) return;
 
     int active_loc = locations_active_index();
-    if (active_loc != _last_active_loc) {
+    // Index alone misses a switch that keeps the index (removing the active
+    // location selects the neighbor that slid into its slot), so compare the
+    // coordinates too.
+    static float _last_lat = 0, _last_lon = 0;
+    float cur_lat = 0, cur_lon = 0;
+    locations_get_active_coords(&cur_lat, &cur_lon, nullptr);
+    if (active_loc != _last_active_loc || cur_lat != _last_lat || cur_lon != _last_lon) {
         _last_active_loc = active_loc;
+        _last_lat = cur_lat;
+        _last_lon = cur_lon;
         _seen.clear();
         _type_track_count = 0;
         _airline_track_count = 0;

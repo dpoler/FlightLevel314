@@ -156,8 +156,11 @@ static void close_overlay() {
     }
 }
 
-static void select_location(int idx) {
-    locations_set_active(idx);
+// Bring the views in line with whatever location is now active: its range
+// presets, Map/Radar centered on it, chip label. Shared by picking a location
+// and by removing the active one (which selects a neighbor -- often at the
+// same index, which the views' own index-based sync wouldn't notice).
+static void apply_active_location() {
     // Switch to this location's own range presets (if any) right away rather
     // than on the next status-bar tick.
     if (range_sync_active_presets()) {
@@ -173,6 +176,11 @@ static void select_location(int idx) {
         radar_view_center_on(lat, lon);
     }
     update_picker_label();
+}
+
+static void select_location(int idx) {
+    locations_set_active(idx);
+    apply_active_location();
     close_overlay();
 }
 
@@ -225,8 +233,10 @@ static void add_row_click_cb(lv_event_t *e) {
 
 static void remove_row_click_cb(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    const bool was_active = (idx == locations_active_index());
     locations_remove(idx);
-    update_picker_label(); // reflect a reset-to-Home immediately if the active airport was removed
+    if (was_active) apply_active_location(); // neighbor became active
+    else update_picker_label();
     build_list_view(); // rebuild panel in place
 }
 
