@@ -807,11 +807,11 @@ static void draw_saved_airports(lv_layer_t *layer) {
         if (in_nearby_cache(loc->icao)) {
             continue; // drawn with full runways by the nearby-cache pass below instead
         }
-        // loc->name, not loc->icao -- icao is empty for a waypoint (its
-        // discriminator from an airport), which previously left the glyph
-        // with a blank label; name defaults to the ICAO for airports, so
-        // this doesn't change their label.
-        draw_airport_glyph(layer, sx, sy, loc->name);
+        // Airports by ICAO (like every other airport glyph); waypoints by
+        // their typed name (icao is empty for a waypoint). Airports added
+        // from the static DB store the full official name cut to 16 chars
+        // ("Denver Internati"), which clipped in the glyph label.
+        draw_airport_glyph(layer, sx, sy, loc->icao[0] ? loc->icao : loc->name);
     }
 
     for (int i = 0; i < nearby_n; i++) {
