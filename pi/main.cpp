@@ -90,6 +90,8 @@ int main() {
     // DSI panel backlight (sysfs). No-op on SDL / HDMI-only.
     backlight_set_percent(g_config.display_brightness_pct);
     locations_init();
+    // Active location's nearby-airport runways, if toggled on but not cached.
+    locations_nearby_ensure(locations_active_index());
 
     // Bind the list so location-switch clears can empty it (see
     // fetcher_request_immediate_fetch in fetcher_stats_linux.cpp).

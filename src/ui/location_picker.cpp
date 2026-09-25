@@ -7,6 +7,7 @@
 #include "view_menu.h"
 #include "map_view.h"
 #include "radar_view.h"
+#include "stats_view.h"
 #include "airports_lookup.h"
 #include "range.h"
 #include "../data/fetcher.h"
@@ -175,7 +176,11 @@ static void apply_active_location() {
         map_view_center_on(lat, lon);
         radar_view_center_on(lat, lon);
     }
+    // Nearby-airport runways: toggle on but nothing cached (Clear caches, a
+    // failed scan) used to stay empty until the eye was toggled off/on.
+    locations_nearby_ensure(locations_active_index());
     update_picker_label();
+    stats_view_update(); // INFO weather shows "Fetching..." now, not in 2 s
 }
 
 static void select_location(int idx) {

@@ -722,6 +722,17 @@ int locations_nearby_count(int idx) {
 }
 
 void locations_nearby_set_enabled(int idx, bool on) {
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (idx < 0 || idx >= _count) return;
+        if (_locations[idx].nearby_enabled == on) return;
+        _locations[idx].nearby_enabled = on;
+        save_all_locked();
+    }
+    if (on) locations_nearby_ensure(idx);
+}
+
+void locations_nearby_ensure(int idx) {
     std::string owner_name;
     float owner_lat = 0, owner_lon = 0;
     char owner_icao[LOC_ICAO_LEN] = {};
@@ -731,11 +742,11 @@ void locations_nearby_set_enabled(int idx, bool on) {
     {
         std::lock_guard<std::mutex> lock(_mutex);
         if (idx < 0 || idx >= _count) return;
-        if (_locations[idx].nearby_enabled == on) return;
-        _locations[idx].nearby_enabled = on;
-        save_all_locked();
-
-        if (on && _locations[idx].nearby_count == 0 && !_nearby_scan_active) {
+        // Every scanned airport is an AirportDB lookup -- without a usable
+        // token each would just fail.
+        const bool airportdb_ok = g_config.airportdb_enabled && g_config.airportdb_token[0];
+        if (_locations[idx].nearby_enabled && _locations[idx].nearby_count == 0
+            && !_nearby_scan_active && airportdb_ok) {
             owner_name = _locations[idx].name;
             owner_lat = _locations[idx].lat;
             owner_lon = _locations[idx].lon;
@@ -822,9 +833,7 @@ void locations_nearby_cache_clear() {
     }
 
     if (restart_idx < 0) return;
-    // off→on reuses the existing fetch path (set_enabled no-ops if already on).
-    locations_nearby_set_enabled(restart_idx, false);
-    locations_nearby_set_enabled(restart_idx, true);
+    locations_nearby_ensure(restart_idx);
 }
 
 void locations_factory_reset() {

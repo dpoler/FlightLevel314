@@ -161,6 +161,10 @@ bool locations_get_active_coords(float *lat, float *lon, int *elevation_ft);
 bool locations_nearby_enabled(int idx);
 int locations_nearby_count(int idx);                  // cheap: persisted header only, safe for any row (e.g. the picker's "+N nearby" badge)
 void locations_nearby_set_enabled(int idx, bool on);   // turning on triggers a fetch if nothing's cached yet; turning off just stops drawing it (cached data stays on disk)
+// Start a nearby-airport scan if idx's toggle is on but its cache is empty
+// (e.g. after Clear caches, or a scan that failed) -- call when a location
+// becomes active. No-op if a scan is running or AirportDB isn't usable.
+void locations_nearby_ensure(int idx);
 
 // Currently active location's cached nearby-airport list (lazily (re)loaded
 // from NVS whenever the active location changes). Empty if the toggle is off
