@@ -14,6 +14,8 @@
 #include "../platform/platform.h"
 #include <cstring>
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <cstdio> // snprintf -- not reliably transitive under libstdc++ (Pi build)
 
 // Wide enough for "KJFK  John F. Kennedy International" + icon cluster.
@@ -830,11 +832,59 @@ static int read_range_fields(int out[4]) {
 
 static const char *RANGE_FIELDS_ERR = "Range: fill all four (1-500) or leave all blank";
 
+// Whole-field number parse: surrounding spaces OK, anything else (empty,
+// "12abc", nan/inf) fails. atof() used to turn a cleared or garbled field
+// into 0 -- silently moving the waypoint to 0,0.
+static bool parse_number(const char *text, double *out) {
+    while (*text == ' ') text++;
+    if (!*text) return false;
+    char *end = nullptr;
+    double v = strtod(text, &end);
+    while (*end == ' ') end++;
+    if (*end || !std::isfinite(v)) return false;
+    *out = v;
+    return true;
+}
+
+// Reads the waypoint lat/lon/elevation fields (_wp_*_ta). Empty elevation is
+// 0. On failure returns false with a message for _wp_status_lbl.
+static bool read_waypoint_fields(float *lat, float *lon, int *elev, const char **err) {
+    double la = 0, lo = 0, el = 0;
+    if (!parse_number(lv_textarea_get_text(_wp_lat_ta), &la) || la < -90.0 || la > 90.0) {
+        *err = "Latitude must be a number from -90 to 90";
+        return false;
+    }
+    if (!parse_number(lv_textarea_get_text(_wp_lon_ta), &lo) || lo < -180.0 || lo > 180.0) {
+        *err = "Longitude must be a number from -180 to 180";
+        return false;
+    }
+    const char *et = lv_textarea_get_text(_wp_elev_ta);
+    const char *p = et;
+    while (*p == ' ') p++;
+    if (*p && (!parse_number(et, &el) || el < -1500.0 || el > 30000.0)) {
+        *err = "Elevation must be feet, -1500 to 30000";
+        return false;
+    }
+    *lat = (float)la;
+    *lon = (float)lo;
+    *elev = (int)lround(el);
+    return true;
+}
+
+static void show_wp_error(const char *msg) {
+    lv_label_set_text(_wp_status_lbl, msg);
+    lv_obj_set_style_text_color(_wp_status_lbl, COLOR_ERR, 0);
+}
+
 static void waypoint_save_click_cb(lv_event_t *e) {
     const char *name = lv_textarea_get_text(_wp_name_ta);
-    float lat = atof(lv_textarea_get_text(_wp_lat_ta));
-    float lon = atof(lv_textarea_get_text(_wp_lon_ta));
-    int elev = atoi(lv_textarea_get_text(_wp_elev_ta));
+    float lat = 0, lon = 0;
+    int elev = 0;
+    const char *field_err = nullptr;
+    if (!read_waypoint_fields(&lat, &lon, &elev, &field_err)) {
+        show_wp_error(field_err);
+        return;
+    }
     int presets[4];
     const int rng = read_range_fields(presets);
     if (rng < 0) {
@@ -1082,9 +1132,11 @@ static void edit_save_click_cb(lv_event_t *e) {
     float lat = loc->lat, lon = loc->lon;
     int elev = loc->elevation_ft;
     if (!is_airport) {
-        lat = atof(lv_textarea_get_text(_wp_lat_ta));
-        lon = atof(lv_textarea_get_text(_wp_lon_ta));
-        elev = atoi(lv_textarea_get_text(_wp_elev_ta));
+        const char *field_err = nullptr;
+        if (!read_waypoint_fields(&lat, &lon, &elev, &field_err)) {
+            show_wp_error(field_err);
+            return;
+        }
     }
     const bool moved = (lat != loc->lat || lon != loc->lon);
 
