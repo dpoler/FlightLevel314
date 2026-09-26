@@ -18,7 +18,11 @@
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
+#include <string>
+#include <dirent.h>
+#include <sys/stat.h>
 
 static std::mutex _mutex;
 static FetcherStats _stats = {};
@@ -62,13 +66,34 @@ void pi_wait_for_next_fetch(int seconds) {
     _fetch_wake = false;
 }
 
+// Link state from sysfs (the OS manages networking; this only observes it).
+// Physical interfaces only -- they have a /device link; loopback, docker,
+// veth, VPN tunnels don't. Ethernet wins if both are up. Used to be a
+// constant NET_WIFI, so the status-bar icon was green even with no network.
 NetType fetcher_connection_type() {
-    // The Pi's networking is managed by the OS (NetworkManager/systemd),
-    // not this app -- there's no WiFi/Ethernet toggle to track the way
-    // jc1060's fetcher.cpp does. Reporting NET_WIFI unconditionally is a
-    // reasonable stand-in for map_view.cpp's "WiFi..."/"Ethernet..."
-    // overlay text until real network-status detection is worth adding.
-    return NET_WIFI;
+    DIR *d = opendir("/sys/class/net");
+    if (!d) return NET_WIFI; // no sysfs (SDL build on macOS): unknown, assume up
+    bool wifi = false, eth = false;
+    while (dirent *ent = readdir(d)) {
+        const char *name = ent->d_name;
+        if (name[0] == '.' || strcmp(name, "lo") == 0) continue;
+        const std::string base = std::string("/sys/class/net/") + name;
+        struct stat st {};
+        if (stat((base + "/device").c_str(), &st) != 0) continue; // virtual
+        char state[16] = "";
+        if (FILE *f = fopen((base + "/operstate").c_str(), "r")) {
+            if (!fgets(state, sizeof(state), f)) state[0] = '\0';
+            fclose(f);
+        }
+        if (strncmp(state, "up", 2) != 0) continue;
+        if (stat((base + "/wireless").c_str(), &st) == 0 ||
+            stat((base + "/phy80211").c_str(), &st) == 0)
+            wifi = true;
+        else
+            eth = true;
+    }
+    closedir(d);
+    return eth ? NET_ETHERNET : (wifi ? NET_WIFI : NET_NONE);
 }
 
 bool fetcher_wifi_connected() {

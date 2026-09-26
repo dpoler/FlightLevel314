@@ -192,14 +192,17 @@ void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircra
         lv_label_set_text(range_lbl, range_label());
     }
 
-    // Network icon — show type and color by status
+    // Network icon: type from the link (sysfs); color from traffic fetches --
+    // green = last fetch OK, amber = link up but fetches failing (no
+    // internet / feed down), red "---" = no link.
     NetType net = fetcher_connection_type();
+    const lv_color_t link_color = wifi_connected ? STATUS_ACCENT_COLOR : lv_color_hex(0xffaa44);
     if (net == NET_ETHERNET) {
         lv_label_set_text(wifi_icon, "ETH");
-        lv_obj_set_style_text_color(wifi_icon, STATUS_ACCENT_COLOR, 0);
+        lv_obj_set_style_text_color(wifi_icon, link_color, 0);
     } else if (net == NET_WIFI) {
         lv_label_set_text(wifi_icon, LV_SYMBOL_WIFI);
-        lv_obj_set_style_text_color(wifi_icon, STATUS_ACCENT_COLOR, 0);
+        lv_obj_set_style_text_color(wifi_icon, link_color, 0);
     } else {
         lv_label_set_text(wifi_icon, "---");
         lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0xcc3333), 0);
@@ -250,7 +253,7 @@ void status_bar_update(bool wifi_connected, int aircraft_count, int total_aircra
         lv_label_set_text(update_label, "No data");
     } else {
         uint32_t ago = (millis() - last_update_ms) / 1000;
-        lv_label_set_text_fmt(update_label, "%lus", ago);
+        lv_label_set_text_fmt(update_label, "%lus", (unsigned long)ago);
     }
 }
 void status_bar_set_gear_callback(lv_event_cb_t cb) {
