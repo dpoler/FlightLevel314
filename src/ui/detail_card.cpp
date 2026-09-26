@@ -38,7 +38,7 @@ static lv_obj_t *_photo_credit_label = nullptr;
 #if !defined(ARDUINO)
 static lv_obj_t *_photo_img = nullptr;
 static lv_image_dsc_t _photo_dsc;
-static char _photo_shown_icao[7] = {};
+static char _photo_shown_icao[ICAO_HEX_LEN] = {};
 // Card-owned copy of the displayed photo's pixels. The enrichment cache can
 // evict or clear (Settings -> Clear caches) its own buffer at any time, and
 // the card keeps drawing under the Settings backdrop -- so never point the

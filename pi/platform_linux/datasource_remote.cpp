@@ -66,7 +66,7 @@ int find_aircraft(AircraftList *list, const char *hex) {
 // across multiple fetch cycles doesn't re-toast every ~20s. Emergency
 // alerts deliberately have no dedup, matching fetcher.cpp.
 #define ALERTED_MAX 64
-char _alerted_hexes[ALERTED_MAX][7];
+char _alerted_hexes[ALERTED_MAX][ICAO_HEX_LEN];
 int _alerted_count = 0;
 int _alerted_write = 0;
 
@@ -77,7 +77,7 @@ bool already_alerted(const char *hex) {
 }
 
 void mark_alerted(const char *hex) {
-    strlcpy(_alerted_hexes[_alerted_write], hex, 7);
+    strlcpy(_alerted_hexes[_alerted_write], hex, ICAO_HEX_LEN);
     _alerted_write = (_alerted_write + 1) % ALERTED_MAX;
     if (_alerted_count < ALERTED_MAX) _alerted_count++;
 }
@@ -179,7 +179,7 @@ bool RemoteApiDataSource::fetch(AircraftList *list) {
         float olat = obj["lat"] | 0.0f;
         float olon = obj["lon"] | 0.0f;
         if (olat == 0.0f && olon == 0.0f) continue;
-        char hex[7];
+        char hex[ICAO_HEX_LEN];
         strlcpy(hex, obj["hex"] | "", sizeof(hex));
         char callsign[9];
         strlcpy(callsign, obj["flight"] | "", sizeof(callsign));

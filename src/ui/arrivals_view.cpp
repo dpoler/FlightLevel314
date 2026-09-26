@@ -117,7 +117,7 @@ static Column columns[] = {
 
 struct BoardRow {
     lv_obj_t *col_labels[NUM_COLS];
-    char icao_hex[7];
+    char icao_hex[ICAO_HEX_LEN];
     bool active;
 };
 

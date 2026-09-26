@@ -18,7 +18,7 @@ static lv_obj_t *_toast_icon = nullptr;
 static lv_timer_t *_dismiss_timer = nullptr;
 
 // ICAO hex of the currently displayed toast (for tap-to-detail lookup)
-static char _current_hex[7] = {};
+static char _current_hex[ICAO_HEX_LEN] = {};
 static bool _toast_active = false; // true while a toast is showing/waiting to auto-dismiss
 
 #define TOAST_W 500
@@ -30,7 +30,7 @@ struct PendingAlert {
     AlertType type;
     char title[16];
     char detail[48];
-    char icao_hex[7];
+    char icao_hex[ICAO_HEX_LEN];
 };
 
 #define ALERT_QUEUE_SIZE 8

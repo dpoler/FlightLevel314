@@ -62,7 +62,7 @@ static uint32_t _trails_cleared_at = 0;
 #define RUNWAY_LBL_H_BIG          18
 
 // Tracked aircraft — bold red circle until another is selected or it leaves
-static char _tracked_hex[7] = {};
+static char _tracked_hex[ICAO_HEX_LEN] = {};
 
 #define CANVAS_W LCD_H_RES
 #define CANVAS_H (LCD_V_RES - STATUS_BAR_HEIGHT)

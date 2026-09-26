@@ -16,8 +16,13 @@ struct TrailPoint {
     uint32_t timestamp;
 };
 
+// ICAO 24-bit address as hex, plus room for the "~" prefix aggregators put
+// on non-ICAO (TIS-B / anonymous) addresses, e.g. "~2c0b44", plus NUL. Was 7,
+// which truncated "~2c0b44" to "~2c0b4" (distinct targets could merge).
+#define ICAO_HEX_LEN 8
+
 struct Aircraft {
-    char icao_hex[7];       // e.g. "A0B1C2"
+    char icao_hex[ICAO_HEX_LEN]; // e.g. "A0B1C2", or "~2c0b44" for TIS-B
     char callsign[9];       // e.g. "UAL1234"
     char registration[9];   // e.g. "N12345"
     char type_code[5];      // e.g. "B738"

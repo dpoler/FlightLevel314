@@ -47,7 +47,7 @@ namespace {
 
 std::mutex _mutex;
 AircraftEnrichment _cache[MAX_CACHE];
-char _cache_keys[MAX_CACHE][7];
+char _cache_keys[MAX_CACHE][ICAO_HEX_LEN];
 int _cache_count = 0;
 bool _busy = false;
 
@@ -155,7 +155,7 @@ AircraftEnrichment *get_or_create_cache_entry(const char *icao_hex) {
     int idx = _cache_count < MAX_CACHE ? _cache_count++ : 0;
     free_photo(&_cache[idx]);
     memset(&_cache[idx], 0, sizeof(AircraftEnrichment));
-    strlcpy(_cache_keys[idx], icao_hex, 7);
+    strlcpy(_cache_keys[idx], icao_hex, ICAO_HEX_LEN);
     return &_cache[idx];
 }
 
@@ -590,7 +590,9 @@ bool fetch_adbox_route(int provider, const char *key,
         if (r < 0) return false;
     }
 
-    std::string hex = alnum_upper(icao_hex);
+    // Skip non-ICAO "~" addresses: stripped to hex they'd match a real,
+    // unrelated airframe.
+    std::string hex = (icao_hex && icao_hex[0] != '~') ? alnum_upper(icao_hex) : "";
     if (!hex.empty()) {
         int r = try_search("Icao24", hex.c_str());
         if (r == 1) return true;
@@ -784,8 +786,13 @@ void run_enrichment(std::string icao, std::string registration, std::string call
         entry->loading = true;
     }
 
+    // "~xxxxxx" = non-ICAO (TIS-B / anonymous) address: not a real airframe
+    // hex, so hex-keyed lookups would return some *other* aircraft's details
+    // and photo. Only registration/callsign lookups are meaningful for them.
+    const bool real_hex = !icao.empty() && icao[0] != '~';
+
     // --- Stage 1: adsbdb aircraft details ---
-    {
+    if (real_hex) {
         char url[128];
         snprintf(url, sizeof(url), "https://api.adsbdb.com/v0/aircraft/%s", icao.c_str());
         JsonDocument doc;
@@ -810,7 +817,7 @@ void run_enrichment(std::string icao, std::string registration, std::string call
         char url[160];
         snprintf(url, sizeof(url), "https://api.planespotters.net/pub/photos/hex/%s", icao.c_str());
         JsonDocument doc;
-        bool got = http_get_json(url, doc);
+        bool got = real_hex && http_get_json(url, doc);
         JsonArrayConst photos = got ? doc["photos"].as<JsonArrayConst>() : JsonArrayConst{};
         if ((!got || photos.size() == 0) && !registration.empty()) {
             // Fallback: some airframes are keyed by registration only.
