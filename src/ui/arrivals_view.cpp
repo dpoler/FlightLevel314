@@ -125,11 +125,14 @@ static BoardRow _rows[MAX_ROWS];
 static lv_obj_t *_header_labels[NUM_COLS];
 static lv_obj_t *_title_label = nullptr;
 
+// Title prefix: airport ICAO, or the waypoint's typed name (waypoints have no
+// ICAO -- this used to print "? TRAFFIC" for them).
 static const char *active_location_label() {
     int idx = locations_active_index();
-    if (idx == -1) return "HOME";
+    if (idx == -1) return "NO LOCATION";
     const Location *loc = locations_get(idx);
-    return (loc && loc->icao[0]) ? loc->icao : "?";
+    if (!loc) return "NO LOCATION";
+    return loc->icao[0] ? loc->icao : loc->name;
 }
 
 static const char *status_from_vert_rate(int16_t vr, bool on_ground) {
