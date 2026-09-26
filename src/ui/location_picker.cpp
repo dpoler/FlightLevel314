@@ -237,6 +237,10 @@ void location_picker_close() {
     close_overlay();
 }
 
+void location_picker_refresh_label() {
+    if (_picker_lbl) update_picker_label();
+}
+
 static void add_row_click_cb(lv_event_t *e) {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
     select_location(idx);

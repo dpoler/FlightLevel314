@@ -8,3 +8,7 @@ void location_picker_init(lv_obj_t *screen);
 // Closes the picker's popover if open -- called by view_menu.cpp so only
 // one status-bar popover can be open at a time.
 void location_picker_close();
+
+// Re-read the active location into the status-bar chip (name + width). For
+// changes made outside the picker, e.g. Settings -> Reset to defaults.
+void location_picker_refresh_label();

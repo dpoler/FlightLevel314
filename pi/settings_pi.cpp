@@ -691,6 +691,7 @@ static void factory_reset_cb(lv_event_t *e) {
     if (_on_change) _on_change(&g_config);
 
     location_picker_close();
+    location_picker_refresh_label(); // chip kept the old location's name
     map_view_on_show();
     platform_log_info("Settings: ADS-B factory defaults restored (config + locations + caches)\n");
     settings_hide();
