@@ -69,6 +69,8 @@ See §7.1. Highest-signal open items:
 - Follow Mode (design notes captured 2026-08-09; hold — Dan thinking)
 - VIEW toggle to hide runway lines + labels (clearer zoomed-in satellite)
 - Test suite (host unit tests for pure logic + CI compile check)
+- Adapt UI to screen sizes / resolutions (runtime layout; see §7.1)
+- Android port, Fire HD 10 first, any device (after the above; §7.1)
 - Code review 2026-09-26: remaining findings (see §7.1)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
@@ -718,6 +720,52 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   form and are no longer renamable; location chip sizes to the name
   (60-290px, "..." beyond; ~98% of static-DB names fit); runways with one
   end off-screen now draw and label the visible end.
+
+- **Adapt to screen sizes / resolutions (Dan, 2026-09-26)**: a standing
+  requirement -- Pi now, Android (any device; Fire HD 10 first) later.
+  Today resolution is compile-time (`LCD_H_RES`/`LCD_V_RES` = 1280x800 in
+  pi/CMakeLists.txt); Map/Radar/detail card carry `#if` 1280x800 vs legacy
+  1024x600 values; ~70 pixel `#define`s plus inline literals (heaviest:
+  location_picker, settings_pi, detail_card); fixed Montserrat 10-28, no
+  scaling. A DRM panel whose mode isn't 1280x800 is laid out wrong today.
+  Plan (staged, Pi keeps working at each step):
+  1. Runtime resolution from `lv_display_get_*_resolution` (1280x800 = the
+     reference design) + SDL `--size WxH` flag to test sizes on the Mac.
+  2. Map/Radar geometry (bullseye centre/radius, legend) derived from the
+     space between the bars instead of per-resolution defines.
+  3. Status bar, menus, Settings, location picker, List -> LVGL flex/grid
+     + `lv_pct`.
+  4. Detail card layout.
+  5. Density scale: `lv_display_set_dpi` (DRM mm size / Android dpi) +
+     `lv_dpx()`, fonts picked from a compiled-in set -- folds in the
+     "themes / font size" item (user text size = multiplier on it).
+  Test matrix: 1280x800 (Pi), 1920x1200 (Fire HD 10 -- 1.5x, high DPI),
+  plus other aspect ratios since Android must run anywhere: 4:3 tablets
+  (1024x768 / 2048x1536), 16:9, and ~20:9 phones in landscape.
+  Landscape only. ~4-5 sessions.
+
+- **Android port (Dan, 2026-09-26) -- future, not started**: sideloaded
+  APK that runs on any Android device, Fire OS or regular. Primary test
+  device: **Fire HD 10 9th gen (M2V3R5)** -- 10.1" 1920x1200 (~224 ppi),
+  MT8183, 2 GB, Fire OS 7 (Android 9). Fire HD 8 (SX034QT, Android 5.1)
+  dropped. ESP32 backport discussed and set aside. Needs the resolution
+  item above first. Shape:
+  - SDL2's android-project template + Gradle/CMake NDK build; reuse the
+    SDL display/input backend (touch arrives as mouse events).
+  - ABIs armeabi-v7a (Fire OS userspace is 32-bit) + arm64-v8a; minSdk
+    ~24, recent targetSdk (newer Android refuses to install old-target
+    APKs); 16 KB page-aligned .so (NDK r28+) for Android 15+ devices.
+  - HTTPS: keep libcurl, with its own TLS (via vcpkg/prebuilt) + bundled
+    CA file -- one code path shared with the Pi, same on every device.
+  - Platform layer: android versions of http/storage/fetcher_stats/platform
+    (app internal storage, smaller basemap cache cap, link state via
+    ConnectivityManager/JNI or fetch health only); backlight + OTA stubbed.
+  - Lifecycle (the big new work): pause fetch/draw threads on pause,
+    surface loss/recreate, save state (process can be killed), Doze;
+    immersive full screen, keep-screen-on, landscape lock, display
+    cutouts / gesture-nav insets on phones. Kiosk = screen pinning or
+    set as home app.
+  Rough size: 2-4 days + ~1 for lifecycle, after the resolution work.
 
 - **Test suite (Dan, 2026-09-25)**: no automated tests today (CI only
   builds SDL on tags). Candidates, easiest first: host-side unit tests for

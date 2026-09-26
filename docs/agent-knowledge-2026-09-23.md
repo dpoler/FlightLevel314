@@ -247,6 +247,8 @@ Highest-signal leftovers (verify §7.1 in project-knowledge before acting):
 - VIEW toggle to hide runway lines + labels (zoomed satellite); open
   question: per location, or per location + per view?
 - Test suite (host unit tests for pure logic + CI compile check)
+- Adapt UI to screen sizes / resolutions (plan in project-knowledge §7.1)
+- Android port -- Fire HD 10 first, any Android device (after the above)
 - Code review 2026-09-26: remaining findings listed in project-knowledge §7.1
 - Optional fresher README LIST/INFO screenshots
 - QoL themes / font size
