@@ -767,7 +767,11 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   Still open, roughly by priority:
   - OTA: no checksum/signature; offers any differing tag (can downgrade);
     no armv7 asset. (Dan hasn't used OTA yet -- revisit when releasing.)
-  - Lower: /dev/dri/card0 hardcoded. (Fixed 2026-09-26: TIS-B "~hex"
+  - ~~Lower: /dev/dri/card0 hardcoded~~ done 2026-09-26: display_drm.cpp
+    picks the card from /sys/class/drm (connected DSI first, then any
+    connected, then card0/card1), tries each until LVGL accepts one, exits
+    for systemd restart if none; FLIGHTLEVEL314_DRM_DEVICE overrides.
+    (Fixed 2026-09-26: TIS-B "~hex"
     kept whole + not looked up as a real airframe; List title shows a
     waypoint's name; network icon from sysfs link + fetch health; chip
     refreshed after factory reset.)

@@ -18,6 +18,8 @@ Environment=HOME=/opt/flightlevel314
 # DRM (/dev/dri/*) and touch input (/dev/input/*) access -- see
 # README.md for the udev/group setup this expects.
 SupplementaryGroups=video input render
+# Display card is auto-detected (connected DSI panel first). To force one:
+#Environment=FLIGHTLEVEL314_DRM_DEVICE=/dev/dri/card1
 
 [Install]
 WantedBy=multi-user.target

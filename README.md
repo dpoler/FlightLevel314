@@ -78,6 +78,12 @@ cmake --build build -j4
 Add your user to the `video`, `render`, and `input` groups if DRM or touch
 fail to open.
 
+The display card is picked automatically (a connected DSI panel first, then
+any connected output); the log shows `DRM: using /dev/dri/cardN ...`. To
+force one, set `FLIGHTLEVEL314_DRM_DEVICE=/dev/dri/card1` (and optionally
+`FLIGHTLEVEL314_DRM_CONNECTOR=<id>`) in the environment or the service's
+`Environment=` lines.
+
 DSI panel brightness (Settings → DEVICE) writes
 `/sys/class/backlight/*/brightness`. If the slider does nothing, add a udev
 rule so the service user can write it:
