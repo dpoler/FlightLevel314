@@ -71,6 +71,8 @@ See §7.1. Highest-signal open items:
 - Test suite (host unit tests for pure logic + CI compile check)
 - Adapt UI to screen sizes / resolutions (runtime layout; see §7.1)
 - Android port, Fire HD 10 first, any device (after the above; §7.1)
+  - prerequisites: API keys from another device (LAN page + QR, not the
+    on-screen keyboard); density-aware basemap tiles
 - Code review 2026-09-26: remaining findings (see §7.1)
 - Optional: replace README gallery shots with fresh LIST/INFO + live traffic
 - Pi boot splash — mostly done on-device (see §7.1); optional polish left
@@ -766,6 +768,38 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
     cutouts / gesture-nav insets on phones. Kiosk = screen pinning or
     set as home app.
   Rough size: 2-4 days + ~1 for lifecycle, after the resolution work.
+  Prerequisites besides the resolution item: the two entries below.
+
+- **API keys from another device (Dan, 2026-09-26) -- Android prerequisite**:
+  keys are only settable via tools/set_api_keys.py over SSH today (Settings
+  says so; storage_save_config deliberately never writes keys). Android has
+  no SSH. **Not an on-screen keyboard** -- keys can be hundreds of bytes;
+  nobody types that on the device (Dan). Proposed (scope with Dan):
+  - Primary: "Set keys from phone/computer" in Settings -> Services starts
+    a tiny LAN web server in the app (header-only lib, e.g. cpp-httplib)
+    and shows a QR code (enable `LV_USE_QRCODE` in pi/lv_conf.h) + URL
+    with a one-time token, e.g. http://192.168.1.x:8314/?t=... . Scan with
+    a phone or open on a computer, paste keys into a form; the app
+    verifies (existing ADB / AirportDB checks) and saves. Server runs only
+    while that screen is open, closes after save or a timeout. Same code on
+    Pi and Android, and Pi users no longer need SSH for keys.
+  - Caveat: plain HTTP on the LAN (keys cross the home network
+    unencrypted); the token + short window limit exposure. Self-signed
+    HTTPS would add browser warnings -- not worth it for a home LAN.
+  - Android fallback: import a keys JSON (adb push into the app's files
+    dir, or the system file picker). Pi keeps set_api_keys.py.
+  - Storage: app-entered keys must survive saves while keys written by
+    set_api_keys.py still win -- the save path becomes the one key writer
+    (with a set_api_keys.py-compatible format), not "always take disk".
+
+- **Basemap tiles on high-density screens -- Android prerequisite**:
+  osm_zoom_for_radius() (pi/basemap.cpp) picks the zoom so a tile pixel ~=
+  a screen pixel, so text baked into tiles is physically tiny on dense
+  screens (Fire HD 10 ~224 ppi vs the Pi's ~150) -- same issue as the
+  small satellite labels, for every style. Fix: use @2x tiles where the
+  provider has them (CARTO), else one zoom coarser + 2x upscale, driven by
+  the density scale from the resolution work. App-drawn labels (tags,
+  runways) scale with lv_dpx() instead.
 
 - **Test suite (Dan, 2026-09-25)**: no automated tests today (CI only
   builds SDL on tags). Candidates, easiest first: host-side unit tests for
