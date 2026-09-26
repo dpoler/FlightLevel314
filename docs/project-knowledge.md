@@ -764,7 +764,12 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   basemap tiles service `arcgis/imagery/labels` (512px, level z-1), fetched
   into an overlay and composited after the blur; label failures show
   imagery but skip caching. (ibasemaps-api Reference layer = 404 with a
-  real key, confirmed 2026-09-26.) Original note: add "Satellite (labels)"
+  real key, confirmed 2026-09-26.) Known: labels render small on the
+  10" panel (Esri's imagery-label fonts are ~9-11 px native, and the
+  imagery zoom runs up to ~1.4x denser than the screen). If revisited:
+  fetch labels one level coarser and upscale 2x (keeps them aligned; only
+  power-of-two scales are possible). Dan: leave as-is for now.
+  Original note: add "Satellite (labels)"
   next to plain Satellite, like Dark / Dark (no labels). Esri publishes a
   transparent labels-only overlay for World Imagery:
   - Basemap layer service `.../Reference/World_Boundaries_and_Places/
