@@ -755,9 +755,10 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   Still open, roughly by priority:
   - OTA: no checksum/signature; offers any differing tag (can downgrade);
     no armv7 asset. (Dan hasn't used OTA yet -- revisit when releasing.)
-  - Lower: TIS-B "~hex" truncated; List title "? TRAFFIC" for waypoints;
-    Wi-Fi icon always green; chip label stale after factory reset;
-    /dev/dri/card0 hardcoded.
+  - Lower: /dev/dri/card0 hardcoded. (Fixed 2026-09-26: TIS-B "~hex"
+    kept whole + not looked up as a real airframe; List title shows a
+    waypoint's name; network icon from sysfs link + fetch health; chip
+    refreshed after factory reset.)
 
 - ~~**Satellite with labels (Dan, 2026-09-26)**~~ **done 2026-09-26** --
   style 7 "Satellite (labels)": imagery as style 6 + labels from the static
