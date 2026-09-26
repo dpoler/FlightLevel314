@@ -51,6 +51,8 @@ struct Aircraft {
     float nav_qnh;          // altimeter setting hPa (0 = n/a)
     uint32_t last_seen;     // millis() timestamp
     uint32_t stale_since;   // 0 = fresh, else millis() when first went stale
+    // Keep these two last: datasource_remote.cpp's merge copies every
+    // member before `trail` in one memcpy.
     TrailPoint trail[TRAIL_LENGTH];
     uint8_t trail_count;
 

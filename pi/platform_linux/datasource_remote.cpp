@@ -23,6 +23,7 @@
 #include "../../src/ui/alerts.h"
 #include <ArduinoJson.h>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -56,12 +57,6 @@ bool check_emergency(uint16_t squawk) {
     return squawk == 7500 || squawk == 7600 || squawk == 7700;
 }
 
-int find_aircraft(AircraftList *list, const char *hex) {
-    for (int i = 0; i < list->count; i++)
-        if (strcmp(list->aircraft[i].icao_hex, hex) == 0) return i;
-    return -1;
-}
-
 // Military alert dedup -- circular buffer of already-alerted ICAO hexes,
 // same as fetcher.cpp's, so the same military aircraft sitting in view
 // across multiple fetch cycles doesn't re-toast every ~20s. Emergency
@@ -90,7 +85,9 @@ void mark_alerted(const char *hex) {
 // aircraft still in the list, so entries for departed aircraft drop out.
 std::unordered_map<std::string, uint16_t> _emg_alerted;
 
-void apply_json_entry(Aircraft &a, JsonObject obj, bool is_new) {
+// Parse one aircraft into a scratch record -- done before taking the list
+// lock (see fetch()). Trail untouched; merge_entry() appends to it.
+void parse_json_entry(Aircraft &a, JsonObject obj) {
     strlcpy(a.icao_hex, obj["hex"] | "", sizeof(a.icao_hex));
     strlcpy(a.callsign, obj["flight"] | "", sizeof(a.callsign));
     for (int i = (int)strlen(a.callsign) - 1; i >= 0 && a.callsign[i] == ' '; i--)
@@ -120,6 +117,16 @@ void apply_json_entry(Aircraft &a, JsonObject obj, bool is_new) {
     a.is_watched = false;
     a.last_seen = platform_millis();
     a.stale_since = 0;
+}
+
+// Copy a parsed record into the list slot and extend its trail. Everything
+// before `trail` is live data from this fetch; trail/trail_count are the
+// history (aircraft.h keeps them last for this).
+void merge_entry(Aircraft &a, const Aircraft &p, bool is_new) {
+    static_assert(offsetof(Aircraft, trail) > offsetof(Aircraft, stale_since) &&
+                  offsetof(Aircraft, trail_count) > offsetof(Aircraft, trail),
+                  "trail/trail_count must stay the last Aircraft members");
+    memcpy(&a, &p, offsetof(Aircraft, trail));
 
     if (is_new) a.trail_count = 0;
     if (a.lat != 0.0f || a.lon != 0.0f) {
@@ -170,7 +177,27 @@ bool RemoteApiDataSource::fetch(AircraftList *list) {
         return false;
     }
 
+    // Parse outside the lock. Parsing up to MAX_AIRCRAFT entries (plus a
+    // linear find per entry) under it can take tens of ms on a Pi -- longer than
+    // Map/Radar's draw waits for the lock, so a frame now and then drew no
+    // aircraft or trails until the next redraw a second later.
     JsonArray ac = doc["ac"].as<JsonArray>();
+    std::vector<Aircraft> parsed;
+    parsed.reserve(ac.size());
+    for (JsonObject obj : ac) {
+        float olat = obj["lat"] | 0.0f;
+        float olon = obj["lon"] | 0.0f;
+        if (olat == 0.0f && olon == 0.0f) continue;
+        char hex[ICAO_HEX_LEN];
+        strlcpy(hex, obj["hex"] | "", sizeof(hex));
+        char callsign[9];
+        strlcpy(callsign, obj["flight"] | "", sizeof(callsign));
+        if (is_test_signal(hex, callsign)) continue;
+        parsed.emplace_back();
+        parsed.back().clear();
+        parse_json_entry(parsed.back(), obj);
+    }
+
     if (!list->lock(1000)) return false;
 
     // Location switched (or waypoint moved) while this request was in
@@ -190,24 +217,23 @@ bool RemoteApiDataSource::fetch(AircraftList *list) {
     uint32_t now = platform_millis();
     std::vector<bool> seen(MAX_AIRCRAFT, false);
 
-    for (JsonObject obj : ac) {
-        float olat = obj["lat"] | 0.0f;
-        float olon = obj["lon"] | 0.0f;
-        if (olat == 0.0f && olon == 0.0f) continue;
-        char hex[ICAO_HEX_LEN];
-        strlcpy(hex, obj["hex"] | "", sizeof(hex));
-        char callsign[9];
-        strlcpy(callsign, obj["flight"] | "", sizeof(callsign));
-        if (is_test_signal(hex, callsign)) continue;
+    std::unordered_map<std::string, int> index;
+    index.reserve((size_t)list->count + parsed.size());
+    for (int i = 0; i < list->count; i++) index.emplace(list->aircraft[i].icao_hex, i);
 
-        int idx = find_aircraft(list, hex);
-        bool is_new = (idx < 0);
-        if (idx < 0) {
+    for (const Aircraft &p : parsed) {
+        auto it = index.find(p.icao_hex);
+        const bool is_new = (it == index.end());
+        int idx;
+        if (is_new) {
             if (list->count >= MAX_AIRCRAFT) continue;
             idx = list->count++;
             list->aircraft[idx].clear();
+            index.emplace(p.icao_hex, idx); // a repeated hex merges into this slot
+        } else {
+            idx = it->second;
         }
-        apply_json_entry(list->aircraft[idx], obj, is_new);
+        merge_entry(list->aircraft[idx], p, is_new);
         seen[idx] = true;
     }
 

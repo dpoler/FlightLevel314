@@ -861,7 +861,10 @@ static void draw_static_airport_glyphs(lv_layer_t *layer) {
 
 
 static void draw_aircraft(lv_layer_t *layer) {
-    if (!_list->lock(pdMS_TO_TICKS(5))) return; // short timeout: skip frame if data locked
+    // 50ms like the status bar's count: a missed lock skips this frame's
+    // aircraft and trails, and nothing redraws for ~1s -- the old 5ms made
+    // them blink out whenever a fetch merge was in progress.
+    if (!_list->lock(pdMS_TO_TICKS(50))) return;
 
     uint32_t now = millis();
     for (int i = 0; i < _list->count; i++) {
