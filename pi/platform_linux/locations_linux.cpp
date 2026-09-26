@@ -74,6 +74,12 @@ bool _verify_result_ok = false;
 char _verify_result_err[48] = {};
 
 bool _nearby_scan_active = false; // best-effort: skip a second concurrent scan request
+// Set when a scan tried airports and every AirportDB lookup failed (bad
+// token, rate limit, offline). A location with nothing cached rescans on
+// each switch, so without this every switch re-issued all those lookups.
+// Guarded by _mutex; 0 = no backoff.
+constexpr uint32_t NEARBY_RETRY_MS = 10u * 60u * 1000u;
+uint32_t _nearby_retry_at_ms = 0;
 
 std::string config_dir() {
     const char *xdg = getenv("XDG_CONFIG_HOME");
@@ -758,6 +764,7 @@ void locations_nearby_set_enabled(int idx, bool on) {
         if (idx < 0 || idx >= _count) return;
         if (_locations[idx].nearby_enabled == on) return;
         _locations[idx].nearby_enabled = on;
+        if (on) _nearby_retry_at_ms = 0; // explicit turn-on: try now
         save_all_locked();
     }
     if (on) locations_nearby_ensure(idx);
@@ -776,6 +783,10 @@ void locations_nearby_ensure(int idx) {
         // Every scanned airport is an AirportDB lookup -- without a usable
         // token each would just fail.
         const bool airportdb_ok = g_config.airportdb_enabled && g_config.airportdb_token[0];
+        if (_nearby_retry_at_ms != 0 &&
+            (int32_t)(platform_millis() - _nearby_retry_at_ms) < 0) {
+            return; // recent all-failed scan -- back off
+        }
         if (_locations[idx].nearby_enabled && _locations[idx].nearby_count == 0
             && !_nearby_scan_active && airportdb_ok) {
             owner_name = identity_of(_locations[idx]);
@@ -795,6 +806,7 @@ void locations_nearby_ensure(int idx) {
     float radius = (float)owner_presets[3];
     std::thread([owner_name, owner_lat, owner_lon, owner_icao_str = std::string(owner_icao), radius]() {
         std::vector<Location> found;
+        int tried = 0;
         for (int i = 0; i < AIRPORTS_DB_COUNT && (int)found.size() < NEARBY_MAX; i++) {
             const StaticAirport &ap = airports_db[i];
             if (!ap.large) continue;
@@ -803,12 +815,21 @@ void locations_nearby_ensure(int idx) {
 
             Location entry;
             char err[48];
+            tried++;
             if (fetch_airport_data(ap.icao, entry, err, sizeof(err))) {
                 found.push_back(entry);
             }
         }
 
         std::lock_guard<std::mutex> lock(_mutex);
+        if (tried > 0 && found.empty()) {
+            _nearby_retry_at_ms = platform_millis() + NEARBY_RETRY_MS;
+            if (_nearby_retry_at_ms == 0) _nearby_retry_at_ms = 1;
+            platform_log_warn("Locations: nearby scan -- all %d AirportDB lookups failed, "
+                              "retry in %us\n", tried, (unsigned)(NEARBY_RETRY_MS / 1000));
+        } else {
+            _nearby_retry_at_ms = 0;
+        }
         int resolved = -1;
         for (int i = 0; i < _count; i++)
             if (strcmp(identity_of(_locations[i]), owner_name.c_str()) == 0) { resolved = i; break; }
@@ -852,6 +873,7 @@ void locations_nearby_cache_clear() {
             _nearby_all_count[i] = 0;
             _locations[i].nearby_count = 0;
         }
+        _nearby_retry_at_ms = 0;
         if (_count > 0) save_all_locked();
 
         // Re-kick a scan for the active location if its eye toggle is still

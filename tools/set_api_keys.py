@@ -181,11 +181,19 @@ def main() -> int:
         doc["adbox_renew_day"] = args.adbox_renew_day
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(doc, f, indent=2)
-        f.write("\n")
-    tmp.replace(path)
+    # Own temp name (the app uses config.json.tmp.<pid>): a shared one let a
+    # half-finished run leave a root-owned file that blocked the app's saves.
+    tmp = path.with_name(f"{path.name}.set_api_keys.{os.getpid()}.tmp")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(doc, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
     maybe_chown_kiosk(path)
 
     print(f"Updated {path}")

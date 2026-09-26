@@ -22,6 +22,7 @@
 #include "../../src/platform/platform.h"
 #include "../../src/ui/alerts.h"
 #include <ArduinoJson.h>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -171,6 +172,20 @@ bool RemoteApiDataSource::fetch(AircraftList *list) {
 
     JsonArray ac = doc["ac"].as<JsonArray>();
     if (!list->lock(1000)) return false;
+
+    // Location switched (or waypoint moved) while this request was in
+    // flight: the switch already cleared the list, and merging now would
+    // put the old site's aircraft back for a ghost cycle (List, stats and
+    // alerts included). Drop them -- clearing again in case the switch's
+    // own clear lost the lock race -- and let the woken loop refetch.
+    float now_lat, now_lon;
+    if (!locations_get_active_coords(&now_lat, &now_lon, nullptr) ||
+        fabsf(now_lat - lat) > 1e-4f || fabsf(now_lon - lon) > 1e-4f) {
+        list->count = 0;
+        list->unlock();
+        platform_log_debug("RemoteApiDataSource: location changed mid-fetch, discarded\n");
+        return true;
+    }
 
     uint32_t now = platform_millis();
     std::vector<bool> seen(MAX_AIRCRAFT, false);

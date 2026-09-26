@@ -258,6 +258,14 @@ float g_req_lat = 0, g_req_lon = 0, g_req_radius = 0;
 int g_req_w = 0, g_req_h = 0, g_req_cy = 0, g_req_br = 0;
 uint32_t g_req_gen = 0;
 
+// Backoff after a failed build. The map asks every second, and a failed
+// build left nothing pending -- so offline (or while RainViewer refused us)
+// it re-requested weather-maps.json once a second.
+constexpr uint32_t RETRY_BASE_MS = 60u * 1000u;
+constexpr uint32_t RETRY_MAX_MS = 10u * 60u * 1000u;
+uint32_t g_retry_at_ms = 0;                // 0 = no failure pending
+uint32_t g_retry_delay_ms = RETRY_BASE_MS;
+
 bool slot_matches(const WeatherSlot &s, float lat, float lon, float radius_nm,
                   int w, int h, int cy, int br) {
     return s.valid &&
@@ -366,7 +374,8 @@ void blit_tile_rgba(std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
 
 bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
                           std::vector<uint8_t> &mosaic, int mosaic_w, int mosaic_h,
-                          uint32_t gen) {
+                          uint32_t gen, int *out_failed) {
+    *out_failed = 0;
     if (jobs.empty()) return true;
     static std::once_flag curl_once;
     std::call_once(curl_once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
@@ -466,6 +475,7 @@ bool fetch_tiles_parallel(std::vector<TileFetch> &jobs,
     if (failed > 0) {
         platform_log_warn("Weather: %d/%d tiles failed after retries\n", failed, total);
     }
+    *out_failed = failed;
     return true;
 }
 
@@ -663,8 +673,12 @@ bool build_weather(WeatherSlot &slot, uint32_t gen) {
 
     platform_log_debug("Weather: fetching %d tiles at z=%d frame=%s\n",
                  (int)jobs.size(), z, frame_path.c_str());
-    if (!fetch_tiles_parallel(jobs, mosaic, mosaic_w, mosaic_h, gen))
+    int failed = 0;
+    if (!fetch_tiles_parallel(jobs, mosaic, mosaic_w, mosaic_h, gen, &failed))
         return false;
+    // Nothing arrived: a failure (retried with backoff), not a clear sky
+    // held for the full TTL.
+    if (!jobs.empty() && failed >= (int)jobs.size()) return false;
 
     const double origin_mx = (double)tx0 * TILE_PX;
     const double origin_my = (double)ty0 * TILE_PX;
@@ -727,6 +741,18 @@ void worker_main(uint32_t gen) {
 
     {
         std::lock_guard<std::mutex> lock(g_mu);
+        if (gen == g_req_gen) {
+            if (ok) {
+                g_retry_at_ms = 0;
+                g_retry_delay_ms = RETRY_BASE_MS;
+            } else {
+                g_retry_at_ms = platform_millis() + g_retry_delay_ms;
+                if (g_retry_at_ms == 0) g_retry_at_ms = 1;
+                platform_log_info("Weather: build failed -- retrying in %us\n",
+                                  (unsigned)(g_retry_delay_ms / 1000));
+                g_retry_delay_ms = std::min(g_retry_delay_ms * 2, RETRY_MAX_MS);
+            }
+        }
         if (ok && gen == g_req_gen) {
             g_inbox = std::move(local);
             g_inbox.bind_buf();
@@ -774,6 +800,14 @@ void weather_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     if (same_req && (g_worker_busy || g_inbox_ready)) {
         return;
     }
+    // Same geometry failed recently: wait out the backoff. A new geometry
+    // (range / location change) tries once right away.
+    if (same_req && g_retry_at_ms != 0 &&
+        (int32_t)(platform_millis() - g_retry_at_ms) < 0) {
+        return;
+    }
+    if (!same_req) g_retry_delay_ms = RETRY_BASE_MS;
+    g_retry_at_ms = 0;
 
     // Geometry changed: drop the drawn buffer. TTL refresh keeps the stale
     // front visible until the new inbox swaps in.

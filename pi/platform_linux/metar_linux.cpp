@@ -22,6 +22,9 @@
 // Routine METARs are roughly hourly (US ASOS often ~:51–:58). Poll at ~4×
 // that rate so SPECI updates show up without hammering the API.
 #define METAR_REFRESH_MS (15UL * 60UL * 1000UL)
+// After a failed fetch for the location on screen. A 15-minute wait left a
+// cold switch that hit a network blip showing nothing for 15 minutes.
+#define METAR_RETRY_MS (2UL * 60UL * 1000UL)
 #define METAR_CACHE_SLOTS 16
 
 volatile MetarStatus metar_status = METAR_IDLE;
@@ -37,6 +40,7 @@ bool _busy = false;
 char _active_key[24] = "";   // cache key of the location on screen now
 char _published_key[24] = ""; // location the metar_* globals describe
 bool _need_fetch = false;    // a switch happened while a fetch was running
+bool _last_failed = false;   // last fetch for the active location errored
 
 struct MetarCacheEntry {
     char key[24];
@@ -200,6 +204,7 @@ void run_fetch(float lat, float lon, std::string icao, std::string key) {
     const bool ok = (r.status == METAR_OK || r.status == METAR_NO_STATION);
     if (ok) cache_store(key.c_str(), r);
     if (strcmp(_active_key, key.c_str()) == 0) {
+        _last_failed = !ok;
         // On error keep showing the last good text for this location, if any.
         if (ok || !metar_raw[0]) apply_to_globals(key.c_str(), r.status, r.raw, r.station);
         else metar_status = METAR_ERROR;
@@ -240,6 +245,7 @@ void metar_poll() {
 
     std::lock_guard<std::mutex> lock(_fetch_mutex);
     if (loc_changed) {
+        _last_failed = false;
         last_loc_idx = idx;
         strlcpy(last_key, key, sizeof(last_key));
         strlcpy(_active_key, key, sizeof(_active_key));
@@ -254,7 +260,8 @@ void metar_poll() {
         // Cold switch: don't leave the previous airport's text up.
         apply_to_globals(key, METAR_FETCHING, "", "");
         _need_fetch = true;
-    } else if (!_need_fetch && now - last_fetch_ms < METAR_REFRESH_MS) {
+    } else if (!_need_fetch &&
+               now - last_fetch_ms < (_last_failed ? METAR_RETRY_MS : METAR_REFRESH_MS)) {
         return;
     }
 

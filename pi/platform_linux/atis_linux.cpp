@@ -18,6 +18,9 @@
 #include <vector>
 
 #define ATIS_REFRESH_MS (15UL * 60UL * 1000UL)
+// After a failed fetch for the location on screen. A 15-minute wait left a
+// cold switch that hit a network blip showing nothing for 15 minutes.
+#define ATIS_RETRY_MS (2UL * 60UL * 1000UL)
 #define ATIS_RANGE_NM 50.0f
 #define ATIS_LIST_TTL_MS (6UL * 60UL * 60UL * 1000UL)
 
@@ -49,6 +52,7 @@ void loc_key_for(const Location *loc, char *out, size_t out_sz) {
              loc ? (double)loc->lat : 0.0, loc ? (double)loc->lon : 0.0);
 }
 bool _need_fetch = false;    // a switch happened while a fetch was running
+bool _last_failed = false;   // last fetch for the active location errored
 
 std::mutex _list_mutex;
 std::unordered_set<std::string> _datis_icaos;
@@ -300,6 +304,7 @@ void run_fetch(std::string icao) {
     const bool ok = (r.status == ATIS_OK || r.status == ATIS_UNAVAILABLE);
     if (ok) atis_cache_store(r);
     if (strcmp(_active_icao, icao.c_str()) == 0) {
+        _last_failed = !ok;
         if (ok) atis_cache_apply(&r);
         else atis_status = ATIS_ERROR;
         strlcpy(_published_loc_key, _active_loc_key, sizeof(_published_loc_key));
@@ -358,6 +363,7 @@ void atis_poll() {
 
     std::lock_guard<std::mutex> lock(_fetch_mutex);
     if (loc_changed) {
+        _last_failed = false;
         last_loc_idx = idx;
         strlcpy(last_loc_key, loc_key, sizeof(last_loc_key));
         strlcpy(last_icao, icao, sizeof(last_icao));
@@ -377,7 +383,8 @@ void atis_poll() {
         strlcpy(atis_airport, icao, sizeof(atis_airport));
         atis_status = ATIS_FETCHING;
         _need_fetch = true;
-    } else if (!_need_fetch && now - last_fetch_ms < ATIS_REFRESH_MS) {
+    } else if (!_need_fetch &&
+               now - last_fetch_ms < (_last_failed ? ATIS_RETRY_MS : ATIS_REFRESH_MS)) {
         return;
     }
 

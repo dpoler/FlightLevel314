@@ -1105,6 +1105,11 @@ void enrichment_clear_cache() {
     _cache_count = 0;
 }
 
+void enrichment_cancel_queued() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _queued = QueuedRequest{};
+}
+
 void aerodatabox_request_verify() {
     const int prov_now = g_config.aerodatabox_provider;
     const uint32_t hash_now = adbox_key_hash(g_config.aerodatabox_key);

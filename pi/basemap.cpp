@@ -93,6 +93,14 @@ int g_prog_pct = 0; // 0..100
 // Sectional (or other) style selected outside coverage — no fetch, paper bg.
 bool g_unavailable = false;
 
+// Retry after a failed or partial build (basemap_retry_tick). Requests only
+// come from range/location changes, so without this a Wi-Fi drop left the
+// map blank -- or with holes -- until the user touched something.
+constexpr uint32_t RETRY_BASE_MS = 60u * 1000u;
+constexpr uint32_t RETRY_MAX_MS = 30u * 60u * 1000u;
+uint32_t g_retry_at_ms = 0;              // 0 = not waiting; else platform_millis() due
+uint32_t g_retry_delay_ms = RETRY_BASE_MS; // doubles per consecutive failure
+
 void progress_set(uint32_t gen, bool visible, int pct) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
@@ -1040,6 +1048,7 @@ void worker_main(uint32_t gen) {
         }
     }
 
+    const bool local_complete = local.complete;
     uint32_t latest = 0;
     bool need_followup = false;
     {
@@ -1054,6 +1063,21 @@ void worker_main(uint32_t gen) {
             // Failed or cancelled for the current request — hide the bar.
             g_prog_visible = false;
             g_prog_pct = 0;
+        }
+        if (gen == g_req_gen) {
+            if (ok && local_complete) {
+                g_retry_at_ms = 0;
+                g_retry_delay_ms = RETRY_BASE_MS;
+            } else {
+                // Failed, or shown with holes: try again later, backing off
+                // so a dead key or long outage doesn't refetch every minute.
+                g_retry_at_ms = platform_millis() + g_retry_delay_ms;
+                if (g_retry_at_ms == 0) g_retry_at_ms = 1;
+                platform_log_info("Basemap: %s -- retrying in %us\n",
+                                  ok ? "partial mosaic" : "build failed",
+                                  (unsigned)(g_retry_delay_ms / 1000));
+                g_retry_delay_ms = std::min(g_retry_delay_ms * 2, RETRY_MAX_MS);
+            }
         }
         latest = g_req_gen;
         g_worker_busy = false;
@@ -1157,9 +1181,30 @@ void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int ca
     g_req_br = bullseye_r_px;
     g_req_style = style;
     g_req_gen++;
+    // New request: any pending retry was for the old one.
+    g_retry_at_ms = 0;
+    g_retry_delay_ms = RETRY_BASE_MS;
     if (g_worker_busy) return;
     g_worker_busy = true;
     uint32_t gen = g_req_gen;
+    std::thread(worker_main, gen).detach();
+}
+
+void basemap_retry_tick(void) {
+    if (!map_basemap_shown()) return;
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (g_unavailable || g_worker_busy || g_inbox_ready) return;
+    if (g_req_w <= 0 || g_req_h <= 0 || g_req_br <= 0) return; // no request yet
+    // Front for the current request: valid unless a newer request, cache
+    // clear or failed build dropped it; complete unless tiles failed.
+    if (g_front.valid && g_front.complete) return;
+    const uint32_t now = platform_millis();
+    if (g_retry_at_ms != 0 && (int32_t)(now - g_retry_at_ms) < 0) return;
+    g_retry_at_ms = 0;
+    // Keep a partial front on screen; the rebuilt one swaps in over it.
+    g_req_gen++;
+    g_worker_busy = true;
+    const uint32_t gen = g_req_gen;
     std::thread(worker_main, gen).detach();
 }
 

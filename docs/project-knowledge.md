@@ -751,6 +751,18 @@ closed ones. Dan refreshed status **2026-08-09** (done / deferred / removed).
   SD wear (2026-09-26): weather overlay no longer written to disk (memory
   only); basemap prune_cache() drops expired / old-format mosaics and trims
   LRU (atime) to 1 GB, at startup and after each save.
+  Second review pass (2026-09-26): waypoint save no longer counts an
+  untouched %.5f lat/lon as a move (was clearing traffic on every save);
+  detail card open/close animations share one exec_cb and cancel each
+  other (quick tap-close left the card up); unique temp names for atomic
+  config writes (app `.tmp.<pid>`, set_api_keys.py its own) + fsync
+  failure still closes the fd; basemap_retry_tick() refetches a failed /
+  partial mosaic (1 min doubling to 30) and after Clear caches; weather
+  build failures back off (1 -> 10 min) instead of retrying every second,
+  and all-tiles-failed counts as failure; a traffic fetch that straddles a
+  location switch is discarded; closing the card drops a queued lookup;
+  METAR/ATIS retry after 2 min on error; nearby-runways scan backs off
+  10 min after an all-failed scan.
   Dropped (Dan): intermittent missing photo after switching the card.
   Still open, roughly by priority:
   - OTA: no checksum/signature; offers any differing tag (can downgrade);

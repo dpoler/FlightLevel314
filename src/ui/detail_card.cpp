@@ -835,6 +835,12 @@ void detail_card_init(lv_obj_t *parent, AircraftList *list) {
     _visible = false;
 }
 
+// One exec callback for both slide directions, so lv_anim_delete(_card,
+// card_anim_y) cancels whichever is running.
+static void card_anim_y(void *obj, int32_t v) {
+    lv_obj_set_y((lv_obj_t *)obj, v);
+}
+
 void detail_card_show(const Aircraft *ac) {
     memcpy(&_current_ac, ac, sizeof(Aircraft));
 
@@ -907,12 +913,12 @@ void detail_card_show(const Aircraft *ac) {
         lv_anim_t a;
         lv_anim_init(&a);
         lv_anim_set_var(&a, _card);
-        lv_anim_set_values(&a, LCD_V_RES, LCD_V_RES - CARD_H);
+        // From wherever a still-running close left it (usually LCD_V_RES).
+        lv_anim_set_values(&a, lv_obj_get_y(_card), LCD_V_RES - CARD_H);
         lv_anim_set_duration(&a, 300);
         lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-        lv_anim_set_exec_cb(&a, [](void *obj, int32_t v) {
-            lv_obj_set_y((lv_obj_t *)obj, v);
-        });
+        lv_anim_set_exec_cb(&a, card_anim_y);
+        lv_anim_delete(_card, card_anim_y);
         lv_anim_start(&a);
     }
 
@@ -944,6 +950,7 @@ void detail_card_hide() {
 
     // Pause live updates
     lv_timer_pause(_update_timer);
+    enrichment_cancel_queued();
 
     lv_anim_t a;
     lv_anim_init(&a);
@@ -951,9 +958,11 @@ void detail_card_hide() {
     lv_anim_set_values(&a, lv_obj_get_y(_card), LCD_V_RES);
     lv_anim_set_duration(&a, 200);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
-    lv_anim_set_exec_cb(&a, [](void *obj, int32_t v) {
-        lv_obj_set_y((lv_obj_t *)obj, v);
-    });
+    lv_anim_set_exec_cb(&a, card_anim_y);
+    // Cancel a still-running slide-in: open and close used to be separate
+    // lambdas, so LVGL ran both and the longer open (300 ms) finished last,
+    // leaving the card on screen after a quick tap-then-close.
+    lv_anim_delete(_card, card_anim_y);
     lv_anim_start(&a);
 }
 

@@ -1157,6 +1157,11 @@ static void edit_save_click_cb(lv_event_t *e) {
             show_wp_error(field_err);
             return;
         }
+        // The fields show %.5f, so an untouched field re-parses a hair off
+        // the stored float. Treat that as unchanged -- otherwise every save
+        // (even a rename) counted as a move and wiped traffic and trails.
+        if (fabsf(lat - loc->lat) < 2e-5f) lat = loc->lat;
+        if (fabsf(lon - loc->lon) < 2e-5f) lon = loc->lon;
     }
     const bool moved = (lat != loc->lat || lon != loc->lon);
 

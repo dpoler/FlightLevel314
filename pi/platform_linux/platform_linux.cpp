@@ -30,8 +30,14 @@ bool platform_mkdirs(const char *path) {
 
 bool platform_write_file_atomic(const char *path, const void *data, size_t len) {
     if (!path || !path[0]) return false;
-    const std::string tmp = std::string(path) + ".tmp";
-    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    // Per-process temp name: tools/set_api_keys.py (often run as root)
+    // writes the same config file, and a shared "<path>.tmp" let the two
+    // clobber each other -- or a leftover root-owned one blocked every later
+    // app save. Unlink first in case a crashed earlier run with this PID
+    // left one behind.
+    const std::string tmp = std::string(path) + ".tmp." + std::to_string(getpid());
+    unlink(tmp.c_str());
+    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (fd < 0) return false;
     const char *p = static_cast<const char *>(data);
     size_t left = len;
@@ -46,7 +52,8 @@ bool platform_write_file_atomic(const char *path, const void *data, size_t len) 
         p += w;
         left -= (size_t)w;
     }
-    if (fsync(fd) != 0 || close(fd) != 0) {
+    const bool synced = fsync(fd) == 0;
+    if (close(fd) != 0 || !synced) { // always close -- || used to skip it
         unlink(tmp.c_str());
         return false;
     }

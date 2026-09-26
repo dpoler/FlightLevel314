@@ -1461,6 +1461,8 @@ void map_view_init(lv_obj_t *parent, AircraftList *list) {
 #if !defined(ARDUINO)
             basemap_poll_swap();
             weather_poll_swap();
+            // Refetch a failed / partial basemap (backs off internally).
+            basemap_retry_tick();
             // Weather TTL refresh even when range/location are stable.
             map_weather_sync();
 #endif

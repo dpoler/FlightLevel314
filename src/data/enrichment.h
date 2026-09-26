@@ -85,6 +85,11 @@ bool enrichment_snapshot(const char *icao_hex, AircraftEnrichment *out,
 // Drop all cached enrichment entries (e.g. after toggling AeroDataBox on).
 void enrichment_clear_cache();
 
+// Forget a lookup queued behind the running one (detail card closed): it
+// would otherwise still run -- and can spend AeroDataBox units -- for an
+// aircraft nobody is looking at. The running lookup finishes normally.
+void enrichment_cancel_queued();
+
 // Async AeroDataBox key check via FREE TIER health endpoint (0 API units).
 // Same request/result shape as locations_request_verify_token().
 void aerodatabox_request_verify();

@@ -17,6 +17,12 @@ extern "C" {
 void basemap_request(float lat, float lon, float radius_nm, int canvas_w, int canvas_h,
                      int geo_center_y, int bullseye_r_px);
 
+// LVGL-thread only; call about once a second while Map is showing. Refetches
+// when the current request has nothing (or a partial mosaic) on screen --
+// after a failed build, with backoff (1 min doubling to 30), or right away
+// after a cache clear.
+void basemap_retry_tick(void);
+
 // LVGL-thread only. Installs a newly-built basemap (if any) into the buffer
 // that basemap_draw reads. Call between frames (e.g. map timer), never from
 // a worker thread. Returns true if a new basemap was installed.
